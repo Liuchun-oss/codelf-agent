@@ -1910,6 +1910,27 @@ body.resizing-x .sidebar-dock {
   overflow-x: auto;
   border-bottom: 1px solid var(--border-soft);
   scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.artifact-panel-tabs::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.artifact-panel-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+.artifact-panel-tabs::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.artifact-panel-tabs::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+  background-clip: padding-box;
+}
+.artifact-panel-tabs::-webkit-scrollbar-corner {
+  background: transparent;
 }
 .artifact-tab {
   display: inline-flex;
