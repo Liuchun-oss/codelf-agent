@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { Tool, ToolResult } from './types'
 import { findSkill, formatSkillForInvocation, loadAvailableSkills, summarizeSkill } from '../skills/loadSkills'
 import { getAgentDefinition, type AgentDefinition } from '../orchestrator/agentDefinitions'
-import { APP_NAME, DATA_DIR_NAME } from '@shared/appConfig'
+import { APP_NAME } from '@shared/appConfig'
 
 export const SKILL_TOOL_NAME = 'Skill'
 
@@ -50,7 +50,7 @@ function skillAgentDefinition(skill: Awaited<ReturnType<typeof findSkill>>, work
 
 export const skillTool: Tool<SkillInput> = {
   name: SKILL_TOOL_NAME,
-  description: `Load and invoke a reusable ${APP_NAME} skill from project ${DATA_DIR_NAME}/skills/<name>/SKILL.md or user ~/${DATA_DIR_NAME}/skills/<name>/SKILL.md. Project skills override user skills with the same name. Use this when the Available skills system prompt section lists a skill whose description or when_to_use matches the user task. Inline skills load the full instructions and return them so you can follow the workflow using normal ${APP_NAME} tools and permissions. Skills with context=fork are executed in a sub-agent by this tool. Pass the exact skill name in name and any user arguments in args.`,
+  description: `Load and invoke a reusable ${APP_NAME} skill. IMPORTANT: Only call this tool when the user explicitly asks to use a specific skill, or when the "Available skills" section in the system prompt lists a skill whose description directly matches the user's task. Do NOT call this for basic conversation, greetings, or when no matching skill exists. Pass the exact skill name in name and any user arguments in args.`,
   schema: skillSchema,
   readOnly: true,
   concurrencySafe: false,

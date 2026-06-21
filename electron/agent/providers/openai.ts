@@ -131,36 +131,59 @@ function isForbiddenError(e: unknown): boolean {
   return (e as { status?: unknown })?.status === 403
 }
 
-// 手动 SSE 解析器：绕过 openai SDK 的内置流解析，避免与某些
-// new-api/new-api 类中转站（如 jojocode）的 SSE 格式不兼容导致 0 chunk 产出。
+// 手动 SSE 解析器：使用 Node.js Buffer 做字节级 UTF-8 解码，
+// 只对完整行（以 \n 结尾）解码，避免 TextDecoder 流式解码在 Electron 中的中文乱码 bug。
 function makeSSEIterable(
   reader: ReadableStreamDefaultReader<Uint8Array>
 ): AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk> {
-  const decoder = new TextDecoder()
-  let buf = ''
+  let byteBuf = Buffer.alloc(0)
+  // 一次 read() 可能携带多条 SSE 事件（中转站常把多个 data: 攒在一个包里下发）。
+  // 必须把本批解析出的所有 chunk 排队，next() 逐个返回，否则会丢失除第一条以外的所有事件，
+  // 导致 tool_call/思考分片残缺、工具无法执行。
+  const pending: OpenAI.Chat.Completions.ChatCompletionChunk[] = []
+
+  // 把一段（含若干完整行的）文本解析为 chunk，依次压入待发队列。
+  const drainText = (text: string): void => {
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+      const data = trimmed.slice(5).trim()
+      if (!data || data === '[DONE]') continue
+      try {
+        pending.push(JSON.parse(data) as OpenAI.Chat.Completions.ChatCompletionChunk)
+      } catch { /* skip unparseable lines */ }
+    }
+  }
 
   return {
     [Symbol.asyncIterator]() {
       return {
         async next(): Promise<IteratorResult<OpenAI.Chat.Completions.ChatCompletionChunk>> {
           while (true) {
-            const { done, value } = await reader.read()
-            if (done) return { done: true, value: undefined as unknown as OpenAI.Chat.Completions.ChatCompletionChunk }
-
-            buf += decoder.decode(value, { stream: true })
-            const lines = buf.split('\n')
-            buf = lines.pop() || ''
-
-            for (const line of lines) {
-              const trimmed = line.trim()
-              if (!trimmed.startsWith('data:')) continue
-              const data = trimmed.slice(5).trim()
-              if (!data || data === '[DONE]') continue
-              try {
-                const chunk = JSON.parse(data) as OpenAI.Chat.Completions.ChatCompletionChunk
-                return { done: false, value: chunk }
-              } catch { /* skip unparseable lines */ }
+            if (pending.length > 0) {
+              return { done: false, value: pending.shift()! }
             }
+
+            const { done, value } = await reader.read()
+            if (done) {
+              drainText(byteBuf.toString('utf-8'))
+              byteBuf = Buffer.alloc(0)
+              if (pending.length > 0) {
+                return { done: false, value: pending.shift()! }
+              }
+              return { done: true, value: undefined as unknown as OpenAI.Chat.Completions.ChatCompletionChunk }
+            }
+            byteBuf = Buffer.concat([byteBuf, Buffer.from(value)])
+
+            let lastNL = -1
+            for (let i = byteBuf.length - 1; i >= 0; i--) {
+              if (byteBuf[i] === 0x0a) { lastNL = i; break }
+            }
+            if (lastNL < 0) continue
+
+            const complete = byteBuf.slice(0, lastNL + 1).toString('utf-8')
+            byteBuf = byteBuf.slice(lastNL + 1)
+            drainText(complete)
           }
         }
       }
