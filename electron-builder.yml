@@ -1,0 +1,111 @@
+
+appId: com.wufeng.codelf
+productName: Codelf
+copyright: Copyright © 2026 巫枫
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - out/**/*
+  - package.json
+
+  - node_modules/@lydell/**/*
+
+  - node_modules/playwright/**/*
+  - node_modules/playwright-core/**/*
+
+  - node_modules/@lenml/**/*
+
+  - node_modules/@huggingface/**/*
+  - node_modules/onnxruntime-common/**/*
+  - node_modules/onnxruntime-web/**/*
+  - node_modules/sharp/**/*
+  - node_modules/@img/**/*
+
+  # 知识库：文档解析与向量数据库
+  - node_modules/mammoth/**/*
+  - node_modules/pdfjs-dist/**/*
+  - node_modules/word-extractor/**/*
+  - node_modules/better-sqlite3/**/*
+  - node_modules/bindings/**/*
+  - node_modules/file-uri-to-path/**/*
+  - node_modules/sqlite-vec/**/*
+  - node_modules/sqlite-vec-*/**/*
+  - node_modules/sqlite-vec/node_modules/sqlite-vec-*/**/*
+
+  # onnxruntime-node 全部纳入；按平台裁剪无关二进制的规则见下方 win / mac 块
+  - node_modules/onnxruntime-node/**/*
+  # linux 二进制 win 和 mac 都用不到，全局排除
+  - "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
+
+# 只把原生模块（含 .node / 需从磁盘 spawn 的）解压到 asar 外，
+# 其余 JS 全部打进 app.asar（一个大文件），避免释放数万个散文件拖慢安装。
+asarUnpack:
+  - "**/*.node"
+  - node_modules/@lydell/**
+  - node_modules/onnxruntime-node/**
+  - node_modules/sharp/**
+  - node_modules/@img/**
+  - node_modules/playwright/**
+  - node_modules/playwright-core/**
+  - node_modules/better-sqlite3/**
+  - node_modules/sqlite-vec/**
+  - node_modules/sqlite-vec-*/**
+
+extraResources:
+  - from: resources/icon.ico
+    to: icon.ico
+  - from: resources/icon.png
+    to: icon.png
+  - from: resources/deepseek-tokenizer
+    to: deepseek-tokenizer
+  - from: resources/skills
+    to: skills
+  - from: resources/models
+    to: models
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.ico
+  artifactName: ${productName}-${version}-setup.${ext}
+  # Windows 只需 win32/x64，砍掉 darwin 与 win32/arm64
+  files:
+    - "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**"
+    - "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**"
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  icon: resources/icon.icns
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  darkModeSupport: true
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # macOS 只需 darwin，砍掉全部 win32 二进制
+  files:
+    - "!node_modules/onnxruntime-node/bin/napi-v6/win32/**"
+  extendInfo:
+    NSCameraUsageDescription: 此应用不会使用摄像头。
+    NSMicrophoneUsageDescription: 此应用不会使用麦克风。
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Codelf
+  include: resources/installer.nsh
+
+asar: true

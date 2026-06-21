@@ -1,0 +1,230 @@
+import { app } from 'electron'
+import { readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'fs'
+import { join, dirname, basename } from 'path'
+import { randomBytes } from 'crypto'
+import type { AgentBehaviorSettings, NetworkSettings, WebSearchSettings } from '@shared/agentSettings'
+import {
+  DEFAULT_AGENT_BEHAVIOR,
+  DEFAULT_NETWORK_SETTINGS,
+  DEFAULT_WEB_SEARCH_SETTINGS,
+  normalizeAgentBehavior,
+  normalizeNetworkSettings,
+  normalizeWebSearchSettings
+} from '@shared/agentSettings'
+import type { McpSettings } from '@shared/mcpTypes'
+import { DEFAULT_MCP_SETTINGS, normalizeMcpSettings } from '@shared/mcpTypes'
+import type { SkillsSettings } from '@shared/skillTypes'
+import { DEFAULT_SKILLS_SETTINGS, normalizeSkillsSettings } from '@shared/skillTypes'
+import type { MemorySettings } from '@shared/memoryTypes'
+import { DEFAULT_MEMORY_SETTINGS, normalizeMemorySettings } from '@shared/memoryTypes'
+
+
+interface SettingsFileShape {
+  agent?: Partial<AgentBehaviorSettings>
+  network?: Partial<NetworkSettings>
+  webSearch?: Partial<WebSearchSettings>
+  mcp?: unknown
+  skills?: unknown
+  memory?: Partial<MemorySettings>
+}
+
+let cache: AgentBehaviorSettings | null = null
+let networkCache: NetworkSettings | null = null
+let webSearchCache: WebSearchSettings | null = null
+let mcpCache: McpSettings | null = null
+let skillsCache: SkillsSettings | null = null
+let memoryCache: MemorySettings | null = null
+
+function settingsFile(): string {
+  return join(app.getPath('userData'), 'settings.json')
+}
+
+function readFile(): SettingsFileShape {
+  const file = settingsFile()
+  if (!existsSync(file)) return {}
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf-8')) as SettingsFileShape
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    console.error('[agentSettingsStore] settings.json 解析失败，使用默认值')
+    return {}
+  }
+}
+
+function writeFile(shape: SettingsFileShape): void {
+  const target = settingsFile()
+  const tmp = join(dirname(target), `.${basename(target)}.${randomBytes(6).toString('hex')}.tmp`)
+  try {
+    writeFileSync(tmp, JSON.stringify(shape, null, 2), 'utf-8')
+    renameSync(tmp, target)
+  } catch (e) {
+    try {
+      rmSync(tmp, { force: true })
+    } catch {
+      
+    }
+    throw e
+  }
+}
+
+function loadFromDisk(): AgentBehaviorSettings {
+  const raw = readFile().agent ?? {}
+  return normalizeAgentBehavior({ ...DEFAULT_AGENT_BEHAVIOR, ...raw })
+}
+
+
+export function getAgentBehaviorSettings(): AgentBehaviorSettings {
+  if (!cache) cache = loadFromDisk()
+  return cache
+}
+
+
+export function saveAgentBehaviorSettings(
+  patch: Partial<AgentBehaviorSettings>
+): AgentBehaviorSettings {
+  const file = readFile()
+  const next = normalizeAgentBehavior({
+    ...getAgentBehaviorSettings(),
+    ...patch
+  })
+  writeFile({ ...file, agent: next })
+  cache = next
+  return next
+}
+
+
+export function resetAgentSettingsCacheForTests(): void {
+  cache = null
+  networkCache = null
+  webSearchCache = null
+  mcpCache = null
+  skillsCache = null
+  memoryCache = null
+}
+
+
+
+function loadNetworkFromDisk(): NetworkSettings {
+  const raw = readFile().network ?? {}
+  return normalizeNetworkSettings({ ...DEFAULT_NETWORK_SETTINGS, ...raw })
+}
+
+
+export function getNetworkSettings(): NetworkSettings {
+  if (!networkCache) networkCache = loadNetworkFromDisk()
+  return networkCache
+}
+
+
+export function saveNetworkSettings(patch: Partial<NetworkSettings>): NetworkSettings {
+  const file = readFile()
+  const next = normalizeNetworkSettings({ ...getNetworkSettings(), ...patch })
+  writeFile({ ...file, network: next })
+  networkCache = next
+  return next
+}
+
+
+
+function loadWebSearchFromDisk(): WebSearchSettings {
+  const raw = readFile().webSearch ?? {}
+  return normalizeWebSearchSettings({ ...DEFAULT_WEB_SEARCH_SETTINGS, ...raw })
+}
+
+
+export function getWebSearchSettings(): WebSearchSettings {
+  if (!webSearchCache) webSearchCache = loadWebSearchFromDisk()
+  return webSearchCache
+}
+
+
+export function saveWebSearchSettings(patch: Partial<WebSearchSettings>): WebSearchSettings {
+  const file = readFile()
+  const next = normalizeWebSearchSettings({ ...getWebSearchSettings(), ...patch })
+  writeFile({ ...file, webSearch: next })
+  webSearchCache = next
+  return next
+}
+
+
+
+function loadMcpFromDisk(): McpSettings {
+  return normalizeMcpSettings(readFile().mcp ?? DEFAULT_MCP_SETTINGS)
+}
+
+
+export function getMcpSettings(): McpSettings {
+  if (!mcpCache) mcpCache = loadMcpFromDisk()
+  return mcpCache
+}
+
+
+// 覆盖式写入整份 MCP 配置（server 增删改都走这里）。
+export function saveMcpSettings(next: McpSettings): McpSettings {
+  const file = readFile()
+  const normalized = normalizeMcpSettings(next)
+  writeFile({ ...file, mcp: normalized })
+  mcpCache = normalized
+  return normalized
+}
+
+// 记录某工作区内项目级 server 的审批决定（approved/rejected）。
+export function setMcpProjectApproval(
+  workspaceRoot: string,
+  serverName: string,
+  state: 'approved' | 'rejected'
+): McpSettings {
+  const current = getMcpSettings()
+  const approvals = { ...(current.projectApprovals ?? {}) }
+  const perRoot = { ...(approvals[workspaceRoot] ?? {}) }
+  perRoot[serverName] = state
+  approvals[workspaceRoot] = perRoot
+  return saveMcpSettings({ ...current, projectApprovals: approvals })
+}
+
+
+function loadSkillsFromDisk(): SkillsSettings {
+  return normalizeSkillsSettings(readFile().skills ?? DEFAULT_SKILLS_SETTINGS)
+}
+
+export function getSkillsSettings(): SkillsSettings {
+  if (!skillsCache) skillsCache = loadSkillsFromDisk()
+  return skillsCache
+}
+
+export function saveSkillsSettings(next: SkillsSettings): SkillsSettings {
+  const file = readFile()
+  const normalized = normalizeSkillsSettings(next)
+  writeFile({ ...file, skills: normalized })
+  skillsCache = normalized
+  return normalized
+}
+
+// 设置某个 skill 的启用/禁用状态（按名称小写匹配，跨来源生效）。
+export function setSkillDisabled(name: string, disabled: boolean): SkillsSettings {
+  const key = name.trim().toLowerCase()
+  if (!key) return getSkillsSettings()
+  const current = getSkillsSettings()
+  const set = new Set(current.disabled)
+  if (disabled) set.add(key)
+  else set.delete(key)
+  return saveSkillsSettings({ disabled: [...set] })
+}
+
+
+function loadMemoryFromDisk(): MemorySettings {
+  return normalizeMemorySettings(readFile().memory ?? DEFAULT_MEMORY_SETTINGS)
+}
+
+export function getMemorySettings(): MemorySettings {
+  if (!memoryCache) memoryCache = loadMemoryFromDisk()
+  return memoryCache
+}
+
+export function saveMemorySettings(patch: Partial<MemorySettings>): MemorySettings {
+  const file = readFile()
+  const next = normalizeMemorySettings({ ...getMemorySettings(), ...patch })
+  writeFile({ ...file, memory: next })
+  memoryCache = next
+  return next
+}

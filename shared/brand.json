@@ -1,0 +1,11 @@
+{
+  "name": "Codelf",
+  "tagline": "轻量级 AI 代码编辑器。",
+  "slug": "codelf",
+  "version": "0.1.6",
+  "description": "Codelf（码灵）- 轻量级 AI 辅助编程 IDE",
+  "appId": "com.wufeng.codelf",
+  "copyright": "Copyright © 2026 巫枫",
+  "author": "巫枫",
+  "previousSlugs": [""]
+}

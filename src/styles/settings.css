@@ -1,0 +1,833 @@
+/* Redesigned settings UI — minimal, Cursor/Codex inspired. Overrides global.css. */
+
+.settings-modal,
+.settings-modal:focus,
+.settings-modal:focus-visible,
+.settings-modal:focus-within {
+  width: min(940px, calc(100vw - 48px));
+  height: min(680px, calc(100vh - 56px));
+  background: var(--bg-elevated, #1b1917);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5) !important;
+  /* Keep the panel on its own compositing layer so its box-shadow does not
+     flicker when the backdrop-filter overlay repaints (focus changes, editor
+     cursor blink, etc.). Without this the shadow renders on the main layer
+     directly over backdrop-filter and Chromium re-samples it intermittently. */
+  transform: translateZ(0);
+  isolation: isolate;
+}
+.settings-overlay {
+  backdrop-filter: blur(6px);
+}
+
+.settings-shell {
+  grid-template-columns: 208px minmax(0, 1fr);
+}
+.settings-sidebar {
+  gap: 2px;
+  padding: 14px 10px;
+  background: rgba(0, 0, 0, 0.16);
+}
+.settings-sidebar-title {
+  padding: 4px 10px 10px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-nav-item {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 7px;
+}
+.settings-nav-item.active {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: transparent;
+  box-shadow: none;
+}
+.settings-nav-item .settings-nav-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: currentColor;
+}
+.settings-nav-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-header {
+  padding: 20px 24px 14px;
+}
+.settings-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.settings-content {
+  padding: 8px 24px 20px;
+}
+.settings-section-page {
+  gap: 0;
+}
+.settings-footer {
+  padding: 12px 24px;
+  background: var(--bg-elevated, #1b1917);
+}
+
+/* Row-style list (Cursor/Codex look) */
+.settings-group {
+  display: flex;
+  flex-direction: column;
+}
+.settings-group + .settings-group {
+  margin-top: 22px;
+}
+.settings-group-label {
+  padding: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 13px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.settings-row:last-child {
+  border-bottom: none;
+}
+.settings-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.settings-row-text strong {
+  color: var(--text-bright);
+  font-size: 13px;
+  font-weight: 500;
+}
+.settings-row-text small {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.settings-row-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.settings-row-control input:not([type='checkbox']),
+.settings-row-control select,
+.settings-row-control textarea {
+  height: 30px;
+  min-width: 0;
+  padding: 5px 9px;
+  color: var(--text-bright);
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 7px;
+  outline: none;
+}
+.settings-row-control input:focus,
+.settings-row-control select:focus,
+.settings-row-control textarea:focus {
+  border-color: rgba(var(--accent-rgb), 0.7);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.1);
+}
+.settings-row-control textarea {
+  height: auto;
+  min-height: 64px;
+  width: 100%;
+  resize: vertical;
+  line-height: 1.5;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+}
+.settings-row-control input[type='number'] {
+  width: 96px;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.settings-row-control input[type='number']::-webkit-outer-spin-button,
+.settings-row-control input[type='number']::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+.settings-row-control input[type='text'],
+.settings-row-control input[type='password'] {
+  width: 260px;
+}
+.settings-row-control select {
+  min-width: 150px;
+}
+.settings-row-control select option,
+.settings-ai-bar select option {
+  background: var(--bg-overlay);
+  color: var(--text-bright);
+}
+.settings-row-control select option:checked,
+.settings-ai-bar select option:checked {
+  background: var(--accent);
+  color: #fff;
+}
+.settings-row-control input:disabled,
+.settings-row-control select:disabled,
+.settings-row-control textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.settings-switch {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 38px;
+  height: 22px;
+  cursor: pointer;
+}
+.settings-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.settings-switch-track {
+  flex: 1;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  transition: background 140ms var(--ease);
+}
+.settings-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 150ms var(--ease);
+}
+.settings-switch input:checked + .settings-switch-track {
+  background: var(--accent);
+}
+.settings-switch input:checked + .settings-switch-track::after {
+  transform: translateX(16px);
+}
+.settings-switch input:disabled + .settings-switch-track {
+  opacity: 0.5;
+}
+
+/* Stacked row for full-width inputs */
+.settings-row.stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.settings-row.stacked .settings-row-control {
+  width: 100%;
+}
+.settings-row.stacked .settings-row-control input,
+.settings-row.stacked .settings-row-control select,
+.settings-row.stacked .settings-row-control textarea {
+  width: 100%;
+}
+
+/* AI section header bar */
+.settings-ai-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+.settings-ai-bar select {
+  height: 32px;
+  padding: 5px 9px;
+  color: var(--text-bright);
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 7px;
+  outline: none;
+}
+.settings-ai-bar .settings-ai-bar-spacer {
+  flex: 1;
+}
+.settings-ai-tags {
+  display: inline-flex;
+  gap: 6px;
+}
+.settings-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+.settings-tag.on {
+  color: var(--accent-bright);
+  border-color: rgba(var(--accent-rgb), 0.32);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+/* Action bar at section bottom */
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.settings-ai-section {
+  padding-bottom: 0;
+}
+.settings-ai-section .settings-ai-bar {
+  min-height: 42px;
+  margin-bottom: 12px;
+  padding: 7px 10px;
+}
+.settings-ai-section .settings-ai-bar select {
+  height: 28px;
+}
+.settings-ai-section .settings-group + .settings-group {
+  margin-top: 14px;
+}
+
+/* AI 模型页：两列布局——左侧文本标签固定列宽，右侧控件统一占满 */
+.settings-ai-section .settings-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 16px;
+}
+.settings-ai-section .settings-row-control {
+  width: 100%;
+  justify-content: flex-start;
+}
+.settings-ai-section .settings-row-control input:not([type='checkbox']),
+.settings-ai-section .settings-row-control select {
+  width: 100%;
+}
+.settings-ai-section .settings-group-label {
+  padding-bottom: 5px;
+}
+.settings-ai-section .settings-row {
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+.settings-ai-section .settings-row.stacked {
+  gap: 6px;
+}
+.settings-ai-section .settings-actions {
+  position: sticky;
+  right: 0;
+  bottom: -20px;
+  z-index: 5;
+  margin: 16px -24px -20px;
+  padding: 12px 24px 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 82%, transparent), var(--bg-elevated) 42%);
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 -18px 30px rgba(0, 0, 0, 0.22) !important;
+  backdrop-filter: blur(12px);
+}
+.settings-ai-section .settings-actions button {
+  flex-shrink: 0;
+}
+.settings-actions .settings-actions-spacer {
+  flex: 1;
+}
+.settings-actions-msg {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-actions-msg.ok {
+  color: #8fe3b4;
+}
+.settings-actions-msg.err {
+  color: var(--danger-hover);
+}
+
+.settings-inline-alert {
+  margin: 0 0 16px;
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--dirty);
+  background: rgba(224, 166, 77, 0.1);
+  border: 1px solid rgba(224, 166, 77, 0.32);
+  border-radius: 8px;
+}
+
+/* Diagnostics: make the tab bar span full width with refresh on the right */
+.diagnostics-card {
+  margin-top: 4px;
+}
+.diagnostics-card .debug-panel-tabs {
+  display: flex;
+  align-self: stretch;
+  background: transparent;
+  border: none;
+  padding: 0 0 4px;
+}
+
+@media (max-width: 720px) {
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .settings-row-control {
+    width: 100%;
+  }
+  .settings-row-control input,
+  .settings-row-control select {
+    width: 100% !important;
+  }
+  .settings-row .settings-switch {
+    align-self: flex-start;
+    width: 38px;
+  }
+}
+
+/* MCP server list */
+.mcp-server-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+.mcp-server-row + .mcp-server-row {
+  margin-top: 8px;
+}
+.mcp-server-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.mcp-server-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  color: var(--text-bright);
+  font-size: 13px;
+  font-weight: 600;
+}
+.mcp-server-meta {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+.mcp-server-meta.err {
+  color: var(--danger-hover);
+}
+.mcp-server-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.settings-tag.dot {
+  gap: 5px;
+}
+.settings-tag.dot::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.settings-tag.status-connected {
+  color: #8fe3b4;
+  border-color: rgba(143, 227, 180, 0.32);
+  background: rgba(143, 227, 180, 0.12);
+}
+.settings-tag.status-connecting {
+  color: var(--dirty, #e0a64d);
+  border-color: rgba(224, 166, 77, 0.32);
+  background: rgba(224, 166, 77, 0.1);
+}
+.settings-tag.status-failed {
+  color: var(--danger-hover, #f1707b);
+  border-color: rgba(241, 112, 123, 0.32);
+  background: rgba(241, 112, 123, 0.1);
+}
+.settings-tag.status-disabled {
+  color: var(--text-dim);
+}
+
+/* Skill cards: fixed-height rows with hover tooltip */
+.skill-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 64px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  overflow: visible;
+}
+.skill-card + .skill-card {
+  margin-top: 8px;
+}
+.skill-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.skill-card-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-bright);
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
+}
+.skill-card-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.skill-card-desc {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.skill-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.skill-tooltip-floating {
+  position: fixed;
+  z-index: 4000;
+  max-width: 360px;
+  margin: 14px 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: #2d3140;
+  background: color-mix(in srgb, var(--bg-elevated, #20222a) 78%, #ffffff 22%);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.72), 0 4px 12px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  animation: skill-tooltip-in 0.12s ease;
+}
+@keyframes skill-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.skill-tooltip-title {
+  color: var(--text-bright);
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.skill-tooltip-desc {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: normal;
+}
+.skill-tooltip-when {
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+/* Git import block: avoid double divider before the action button */
+.skill-import .settings-row {
+  border-bottom: none;
+  padding-top: 0;
+}
+.skill-import-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
+/* SENTINEL_SETTINGS_CSS */
+
+/* Environment check section */
+.env-summary {
+  margin-bottom: 14px;
+}
+.env-summary-os {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.env-summary-label {
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+}
+.env-summary-ok {
+  padding: 9px 12px;
+  font-size: 12px;
+  color: #8fe3b4;
+  background: rgba(143, 227, 180, 0.08);
+  border: 1px solid rgba(143, 227, 180, 0.28);
+  border-radius: 8px;
+}
+.env-tool-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 11px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.env-tool-row:first-child {
+  border-top: none;
+}
+.env-tool-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.env-tool-actions {
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+.env-install-btn {
+  white-space: nowrap;
+}
+.env-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.env-tool-hint {
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.env-tool-path,
+.env-tool-error {
+  font-size: 11px;
+  word-break: break-all;
+}
+.env-tool-path {
+  color: var(--text-faint, #6b7280);
+  font-family: var(--mono, monospace);
+}
+.env-tool-error {
+  color: var(--danger-hover);
+}
+.env-tool-install {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.env-tool-cmd {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-family: var(--mono, monospace);
+  font-size: 11.5px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.env-mini-btn {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.env-mini-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.env-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-dim);
+}
+.env-badge-ok {
+  color: #8fe3b4;
+  background: rgba(143, 227, 180, 0.12);
+  border-color: rgba(143, 227, 180, 0.32);
+}
+.env-badge-warn {
+  color: var(--dirty);
+  background: rgba(224, 166, 77, 0.1);
+  border-color: rgba(224, 166, 77, 0.32);
+}
+.env-badge-err {
+  color: var(--danger-hover);
+  background: rgba(229, 115, 115, 0.1);
+  border-color: rgba(229, 115, 115, 0.32);
+}
+
+/* ============================================================
+   Light theme corrections for the redesigned settings dialog.
+   The dark UI hardcodes rgba(0,0,0,…) fills and rgba(255,255,255,…)
+   borders that turn into muddy grey blocks / invisible edges on a
+   light background. Remap them to theme tokens here.
+   ============================================================ */
+:root[data-theme-mode='light'] .settings-modal {
+  border-color: var(--border) !important;
+}
+:root[data-theme-mode='light'] .settings-sidebar {
+  background: var(--bg-inset);
+}
+:root[data-theme-mode='light'] .settings-sidebar-title,
+:root[data-theme-mode='light'] .settings-nav-item,
+:root[data-theme-mode='light'] .settings-nav-title,
+:root[data-theme-mode='light'] .settings-nav-icon {
+  color: #000000;
+}
+:root[data-theme-mode='light'] .settings-nav-item.active {
+  background: rgba(var(--accent-rgb), 0.14);
+}
+:root[data-theme-mode='light'] .settings-footer {
+  background: var(--bg-elevated);
+}
+:root[data-theme-mode='light'] .settings-row {
+  border-bottom-color: var(--border-soft);
+}
+:root[data-theme-mode='light'] .settings-actions {
+  border-top-color: var(--border-soft);
+}
+
+/* Inputs / selects / textareas: black fill -> light inset surface */
+:root[data-theme-mode='light'] .settings-row-control input:not([type='checkbox']),
+:root[data-theme-mode='light'] .settings-row-control select,
+:root[data-theme-mode='light'] .settings-row-control textarea,
+:root[data-theme-mode='light'] .settings-ai-bar select {
+  background: var(--bg-inset);
+  border-color: var(--border);
+  color: var(--text);
+}
+:root[data-theme-mode='light'] .settings-row-control input::placeholder,
+:root[data-theme-mode='light'] .settings-row-control textarea::placeholder {
+  color: var(--text-dim);
+}
+
+/* AI bar / switch / tag surfaces built from white overlays */
+:root[data-theme-mode='light'] .settings-ai-bar {
+  background: var(--bg-inset);
+  border-color: var(--border);
+}
+:root[data-theme-mode='light'] .settings-switch-track {
+  background: rgba(40, 35, 28, 0.22);
+}
+:root[data-theme-mode='light'] .settings-tag {
+  border-color: var(--border);
+}
+:root[data-theme-mode='light'] .mcp-server-row,
+:root[data-theme-mode='light'] .skill-card {
+  background: var(--bg-inset);
+  border-color: var(--border);
+}
+
+/* Secondary buttons hardcode a near-black fill (#2a2d2e). Lighten
+   them inside the settings dialog so they read as neutral chips. */
+:root[data-theme-mode='light'] .settings-modal .btn-secondary {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+:root[data-theme-mode='light'] .settings-modal .btn-secondary:hover {
+  background: var(--bg-hover);
+}
+:root[data-theme-mode='light'] .settings-modal .btn-secondary.danger {
+  color: var(--danger);
+}
+:root[data-theme-mode='light'] .settings-modal .btn-secondary:disabled {
+  opacity: 0.5;
+}
+
+/* AI section sticky action bar uses a dark gradient + white border. */
+:root[data-theme-mode='light'] .settings-ai-section .settings-actions {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 70%, transparent), var(--bg-elevated) 60%);
+  border-top-color: var(--border);
+}
+
+/* Environment section: faint paths / hints are illegible on white. */
+:root[data-theme-mode='light'] .env-tool-path {
+  color: #5a5550;
+}
+:root[data-theme-mode='light'] .env-tool-hint,
+:root[data-theme-mode='light'] .env-summary-os,
+:root[data-theme-mode='light'] .env-tool-cmd {
+  color: var(--text);
+}
+:root[data-theme-mode='light'] .env-tool-row {
+  border-top-color: var(--border-soft);
+}
