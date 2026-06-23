@@ -6,6 +6,7 @@ import { toast } from '@/stores/toastStore'
 import { pathsEqual } from '@/utils/path'
 import MessageList from './MessageList'
 import AgentComposer from './AgentComposer'
+import AgentsMdHint from './AgentsMdHint'
 import { detectAtMention, removeAtMention } from './atMention'
 import type { PickItem } from './ContextPicker'
 import {
@@ -218,6 +219,7 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
                   <p>
                     在下方输入任务；<code>@文件</code> 附加上下文。变更会以卡片形式出现在对话流中。
                   </p>
+                  <AgentsMdHint workspaceRoot={workspaceRoot} />
                 </>
               ) : (
                 <>

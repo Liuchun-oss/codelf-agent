@@ -337,6 +337,25 @@ export default function HomeScreen(): JSX.Element {
               <div className="home-landing">
               <div className="home-hero">
                 <h1 className="home-hero-title">{greeting()}</h1>
+                {!hasProfile && (
+                  <div className="home-setup-banner">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M12 8v5" strokeLinecap="round" />
+                      <circle cx="12" cy="16.5" r="0.6" fill="currentColor" stroke="none" />
+                    </svg>
+                    <span className="home-setup-banner-text">
+                      还没有配置 AI 模型，配置后即可开始对话。
+                    </span>
+                    <button
+                      type="button"
+                      className="home-setup-banner-btn"
+                      onClick={() => useUiStore.getState().setShowSettings(true)}
+                    >
+                      去添加模型
+                    </button>
+                  </div>
+                )}
                 <div className="home-composer">
                   <textarea
                     ref={textareaRef}

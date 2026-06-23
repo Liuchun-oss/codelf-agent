@@ -6,6 +6,8 @@
 
 你只管说想做什么，剩下的交给它。Codelf 是一个内置自主式 AI Agent 的桌面应用，能用大白话帮你开发项目、整理资料、操作电脑——也就是大家说的 vibecoding。它同样是一个功能完整的编辑器，写代码、跑终端、连浏览器、控制本地程序样样都行。
 
+<img src="resources/poster.png" alt="Codelf 核心能力 · 8 大亮点" width="960" />
+
 ![version](https://img.shields.io/badge/version-0.1.3-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)
@@ -14,7 +16,7 @@
 ![react](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![typescript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 
-[界面预览](#界面预览) · [为什么选择](#为什么选择-codelf) · [它能做什么](#它能做什么) · [技术栈](#技术栈) · [快速开始](#快速开始) · [打包构建](#打包构建) · [官网](https://codelf.top) · [联系我](#联系我)
+[界面预览](#界面预览) · [为什么选择](#为什么选择-codelf) · [它能做什么](#它能做什么) · [插件系统](#插件系统) · [技术栈](#技术栈) · [快速开始](#快速开始) · [打包构建](#打包构建) · [官网](https://codelf.top) · [联系我](#联系我)
 
 </div>
 
@@ -71,8 +73,45 @@
   - 完全本地化，数据不出企业内网，支持**中文语义检索**（内置 bge-small-zh-v1.5 模型），召回准确率远超关键词搜索
 - **操控浏览器**：内置联网搜索、网页抓取和 Playwright 浏览器自动化，能自己打开网页、导航、点击、填表单、截图、抓取内容。
 - **操控桌面应用**：跨平台控制你电脑里的本地程序——启动 / 关闭应用、读取窗口界面、点按钮、填文本、截图查看，把手动操作交给它。
-- **可扩展**：支持 Agent Skills 一键安装可复用技能，支持接入 MCP（Model Context Protocol）的第三方工具与资源。
+- **插件系统**：一键从 Git 安装 Codex / Claude 插件，自动注册其 **Agent Skills** 与 **MCP 工具**，能力随装随用、可一键卸载。支持 `owner/repo`、完整 GitHub 链接、`/tree/` 子目录链接或任意 git 地址，详见下方 [插件系统](#插件系统)。
+- **可扩展**：除插件外，也支持单独导入可复用的 Agent Skills，或手动接入 MCP（Model Context Protocol）的第三方工具与资源。
 - **写代码也专业**：内置 TypeScript / Python / Vue / JSON / YAML 等语言服务，行内补全、选中改写、一键修复报错、自动生成提交信息，Python 环境自动发现并切换，界面与编辑器内置中文本地化。
+
+## 插件系统
+
+Codelf 内置插件系统，让你**一键复用社区已有的 Codex / Claude 插件**——不用手动配置，安装即用。一个插件可以同时携带 **Agent Skills**（可复用的技能流程）和 **MCP 服务**（第三方工具与资源），Codelf 会自动把它们注册进来。
+
+### 怎么用
+
+两种方式都可以：
+
+- **在 Agent 对话里说**：直接让 AI「安装某某插件」，它会调用内置的 `InstallPlugin` 工具完成安装。
+- **在设置里装**：打开「设置 → 插件」，填入来源地址点「安装」，已安装的插件可在此查看与一键卸载。
+
+来源地址支持多种写法：
+
+```text
+owner/repo                                  # GitHub 简写
+https://github.com/owner/repo               # 完整链接
+https://github.com/owner/repo/tree/main/x   # /tree/ 子目录
+https://example.com/any/repo.git            # 任意 git 地址
+```
+
+> 需要本机已安装 `git`。插件仓库需包含 `.codex-plugin/plugin.json` 或 `.claude-plugin/plugin.json` 清单。
+
+### 它做了什么
+
+安装时，Codelf 会自动完成这些步骤（克隆 → 解析清单 → 安装技能 → 注册 MCP → 装依赖 → 落盘记录）：
+
+- **安装并适配技能**：解析插件的 skills 目录，把每个 `SKILL.md` 适配到 Codelf 约定（如把 `.sh` 启动脚本在 Windows 上改走 git-bash、把 Codex 专属路径占位替换为当前工作区等），安装后即出现在可用技能列表，用 `Skill` 工具按名调用。
+- **注册 MCP 服务**：解析清单里内联或 `.mcp.json` 引用的 MCP server，自动加上插件命名空间避免重名冲突，并把 `bash` 启动脚本改写为跨平台的 `node` 直启，注册后热重连即可使用。
+- **管理与卸载**：插件装到 `~/.codelf/plugins/<name>/`，并写入安装记录。卸载时会删除文件并自动移除其注册的 MCP 服务，互不残留。
+
+### 安全设计
+
+- **供应链门控**：含 `package.json` 的插件默认**不会**自动执行 `npm install`（避免运行第三方仓库的任意脚本）。仅在你信任来源时，于「设置 → 插件」开启「允许插件自动安装依赖」，或事后手动安装。
+- **路径隔离**：插件名经过严格校验，安装目录强制限定为插件根的直接子目录，杜绝 `../` 路径逃逸。
+- **命名空间隔离**：插件的 MCP server 名带插件前缀，不会覆盖你已有的同名配置，卸载时也只清理自己注册的那些。
 
 ## 技术栈
 
