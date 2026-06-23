@@ -102,6 +102,18 @@ interface UiState {
   /** 产物预览栏宽度（px），可拖拽分隔条调整 */
   homeArtifactWidth: number
   setHomeArtifactWidth: (w: number) => void
+  /** 对话模式下「内置浏览器」标签是否开启（作为产物面板的一个标签） */
+  homeBrowserOpen: boolean
+  /** 对话模式内置浏览器当前 URL */
+  homeBrowserUrl: string
+  /** 每次请求打开浏览器自增，用于强制把焦点切到浏览器标签（即使已处于打开态） */
+  homeBrowserFocusNonce: number
+  /** 产物面板当前激活的标签 path（'__browser__' 表示浏览器标签；null 表示自动） */
+  homeArtifactActiveTab: string | null
+  setHomeArtifactActiveTab: (path: string | null) => void
+  openHomeBrowser: (url?: string) => void
+  closeHomeBrowser: () => void
+  setHomeBrowserUrl: (url: string) => void
   /** 对话模式下用户选择的工作区（供切换到 IDE 时使用） */
   homePickedWorkspace: Workspace | null
   setHomePickedWorkspace: (ws: Workspace | null) => void
@@ -153,6 +165,22 @@ export const useUiStore = create<UiState>((set, get) => {
     setHomeArtifactOpen: (v) => set({ homeArtifactOpen: v }),
     homeArtifactWidth: 520,
     setHomeArtifactWidth: (w) => set({ homeArtifactWidth: Math.max(320, Math.min(w, 1100)) }),
+    homeBrowserOpen: false,
+    homeBrowserUrl: 'https://www.bing.com',
+    homeBrowserFocusNonce: 0,
+    homeArtifactActiveTab: null,
+    setHomeArtifactActiveTab: (path) => set({ homeArtifactActiveTab: path }),
+    openHomeBrowser: (url) =>
+      set((s) => ({
+        homeBrowserOpen: true,
+        homeArtifactOpen: true,
+        homeBrowserUrl: url?.trim() || s.homeBrowserUrl,
+        homeBrowserFocusNonce: s.homeBrowserFocusNonce + 1,
+        // 同步写死激活标签为浏览器，杜绝任何 effect 竞态。
+        homeArtifactActiveTab: '__browser__'
+      })),
+    closeHomeBrowser: () => set({ homeBrowserOpen: false, homeArtifactActiveTab: null }),
+    setHomeBrowserUrl: (url) => set({ homeBrowserUrl: url }),
     homePickedWorkspace: null,
     setHomePickedWorkspace: (ws) => set({ homePickedWorkspace: ws }),
     showFileTree: true,

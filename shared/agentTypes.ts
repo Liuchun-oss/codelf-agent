@@ -102,6 +102,13 @@ export type AgentEvent =
   | { type: 'text_delta'; turnId: string; content: string }
   | { type: 'thinking_delta'; turnId: string; content: string }
   | {
+      // 模型生成图片的流式中间预览（base64 data URL）。前端按 index 覆盖渲染。
+      type: 'image_progress'
+      turnId: string
+      index: number
+      dataUrl: string
+    }
+  | {
       type: 'tool_call_start'
       turnId: string
       callId: string
@@ -339,6 +346,9 @@ export interface ProviderProfile {
   
   fimEnabled?: boolean
 
+  // 启用后该 Provider 改走 OpenAI Responses API，支持模型在对话中直接生成图片。
+  imageGeneration?: boolean
+
   
   azureDeployment?: string
   azureApiVersion?: string
@@ -467,7 +477,7 @@ export interface AuditEntry {
 
 export interface DebugEventRecord {
   ts: string
-  kind: 'request_start' | 'request_end' | 'request_error' | 'tool_call' | 'compact'
+  kind: 'request_start' | 'request_end' | 'request_error' | 'tool_call' | 'compact' | 'memory'
   sessionId?: string
   turnId?: string
   label?: string
@@ -488,6 +498,16 @@ export interface TestConnectionResult {
   balanceAvailable?: boolean
   balanceTotal?: string
   balanceCurrency?: string
+}
+
+export interface TestImageGenResult {
+  ok: boolean
+  error?: string
+  latencyMs?: number
+  // 生成图片的 data URL（PNG base64），供前端直接预览，不落盘。
+  dataUrl?: string
+  // 是否在过程中收到过流式中间预览。
+  sawPartial?: boolean
 }
 
 export interface SubagentTaskSummary {

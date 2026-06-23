@@ -66,6 +66,12 @@ interface EditorState {
   togglePin: (path: string) => void
   
   newUntitled: () => void
+  /** Open an interactive in-app browser tab at the given URL (deduped per URL). */
+  openBrowser: (url?: string) => void
+  /** Persist the current URL of a browser tab as the user navigates. */
+  setBrowserUrl: (path: string, url: string) => void
+  /** Update a browser tab's display name from the page title. */
+  setBrowserTitle: (path: string, title: string) => void
   
   setCompareLeft: (path: string) => void
   
@@ -240,6 +246,39 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       untitled: true
     }
     set((s) => ({ tabs: [tab, ...s.tabs], activeTabPath: tab.path }))
+  },
+
+  openBrowser: (url) => {
+    const target = url?.trim() || 'https://www.bing.com'
+    let n = 1
+    const existingBrowsers = get().tabs.filter((t) => t.kind === 'browser')
+    while (existingBrowsers.some((t) => t.path === `browser:${n}`)) n++
+    const path = `browser:${n}`
+    const tab: EditorTab = {
+      path,
+      name: '浏览器',
+      content: '',
+      dirty: false,
+      language: 'plaintext',
+      kind: 'browser',
+      url: target
+    }
+    set((s) => ({ tabs: [tab, ...s.tabs], activeTabPath: path }))
+  },
+
+  setBrowserUrl: (path, url) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.path === path && t.kind === 'browser' ? { ...t, url } : t))
+    }))
+  },
+
+  setBrowserTitle: (path, title) => {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    const name = trimmed.length > 40 ? `${trimmed.slice(0, 39)}…` : trimmed
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.path === path && t.kind === 'browser' ? { ...t, name } : t))
+    }))
   },
 
   openTab: (tab) => {

@@ -202,6 +202,19 @@ export default function App(): JSX.Element {
     return off
   }, [])
 
+  // 内置浏览器打开请求（来自 agent 的 OpenInAppBrowser 工具、或 webview 内弹窗）。
+  // 必须在 App 顶层注册：首页/聊天模式下 IDE 工作台尚未挂载，若监听器只存在于
+  // EditorArea 则事件无人接收，浏览器标签不会打开。这里按当前视图分发到对应面板。
+  useEffect(() => {
+    return window.lc.onBrowserOpenUrl((url) => {
+      if (useUiStore.getState().appView === 'workspace') {
+        useEditorStore.getState().openBrowser(url)
+      } else {
+        useUiStore.getState().openHomeBrowser(url)
+      }
+    })
+  }, [])
+
   const appView = useUiStore((s) => s.appView)
   // IDE 工作台首次进入后保持挂载（仅 CSS 隐藏），首页↔IDE 秒切且编辑器/终端状态保温
   const [ideMounted, setIdeMounted] = useState(false)

@@ -176,6 +176,19 @@ export default function ChatHistory({ open, onClose, anchorRef, workspaceRoot }:
                       className="chat-history-action-btn"
                       onClick={(e) => {
                         e.stopPropagation()
+                        void window.lc.clipboardWriteText(s.id)
+                        toast.info('对话ID已复制')
+                        setMenuId(null)
+                      }}
+                      title="复制对话ID"
+                    >
+                      复制ID
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-history-action-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
                         void onExport(s.id)
                       }}
                       title="导出为 Markdown"

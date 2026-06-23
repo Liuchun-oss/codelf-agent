@@ -112,3 +112,17 @@ Usage:
 - "sessionId" comes from BrowserOpen.
 - Always call this when you are done with browser automation.
 - After closing, the sessionId is no longer valid.`
+
+export const OPEN_IN_APP_BROWSER_NAME = 'OpenInAppBrowser'
+
+export const OPEN_IN_APP_BROWSER_DESCRIPTION = `Open a URL in Codelf's built-in, user-facing browser tab (not the Playwright automation browser).
+
+Use this when you want the USER to see and interact with a web page directly inside Codelf — for example after starting a local dev server or web service (http://127.0.0.1:PORT), or to show documentation/a preview the user should look at.
+
+Behavior:
+- In chat mode the page opens as a tab in the artifact preview panel; in IDE mode it opens as an editor tab.
+- The page is fully interactive (clicks, forms, logins). Loopback/localhost URLs are allowed.
+- This does NOT return page content to you. It is purely for showing a page to the user. For agent-side reading/automation of a page, use the Browser* (Playwright) tools instead.
+
+Usage:
+- "url" must be a fully-qualified http/https URL (e.g. http://127.0.0.1:43217).`

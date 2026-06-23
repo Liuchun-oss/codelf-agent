@@ -29,16 +29,19 @@ import {
   getWebSearchSettings,
   saveWebSearchSettings,
   getMemorySettings,
-  saveMemorySettings
+  saveMemorySettings,
+  getImageGenSettings,
+  saveImageGenSettings
 } from '../agent/settings/agentSettingsStore'
 import { resetOutboundDispatcher } from '../agent/providers/network'
-import type { NetworkSettings, WebSearchSettingsDraft, WebSearchSettingsSummary } from '@shared/agentSettings'
+import type { NetworkSettings, WebSearchSettingsDraft, WebSearchSettingsSummary, ImageGenSettingsDraft, ImageGenSettingsSummary, ImageGenTestResult } from '@shared/agentSettings'
 import type { MemorySettings } from '@shared/memoryTypes'
 import {
   WEB_SEARCH_IQS_KEY_REF,
   WEB_SEARCH_BRAVE_KEY_REF,
   resolveWebSearchProvider
 } from '../agent/tools/webSearchTool'
+import { IMAGE_GEN_KEY_REF, generateImages } from '../agent/services/imageGenService'
 import { setSecret, hasSecret, deleteSecret } from './secrets'
 import {
   listProfiles,
@@ -47,7 +50,7 @@ import {
   saveProfile,
   deleteProfile
 } from '../agent/providers/profileStore'
-import { testConnection } from '../agent/providers/testConnection'
+import { testConnection, testImageGeneration } from '../agent/providers/testConnection'
 import { fimComplete } from '../agent/providers/fim'
 import { inlineEdit } from '../agent/orchestrator/inlineEdit'
 import { getExistingQueryEngine, getQueryEngine, disposeQueryEngine } from '../agent/orchestrator/queryEngine'
@@ -262,6 +265,11 @@ export function registerAiIpc(): void {
     async (_e, draft: ProfileDraft): Promise<TestConnectionResult> => testConnection(draft)
   )
 
+  ipcMain.handle(
+    'ai:testImageGeneration',
+    async (_e, draft: ProfileDraft) => testImageGeneration(draft)
+  )
+
   let fimAbort: AbortController | null = null
   ipcMain.handle('ai:fimComplete', async (_e, req: FimRequest): Promise<FimResult> => {
     
@@ -388,6 +396,38 @@ export function registerAiIpc(): void {
       return webSearchSummary()
     }
   )
+
+  const imageGenSummary = (): ImageGenSettingsSummary => {
+    const settings = getImageGenSettings()
+    return { ...settings, hasApiKey: hasSecret(IMAGE_GEN_KEY_REF) }
+  }
+
+  ipcMain.handle('ai:getImageGenSettings', async (): Promise<ImageGenSettingsSummary> => imageGenSummary())
+
+  ipcMain.handle(
+    'ai:saveImageGenSettings',
+    async (_e, draft: ImageGenSettingsDraft): Promise<ImageGenSettingsSummary> => {
+      const { apiKey, ...config } = draft ?? {}
+      if (apiKey !== undefined) {
+        if (apiKey === '') deleteSecret(IMAGE_GEN_KEY_REF)
+        else setSecret(IMAGE_GEN_KEY_REF, apiKey)
+      }
+      saveImageGenSettings(config)
+      return imageGenSummary()
+    }
+  )
+
+  ipcMain.handle('ai:testImageGen', async (): Promise<ImageGenTestResult> => {
+    const started = Date.now()
+    const outcome = await generateImages(
+      { prompt: '生成一张简单的测试图片：一个蓝色的圆形，纯色背景。' },
+      { persist: false }
+    )
+    if (!outcome.ok || !outcome.firstDataUrl) {
+      return { ok: false, error: outcome.error ?? '图像生成失败', latencyMs: Date.now() - started }
+    }
+    return { ok: true, latencyMs: Date.now() - started, dataUrl: outcome.firstDataUrl }
+  })
 
   ipcMain.handle('ai:getMemorySettings', async (): Promise<MemorySettings> => getMemorySettings())
 

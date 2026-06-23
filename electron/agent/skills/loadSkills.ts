@@ -1,4 +1,4 @@
-import { promises as fs } from 'fs'
+import { promises as fs, readdirSync } from 'fs'
 import { basename, delimiter, isAbsolute, join, resolve } from 'path'
 import { homedir } from 'os'
 import type { SkillDefinition, SkillExecutionContext, SkillSummary } from './types'
@@ -252,6 +252,21 @@ export function userSkillsRoots(): string[] {
   return home ? [join(home, DATA_DIR_NAME, 'skills')] : []
 }
 
+// 已安装插件各自的 skills 目录：~/<DATA_DIR_NAME>/plugins/<name>/skills
+// 这些 skill 与用户 skill 同级（source: 'user'），可被禁用但展示为用户来源。
+export function pluginSkillsRoots(): string[] {
+  const home = homedir()
+  if (!home) return []
+  const pluginsRoot = join(home, DATA_DIR_NAME, 'plugins')
+  try {
+    return readdirSync(pluginsRoot, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => join(pluginsRoot, e.name, 'skills'))
+  } catch {
+    return []
+  }
+}
+
 async function loadSkillsFromRoot(root: string | null, source: SkillDefinition['source']): Promise<SkillDefinition[]> {
   if (!root) return []
 
@@ -290,7 +305,7 @@ export async function loadProjectSkills(workspaceRoot: string | null | undefined
 
 export async function loadUserSkills(): Promise<SkillDefinition[]> {
   const merged = new Map<string, SkillDefinition>()
-  for (const root of userSkillsRoots()) {
+  for (const root of [...userSkillsRoots(), ...pluginSkillsRoots()]) {
     for (const skill of await loadSkillsFromRoot(root, 'user')) {
       if (!merged.has(skill.name.toLowerCase())) merged.set(skill.name.toLowerCase(), skill)
     }

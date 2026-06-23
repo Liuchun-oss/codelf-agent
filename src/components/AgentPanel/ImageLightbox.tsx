@@ -7,13 +7,48 @@ interface ImageLightboxProps {
   onClose: () => void
 }
 
-function handleSave(src: string): void {
-  const a = document.createElement('a')
-  a.href = src
-  a.download = `screenshot-${Date.now()}.jpg`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
+async function handleSave(src: string): Promise<void> {
+  try {
+    const resp = await fetch(src)
+    const blob = await resp.blob()
+    const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg'
+    const objectUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = `image-${Date.now()}.${ext}`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+    return
+  } catch {
+    // fetch 失败时退到 canvas 方案，避免用 <a href="codelf-artifact://"> 直接导航整个窗口。
+  }
+  try {
+    const img = new Image()
+    img.src = src
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve()
+      img.onerror = () => reject(new Error('load failed'))
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    canvas.getContext('2d')!.drawImage(img, 0, 0)
+    const blob = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png')
+    )
+    const objectUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = `image-${Date.now()}.png`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  } catch {
+    /* 两种方案都失败则放弃，绝不导航整窗 */
+  }
 }
 
 const CopyIcon = (
@@ -89,7 +124,7 @@ export default function ImageLightbox({ src, alt, onClose }: ImageLightboxProps)
           >
             {copied ? CheckIcon : CopyIcon}
           </button>
-          <button className="lightbox-btn" onClick={() => handleSave(src)} aria-label="保存到本地" title="保存到本地">
+          <button className="lightbox-btn" onClick={() => void handleSave(src)} aria-label="保存到本地" title="保存到本地">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
               <path d="M8 2v8m0 0L5 7.5M8 10l3-2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M3 13h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>

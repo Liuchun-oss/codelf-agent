@@ -23,6 +23,7 @@ import InlineEditWidget from './InlineEditWidget'
 import TabBar from './TabBar'
 import Breadcrumbs from './Breadcrumbs'
 import EditorEmpty from './EditorEmpty'
+import BrowserView from '@/components/common/BrowserView'
 import type { EditorTab } from '@/types'
 
 const FONT_SIZE_MIN = 8
@@ -195,6 +196,16 @@ function EditorPane({ tab, isPrimary }: { tab: EditorTab; isPrimary: boolean }):
     ed.focus()
     useEditorStore.getState().clearReveal()
   }, [revealRequest, tab.path, isPrimary])
+
+  if (tab.kind === 'browser') {
+    return (
+      <BrowserView
+        initialUrl={tab.url ?? 'https://www.bing.com'}
+        onUrlChange={(url) => useEditorStore.getState().setBrowserUrl(tab.path, url)}
+        onTitleChange={(title) => useEditorStore.getState().setBrowserTitle(tab.path, title)}
+      />
+    )
+  }
 
   if (tab.kind === 'image') {
     return (

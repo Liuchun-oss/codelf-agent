@@ -283,6 +283,14 @@ function TableBlock({ children }: { children: ReactNode }): JSX.Element {
   )
 }
 
+// 普通 markdown 图片：加载失败时自动隐藏，避免显示损坏图标。
+// （模型有时会在正文里重复嵌入一张它记不全 URL 的图，导致坏图标。）
+function MarkdownImage({ src, alt, ...rest }: { src?: string; alt?: string }): JSX.Element | null {
+  const [failed, setFailed] = useState(false)
+  if (!src || failed) return null
+  return <img className="cm-md-img" src={src} alt={alt ?? ''} loading="lazy" onError={() => setFailed(true)} {...rest} />
+}
+
 const COMPONENTS: Components = {
   a: ({ node: _node, children, href, ...rest }) => (
     <a className="cm-md-link" href={href} target="_blank" rel="noreferrer noopener" {...rest}>
@@ -296,7 +304,7 @@ const COMPONENTS: Components = {
         return <BrowserPreviewImage previewId={previewId} className="cm-md-img" alt={alt ?? ''} />
       }
     }
-    return <img className="cm-md-img" src={typeof src === 'string' ? src : undefined} alt={alt ?? ''} loading="lazy" {...rest} />
+    return <MarkdownImage src={typeof src === 'string' ? src : undefined} alt={alt ?? ''} {...rest} />
   },
   blockquote: ({ node: _node, children }) => {
     const text = extractText(children).trimStart()

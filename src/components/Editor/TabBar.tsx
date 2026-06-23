@@ -23,7 +23,8 @@ export default function TabBar(): JSX.Element | null {
     closeSaved,
     closeAll,
     togglePin,
-    moveTab
+    moveTab,
+    openBrowser
   } = useEditorStore()
 
   const [menu, setMenu] = useState<MenuState | null>(null)
@@ -186,6 +187,18 @@ export default function TabBar(): JSX.Element | null {
           )}
         </button>
       )}
+
+      <button
+        className="tabbar-run-btn"
+        title="新建浏览器标签页"
+        aria-label="新建浏览器标签页"
+        onClick={() => openBrowser()}
+      >
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden>
+          <circle cx="8" cy="8" r="6.2" />
+          <path d="M1.8 8h12.4M8 1.8c1.8 1.7 2.8 3.9 2.8 6.2S9.8 12.5 8 14.2C6.2 12.5 5.2 10.3 5.2 8S6.2 3.5 8 1.8z" />
+        </svg>
+      </button>
 
       {dropdownOpen && createPortal(
         <>

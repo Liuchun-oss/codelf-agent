@@ -2,14 +2,16 @@ import { app } from 'electron'
 import { readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { randomBytes } from 'crypto'
-import type { AgentBehaviorSettings, NetworkSettings, WebSearchSettings } from '@shared/agentSettings'
+import type { AgentBehaviorSettings, NetworkSettings, WebSearchSettings, ImageGenSettings } from '@shared/agentSettings'
 import {
   DEFAULT_AGENT_BEHAVIOR,
   DEFAULT_NETWORK_SETTINGS,
   DEFAULT_WEB_SEARCH_SETTINGS,
+  DEFAULT_IMAGE_GEN_SETTINGS,
   normalizeAgentBehavior,
   normalizeNetworkSettings,
-  normalizeWebSearchSettings
+  normalizeWebSearchSettings,
+  normalizeImageGenSettings
 } from '@shared/agentSettings'
 import type { McpSettings } from '@shared/mcpTypes'
 import { DEFAULT_MCP_SETTINGS, normalizeMcpSettings } from '@shared/mcpTypes'
@@ -23,6 +25,7 @@ interface SettingsFileShape {
   agent?: Partial<AgentBehaviorSettings>
   network?: Partial<NetworkSettings>
   webSearch?: Partial<WebSearchSettings>
+  imageGen?: Partial<ImageGenSettings>
   mcp?: unknown
   skills?: unknown
   memory?: Partial<MemorySettings>
@@ -31,6 +34,7 @@ interface SettingsFileShape {
 let cache: AgentBehaviorSettings | null = null
 let networkCache: NetworkSettings | null = null
 let webSearchCache: WebSearchSettings | null = null
+let imageGenCache: ImageGenSettings | null = null
 let mcpCache: McpSettings | null = null
 let skillsCache: SkillsSettings | null = null
 let memoryCache: MemorySettings | null = null
@@ -97,6 +101,7 @@ export function resetAgentSettingsCacheForTests(): void {
   cache = null
   networkCache = null
   webSearchCache = null
+  imageGenCache = null
   mcpCache = null
   skillsCache = null
   memoryCache = null
@@ -143,6 +148,25 @@ export function saveWebSearchSettings(patch: Partial<WebSearchSettings>): WebSea
   const next = normalizeWebSearchSettings({ ...getWebSearchSettings(), ...patch })
   writeFile({ ...file, webSearch: next })
   webSearchCache = next
+  return next
+}
+
+
+function loadImageGenFromDisk(): ImageGenSettings {
+  const raw = readFile().imageGen ?? {}
+  return normalizeImageGenSettings({ ...DEFAULT_IMAGE_GEN_SETTINGS, ...raw })
+}
+
+export function getImageGenSettings(): ImageGenSettings {
+  if (!imageGenCache) imageGenCache = loadImageGenFromDisk()
+  return imageGenCache
+}
+
+export function saveImageGenSettings(patch: Partial<ImageGenSettings>): ImageGenSettings {
+  const file = readFile()
+  const next = normalizeImageGenSettings({ ...getImageGenSettings(), ...patch })
+  writeFile({ ...file, imageGen: next })
+  imageGenCache = next
   return next
 }
 

@@ -80,6 +80,7 @@ import { awaitBackgroundTool, cancelSessionBackgroundTools, clearSessionBackgrou
 import { closeBrowserSessionsForAgent } from '../../services/browserSession'
 import { closeDesktopSessionsForAgent } from '../../services/desktopSession'
 import { deleteBrowserPreview } from '../../services/browserPreviewImage'
+import { saveGeneratedImage } from '../../services/generatedImageStore'
 import { EXECUTE_EXTRA_TOOL_NAME } from '../tools/deferredTools'
 import { buildDeferredToolsAnnouncement, restoreDeferredToolDiscovery } from '../tools/deferredToolDiscovery'
 
@@ -878,7 +879,8 @@ export class QueryEngine {
                     : {}),
                   ...(profile.kind === 'deepseek' && profile.reasoningEffort
                     ? { reasoningEffort: profile.reasoningEffort }
-                    : {})
+                    : {}),
+                  ...(profile.imageGeneration ? { imageGeneration: true } : {})
                 },
                 signal
               )) {
@@ -903,6 +905,22 @@ export class QueryEngine {
                   }
                 } else if (chunk.type === 'usage') {
                   applyStreamUsageChunk(roundUsage, chunk)
+                } else if (chunk.type === 'image') {
+                  if (chunk.partial) {
+                    yield {
+                      type: 'image_progress',
+                      turnId,
+                      index: chunk.index,
+                      dataUrl: `data:${chunk.mediaType};base64,${chunk.base64}`
+                    }
+                  } else {
+                    try {
+                      const saved = await saveGeneratedImage(chunk.base64, chunk.mediaType)
+                      const md = `\n\n![生成的图片](${saved.url})`
+                      roundText += md
+                      yield { type: 'text_delta', turnId, content: md }
+                    } catch { /* 落盘失败则忽略该图 */ }
+                  }
                 } else if (chunk.type === 'done') {
                   lastFinishReason = chunk.finishReason
                 }

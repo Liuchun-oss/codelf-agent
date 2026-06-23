@@ -63,6 +63,8 @@ export default function HomeScreen(): JSX.Element {
   const setArtifactOpen = useUiStore((s) => s.setHomeArtifactOpen)
   const artifactWidth = useUiStore((s) => s.homeArtifactWidth)
   const setArtifactWidth = useUiStore((s) => s.setHomeArtifactWidth)
+  const browserOpen = useUiStore((s) => s.homeBrowserOpen)
+  const openHomeBrowser = useUiStore((s) => s.openHomeBrowser)
   const pickedWs = useUiStore((s) => s.homePickedWorkspace)
   const setPickedWs = useUiStore((s) => s.setHomePickedWorkspace)
   const [draft, setDraft] = useState('')
@@ -279,12 +281,27 @@ export default function HomeScreen(): JSX.Element {
                       产物预览
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className="home-artifact-toggle"
+                    title="打开内置浏览器"
+                    onClick={() => {
+                      openHomeBrowser()
+                      setArtifactOpen(true)
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M3 12h18M12 3c2.6 2.4 4 5.6 4 9s-1.4 6.6-4 9c-2.6-2.4-4-5.6-4-9s1.4-6.6 4-9z" />
+                    </svg>
+                    浏览器
+                  </button>
                 </div>
                 <div className="home-chat-body agent-panel" key={currentSessionId}>
                   <ConversationView cwd={sessionCwd} autoFocus />
                 </div>
               </div>
-              {hasArtifacts && artifactOpen && (
+              {(hasArtifacts || browserOpen) && artifactOpen && (
                 <div
                   className="home-artifact-pane"
                   style={{ flex: `0 0 ${artifactWidth}px`, width: artifactWidth }}

@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useUiStore } from '@/stores/uiStore'
+import { useEditorStore } from '@/stores/editorStore'
 
 type SidebarViewId = 'explorer' | 'search' | 'scm' | 'knowledge'
 
@@ -108,6 +109,16 @@ export default function ActivityBar(): JSX.Element {
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
           <path d="M5 4.5A1.5 1.5 0 0 1 6.5 3h11A1.5 1.5 0 0 1 19 4.5v15A1.5 1.5 0 0 1 17.5 21h-11A1.5 1.5 0 0 1 5 19.5z" />
           <path d="M8 7h8M8 11h8M8 15h5" strokeLinecap="round" />
+        </svg>
+      </button>
+      <button
+        className="activity-item"
+        title="内置浏览器"
+        onClick={() => useEditorStore.getState().openBrowser()}
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18M12 3c2.6 2.4 4 5.6 4 9s-1.4 6.6-4 9c-2.6-2.4-4-5.6-4-9s1.4-6.6 4-9z" />
         </svg>
       </button>
     </div>

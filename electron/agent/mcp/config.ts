@@ -36,7 +36,8 @@ function expandConfig(config: McpServerConfig): McpServerConfig {
       args: (config.args ?? []).map(expandEnvVars),
       env: config.env
         ? Object.fromEntries(Object.entries(config.env).map(([k, v]) => [k, expandEnvVars(v)]))
-        : undefined
+        : undefined,
+      cwd: config.cwd ? expandEnvVars(config.cwd) : undefined
     }
   }
   return {

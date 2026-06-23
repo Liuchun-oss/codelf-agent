@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --violet:#8b5cf6; --violet-d:#6d28d9; --indigo:#6366f1;
+    --lilac:#c4b5fd; --ink:#e9e9ee; --muted:#8b8b95;
+    --line:rgba(255,255,255,0.08);
+  }
+  html, body { background:#0a0a0c; }
+  .stage {
+    width: 1120px; min-height: 760px;
+    display:flex;
+    background:
+      radial-gradient(60% 90% at 0% 0%, rgba(139,92,246,0.12), transparent 50%),
+      linear-gradient(135deg, #111114 0%, #0c0c0f 55%, #08080a 100%);
+    color: var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+    position:relative; overflow:hidden;
+  }
+  .grid-bg {
+    position:absolute; inset:0; pointer-events:none;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(90% 90% at 30% 20%, #000 0%, transparent 75%);
+  }
+
+  /* ===== 左侧品牌区 ===== */
+  .left {
+    width: 400px; flex:0 0 400px;
+    padding: 48px 38px;
+    display:flex; flex-direction:column;
+    position:relative; z-index:1;
+    border-right:1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+  }
+  .logo-row { display:flex; align-items:center; gap:16px; }
+  .logo { width:74px; height:74px; border-radius:20px; filter: drop-shadow(0 6px 22px rgba(139,92,246,0.55)); }
+  .brand h1 {
+    font-size:40px; font-weight:800; line-height:1; color:#f5f5f7;
+  }
+  .brand .cn { font-size:15px; color:#9b9ba5; font-weight:600; margin-top:7px; letter-spacing:3px; }
+
+  .slogan { margin-top:34px; font-size:22px; font-weight:700; line-height:1.45; color:#f3f3f5; }
+  .slogan em { font-style:normal; color:#a78bfa; }
+  .desc { margin-top:16px; font-size:13px; color:var(--muted); line-height:1.8; }
+  .desc b { color:#d6d6db; font-weight:600; }
+
+  .pills { display:flex; gap:8px; flex-wrap:wrap; margin-top:24px; }
+  .pill {
+    font-size:11.5px; font-weight:600; color:#c8c8d0;
+    padding:6px 12px; border-radius:999px;
+    background: rgba(255,255,255,0.04); border:1px solid var(--line);
+  }
+
+  .hl { margin-top:30px; display:flex; flex-direction:column; gap:14px; }
+  .hl .row { display:flex; align-items:center; gap:12px; }
+  .hl .dot {
+    width:26px; height:26px; flex:0 0 26px; border-radius:8px;
+    display:flex; align-items:center; justify-content:center;
+    background: rgba(139,92,246,0.14); border:1px solid rgba(139,92,246,0.3);
+  }
+  .hl .dot svg { width:14px; height:14px; stroke:#b69cf5; fill:none; stroke-width:2.4; }
+  .hl .row span { font-size:13px; color:#d6d6db; }
+  .hl .row span b { color:#fff; font-weight:700; }
+
+  .cmd {
+    margin-top:auto; display:flex; align-items:center; justify-content:space-between;
+    background: rgba(255,255,255,0.03); border:1px solid var(--line);
+    border-radius:13px; padding:13px 16px;
+  }
+  .cmd .site { display:flex; align-items:center; gap:9px; }
+  .cmd .site svg { width:16px; height:16px; stroke:#a78bfa; fill:none; stroke-width:1.8; }
+  .cmd code { font-family:"JetBrains Mono","Consolas",monospace; font-size:13.5px; color:#ececf0; letter-spacing:.3px; }
+  .copy {
+    background:linear-gradient(180deg,var(--violet),var(--violet-d)); color:#fff;
+    font-size:11.5px; font-weight:700; padding:6px 13px; border-radius:9px;
+    box-shadow:0 4px 13px rgba(109,40,217,0.4); white-space:nowrap;
+  }
+  .meta { margin-top:14px; font-size:11px; color:#74747e; line-height:1.6; }
+  .meta b { color:#b0a0e0; font-weight:600; }
+
+  /* ===== 右侧特性网格 ===== */
+  .right {
+    flex:1; padding:44px 40px;
+    display:flex; flex-direction:column;
+    position:relative; z-index:1;
+  }
+  .right-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:20px; }
+  .right-head .t { font-size:15px; font-weight:700; color:#f3f3f5; }
+  .right-head .t span { color:#a78bfa; }
+  .right-head .n { font-size:11px; color:var(--muted); }
+
+  .cards { display:grid; grid-template-columns:1fr 1fr; gap:14px; flex:1; }
+  .card.wide { grid-column: span 2; }
+  .card {
+    background: rgba(255,255,255,0.025);
+    border:1px solid var(--line); border-radius:16px; padding:18px 18px;
+    position:relative; overflow:hidden;
+    display:flex; flex-direction:column;
+  }
+  .card::after {
+    content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+    background: linear-gradient(180deg, var(--violet), transparent);
+    opacity:.7;
+  }
+  .card .top { display:flex; align-items:center; gap:11px; }
+  .ic {
+    width:38px; height:38px; flex:0 0 38px; border-radius:11px;
+    display:flex; align-items:center; justify-content:center;
+    background: rgba(139,92,246,0.14);
+    border:1px solid rgba(139,92,246,0.28);
+  }
+  .ic svg { width:20px; height:20px; stroke:#b69cf5; fill:none; stroke-width:1.8; }
+  .card h3 { font-size:14.5px; font-weight:700; color:#f3f3f5; display:flex; align-items:center; gap:7px; }
+  .card h3 .tag {
+    font-size:9.5px; font-weight:700; color:#fff;
+    background:linear-gradient(180deg,var(--violet),var(--violet-d));
+    padding:2px 6px; border-radius:5px;
+  }
+  .card p { font-size:11.5px; color:#9a9aa4; line-height:1.7; margin-top:10px; }
+  .card p b { color:#d2d2d8; font-weight:600; }
+
+  .foot { margin-top:18px; display:flex; align-items:center; justify-content:space-between; }
+  .foot .au { font-size:12.5px; color:#dcdce2; font-weight:700; }
+  .foot .au span { color:#a78bfa; }
+  .foot .st { font-size:10.5px; color:#74747e; }
+  .foot .st b { color:#b0a0e0; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="grid-bg"></div>
+
+    <!-- 左侧品牌 -->
+    <div class="left">
+      <div class="logo-row">
+        <img class="logo" src="../resources/icon.png" />
+        <div class="brand">
+          <h1>Codelf</h1>
+          <div class="cn">码 灵</div>
+        </div>
+      </div>
+
+      <div class="slogan">用自然语言<br/>搞定<em>任何事</em>的 AI 助理</div>
+      <div class="desc">内置自主式 AI Agent 的桌面应用。你只管用大白话说想做什么，剩下的<b>读写文件、跑命令、调工具</b>全交给它——也是一个写代码 / 跑终端 / 连浏览器样样行的完整编辑器。</div>
+
+      <div class="pills">
+        <div class="pill">Windows · macOS</div>
+        <div class="pill">开源免费 MIT</div>
+        <div class="pill">纯本地 · 零泄露</div>
+      </div>
+
+      <div class="hl">
+        <div class="row">
+          <div class="dot"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+          <span>对话 · 编辑 · 终端 · <b>Agent 一应俱全</b></span>
+        </div>
+        <div class="row">
+          <div class="dot"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+          <span>多模型自由切换，<b>哪个便宜聪明用哪个</b></span>
+        </div>
+        <div class="row">
+          <div class="dot"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+          <span>数据全在本地，<b>代码知识库零泄露</b></span>
+        </div>
+      </div>
+
+      <div class="cmd">
+        <div class="site">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 16 0 18M12 3c-2.5 2.5-2.5 16 0 18"/></svg>
+          <code>www.codelf.top</code>
+        </div>
+        <div class="copy">访问官网</div>
+      </div>
+      <div class="meta">开箱即用，对话 / 编辑 / 终端 / Agent 一应俱全 · <b>代码与知识库都在你自己机器上</b></div>
+    </div>
+
+    <!-- 右侧特性 -->
+    <div class="right">
+      <div class="right-head">
+        <div class="t">核心能力 <span>· 8 大亮点</span></div>
+        <div class="n">codelf.top</div>
+      </div>
+
+      <div class="cards">
+        <div class="card">
+          <div class="top">
+            <div class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 7V4M9 12h0M15 12h0"/></svg></div>
+            <h3>自主式 AI Agent</h3>
+          </div>
+          <p>一句话描述需求，它<b>自己读写文件、跑命令、搜资料、调工具</b>，多步骤任务从头做到尾。复杂任务先 Plan 出方案，每回合可整体撤销。</p>
+        </div>
+
+        <div class="card">
+          <div class="top">
+            <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3a4 4 0 0 0-4 4 4 4 0 0 0-2 7 3 3 0 0 0 3 5 3 3 0 0 0 3 1 3 3 0 0 0 3-1 3 3 0 0 0 3-5 4 4 0 0 0-2-7 4 4 0 0 0-4-4z"/></svg></div>
+            <h3>企业知识库 <span class="tag">本地 RAG</span></h3>
+          </div>
+          <p>导入 docx/xlsx/pdf/md，<b>表格完整保留、自动向量化</b>。内置 bge-small-zh 中文语义检索，召回远超关键词，数据不出内网。</p>
+        </div>
+
+        <div class="card">
+          <div class="top">
+            <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M9.5 10a2.5 2 0 0 1 5 0c0 2-3 1.5-3 4"/></svg></div>
+            <h3>高缓存命中 <span class="tag">省钱</span></h3>
+          </div>
+          <p>为每个会话生成<b>稳定缓存键</b>，让供应商 prompt 缓存尽可能命中。同样的长上下文，命中后费用能差好几倍。</p>
+        </div>
+
+        <div class="card">
+          <div class="top">
+            <div class="ic"><svg viewBox="0 0 24 24"><path d="M6 9V6a2 2 0 0 1 2-2h2M18 9V6a2 2 0 0 0-2-2h-2M5 9h14v6a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4z"/></svg></div>
+            <h3>各家大模型，想换就换</h3>
+          </div>
+          <p><b>DeepSeek / Claude / ChatGPT / Azure</b> 原生内置，也支持<b>第三方中转站</b>与任意 OpenAI 兼容接口，国内可直连免科学上网，哪个便宜聪明用哪个。</p>
+        </div>
+
+        <div class="card">
+          <div class="top">
+            <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.5 2.5 13 0 16M12 4c-2.5 2.5-2.5 13 0 16"/></svg></div>
+            <h3>操控浏览器 &amp; 桌面应用</h3>
+          </div>
+          <p>Playwright 自动开网页、点击、填表单、抓内容；还能<b>启动本地程序、读窗口、点按钮、截图操作</b>，替你跑腿。</p>
+        </div>
+
+        <div class="card">
+          <div class="top">
+            <div class="ic"><svg viewBox="0 0 24 24"><path d="M13 3 4 14h7l-1 7 9-11h-7z"/></svg></div>
+            <h3>插件系统 <span class="tag">MCP · Skills</span></h3>
+          </div>
+          <p>一键从 <b>Git 安装插件</b>，自动注册其 <b>Agent Skills 与 MCP 工具</b>，能力随装随用、可一键卸载。同时内置 Monaco 编辑器 + LSP + 终端 + Git，轻量、启动快。</p>
+        </div>
+        <div class="card">
+          <div class="top">
+            <div class="ic"><svg viewBox="0 0 24 24"><path d="M9 4h6a2 2 0 0 1 2 2v13l-5-3-5 3V6a2 2 0 0 1 2-2z"/><path d="M9 9h6M9 12h4"/></svg></div>
+            <h3>长期记忆系统 <span class="tag">跨会话</span></h3>
+          </div>
+          <p>Agent 主动记笔记，<b>项目 + 全局双层记忆</b>跨会话延续上下文，配合 checkpoint 压缩与记忆检索，<b>越用越懂你的约定与偏好</b>。</p>
+        </div>
+
+        <div class="card">
+          <div class="top">
+            <div class="ic"><svg viewBox="0 0 24 24"><path d="M8 10h.01M12 10h.01M16 10h.01M7 16c1.5 1.2 3 1.8 5 1.8s3.5-.6 5-1.8M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-5l-4 3v-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/></svg></div>
+            <h3>Vibe Coding <span class="tag">零门槛</span></h3>
+          </div>
+          <p>不用懂代码、不用学命令，<b>用大白话说想做什么就行</b>。它自己拆解步骤、动手完成——开发项目、改文档、跑数据、操作电脑，<b>从想法到结果一气呵成</b>。</p>
+        </div>
+      </div>
+
+      <div class="foot">
+        <div class="au">@<span>巫枫</span> · 自然语言 AI 助理 · 开源免费</div>
+        <div class="st">Electron 33 · React 18 · TS 5 · <b>Monaco · Playwright · sqlite-vec</b></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

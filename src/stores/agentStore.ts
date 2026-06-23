@@ -165,6 +165,9 @@ export interface ChatMessageView {
   
   images?: ImageAttachment[]
   
+  // 模型流式生成图片时的中间预览（按 index → data URL）。最终图落盘后写入 content markdown。
+  partialImages?: Record<number, string>
+  
   subagent?: SubagentTabView
   
   subagentCallId?: string
@@ -498,6 +501,26 @@ function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): SessionRunti
             streaming: true,
             turnId: event.turnId
           }
+        ]
+      }
+    }
+    case 'image_progress': {
+      const targetId = rt.assistantId
+      if (targetId) {
+        return {
+          ...rt,
+          messages: rt.messages.map((m) =>
+            m.id === targetId ? { ...m, partialImages: { ...(m.partialImages ?? {}), [event.index]: event.dataUrl } } : m
+          )
+        }
+      }
+      const newId = uuid()
+      return {
+        ...rt,
+        assistantId: newId,
+        messages: [
+          ...rt.messages,
+          { id: newId, role: 'assistant', content: '', streaming: true, turnId: event.turnId, partialImages: { [event.index]: event.dataUrl } }
         ]
       }
     }

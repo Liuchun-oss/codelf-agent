@@ -3,7 +3,8 @@ import type {
   ProviderKind,
   ProviderProfileSummary,
   ProfileDraft,
-  TestConnectionResult
+  TestConnectionResult,
+  TestImageGenResult
 } from '@shared/agentTypes'
 import { useAgentStore } from '@/stores/agentStore'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
@@ -43,6 +44,7 @@ interface DraftForm {
   thinkingMode: boolean
   reasoningEffort: 'high' | 'max'
   fimEnabled: boolean
+  imageGeneration: boolean
 }
 
 function blankDraft(): DraftForm {
@@ -62,7 +64,8 @@ function blankDraft(): DraftForm {
     azureApiVersion: '',
     thinkingMode: true,
     reasoningEffort: 'high',
-    fimEnabled: false
+    fimEnabled: false,
+    imageGeneration: false
   }
 }
 
@@ -83,7 +86,8 @@ function fromSummary(p: ProviderProfileSummary): DraftForm {
     azureApiVersion: p.azureApiVersion ?? '',
     thinkingMode: p.thinkingMode ? p.thinkingMode === 'enabled' : true,
     reasoningEffort: p.reasoningEffort ?? 'high',
-    fimEnabled: p.fimEnabled ?? false
+    fimEnabled: p.fimEnabled ?? false,
+    imageGeneration: p.imageGeneration ?? false
   }
 }
 
@@ -113,6 +117,7 @@ function buildDraft(f: DraftForm, includeTypedKey: boolean): ProfileDraft {
     thinkingMode: f.kind === 'deepseek' ? (f.thinkingMode ? 'enabled' : 'disabled') : undefined,
     reasoningEffort: f.kind === 'deepseek' && f.thinkingMode ? f.reasoningEffort : undefined,
     fimEnabled: f.kind === 'deepseek' ? f.fimEnabled : undefined,
+    imageGeneration: (f.kind === 'openai' || f.kind === 'openai-compatible') ? f.imageGeneration : undefined,
     apiKey: includeTypedKey && f.apiKey !== '' ? f.apiKey : undefined
   }
 }
@@ -124,6 +129,8 @@ export default function AiSettingsSection(): JSX.Element {
   const [editingHasKey, setEditingHasKey] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null)
+  const [imgTesting, setImgTesting] = useState(false)
+  const [imgTestResult, setImgTestResult] = useState<TestImageGenResult | null>(null)
   const [secureAvailable, setSecureAvailable] = useState(true)
 
   const refresh = useCallback(async (selectId?: string) => {
@@ -164,6 +171,7 @@ export default function AiSettingsSection(): JSX.Element {
   const patch = (p: Partial<DraftForm>): void => {
     setForm((f) => ({ ...f, ...p }))
     setTestResult(null)
+    setImgTestResult(null)
   }
 
   const selectProfile = (id: string): void => {
@@ -234,6 +242,17 @@ export default function AiSettingsSection(): JSX.Element {
       }
     } finally {
       setTesting(false)
+    }
+  }
+
+  const onTestImage = async (): Promise<void> => {
+    setImgTesting(true)
+    setImgTestResult(null)
+    try {
+      const result = await window.lc.aiTestImageGeneration(buildDraft(form, true))
+      setImgTestResult(result)
+    } finally {
+      setImgTesting(false)
     }
   }
 
@@ -403,6 +422,19 @@ export default function AiSettingsSection(): JSX.Element {
             />
           }
         />
+        {(form.kind === 'openai' || form.kind === 'openai-compatible') && (
+          <SettingsRow
+            title="图像生成 (Responses API)"
+            description="启用后改走 OpenAI Responses API，模型可在对话中直接生成图片。需端点支持 /v1/responses 与 image_generation 工具。"
+            control={
+              <SettingsSwitch
+                id="ai-image-generation"
+                checked={form.imageGeneration}
+                onChange={(v) => patch({ imageGeneration: v })}
+              />
+            }
+          />
+        )}
       </SettingsGroup>
 
       {form.kind === 'deepseek' && (
@@ -450,6 +482,11 @@ export default function AiSettingsSection(): JSX.Element {
         <button className="btn-secondary" onClick={() => void onTest()} disabled={testing}>
           {testing ? '测试中…' : '测试连接'}
         </button>
+        {(form.kind === 'openai' || form.kind === 'openai-compatible') && form.imageGeneration && (
+          <button className="btn-secondary" onClick={() => void onTestImage()} disabled={imgTesting}>
+            {imgTesting ? '生成中…' : '测试图像生成'}
+          </button>
+        )}
         {profileExists && (
           <button className="btn-secondary" onClick={() => void onSetActive()} disabled={isActive}>
             {isActive ? '当前' : '设为当前'}
@@ -464,6 +501,24 @@ export default function AiSettingsSection(): JSX.Element {
           保存
         </button>
       </div>
+
+      {imgTestResult && (
+        <div className={`settings-imgtest ${imgTestResult.ok ? 'ok' : 'err'}`}>
+          {imgTestResult.ok ? (
+            <>
+              <div className="settings-imgtest-msg">
+                图像生成成功 · {imgTestResult.latencyMs ?? '?'}ms
+                {imgTestResult.sawPartial ? ' · 收到流式预览' : ''}
+              </div>
+              {imgTestResult.dataUrl && (
+                <img className="settings-imgtest-img" src={imgTestResult.dataUrl} alt="测试生成的图片" />
+              )}
+            </>
+          ) : (
+            <div className="settings-imgtest-msg">图像生成失败：{imgTestResult.error ?? '未知错误'}</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

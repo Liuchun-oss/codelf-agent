@@ -7,8 +7,10 @@ import AiSettingsSection from './AiSettingsSection'
 import AgentBehaviorSettingsSection from './AgentBehaviorSettingsSection'
 import NetworkSettingsSection from './NetworkSettingsSection'
 import WebSearchSettingsSection from './WebSearchSettingsSection'
+import ImageGenSettingsSection from './ImageGenSettingsSection'
 import McpSettingsSection from './McpSettingsSection'
 import SkillsSettingsSection from './SkillsSettingsSection'
+import PluginsSettingsSection from './PluginsSettingsSection'
 import MemorySettingsSection from './MemorySettingsSection'
 import KnowledgeSettingsSection from './KnowledgeSettingsSection'
 import AppearanceSettingsSection from './AppearanceSettingsSection'
@@ -16,7 +18,7 @@ import EnvSettingsSection from './EnvSettingsSection'
 import DebugPanelSection from './DebugPanelSection'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
 
-type SettingsSection = 'ai' | 'editor' | 'appearance' | 'agent' | 'network' | 'websearch' | 'mcp' | 'skills' | 'memory' | 'knowledge' | 'env' | 'diagnostics'
+type SettingsSection = 'ai' | 'editor' | 'appearance' | 'agent' | 'network' | 'websearch' | 'imagegen' | 'mcp' | 'skills' | 'plugins' | 'memory' | 'knowledge' | 'env' | 'diagnostics'
 
 interface NavItem {
   id: SettingsSection
@@ -56,6 +58,13 @@ const ICON = {
       <path d="M21 21l-4-4" />
     </>
   ),
+  imagegen: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="M21 15l-5-5L5 21" />
+    </>
+  ),
   mcp: (
     <>
       <rect x="3" y="4" width="18" height="6" rx="1.5" />
@@ -66,6 +75,11 @@ const ICON = {
   skills: (
     <>
       <path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5L12 3z" />
+    </>
+  ),
+  plugins: (
+    <>
+      <path d="M10 3v4M14 3v4M6 7h12v4a6 6 0 0 1-12 0V7zM12 17v4" />
     </>
   ),
   memory: (
@@ -97,8 +111,10 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'agent', title: 'Agent 行为', icon: ICON.agent },
   { id: 'network', title: '网络', icon: ICON.network },
   { id: 'websearch', title: '联网搜索', icon: ICON.websearch },
+  { id: 'imagegen', title: '图像生成', icon: ICON.imagegen },
   { id: 'mcp', title: 'MCP 服务', icon: ICON.mcp },
   { id: 'skills', title: '技能', icon: ICON.skills },
+  { id: 'plugins', title: '插件', icon: ICON.plugins },
   { id: 'memory', title: '记忆', icon: ICON.memory },
   { id: 'knowledge', title: '知识库', icon: ICON.knowledge },
   { id: 'env', title: '环境', icon: ICON.env },
@@ -233,8 +249,10 @@ export default function SettingsPanel(): JSX.Element | null {
             {activeSection === 'agent' && <AgentBehaviorSettingsSection />}
             {activeSection === 'network' && <NetworkSettingsSection />}
             {activeSection === 'websearch' && <WebSearchSettingsSection />}
+            {activeSection === 'imagegen' && <ImageGenSettingsSection />}
             {activeSection === 'mcp' && <McpSettingsSection />}
             {activeSection === 'skills' && <SkillsSettingsSection />}
+            {activeSection === 'plugins' && <PluginsSettingsSection />}
             {activeSection === 'memory' && <MemorySettingsSection />}
             {activeSection === 'knowledge' && <KnowledgeSettingsSection />}
             {activeSection === 'env' && <EnvSettingsSection />}

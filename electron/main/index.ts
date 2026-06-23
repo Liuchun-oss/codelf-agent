@@ -120,7 +120,8 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webviewTag: true
     }
   })
 
@@ -178,6 +179,20 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+
+  // 内置浏览器 <webview> 安全加固：剥离 preload/nodeIntegration，
+  // 并把 webview 内部的弹窗（window.open / target=_blank）导航到内嵌新标签或系统浏览器。
+  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences) => {
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+  })
+  mainWindow.webContents.on('did-attach-webview', (_event, wc) => {
+    wc.setWindowOpenHandler((details) => {
+      mainWindow?.webContents.send('browser:openUrl', details.url)
+      return { action: 'deny' }
+    })
   })
 
   

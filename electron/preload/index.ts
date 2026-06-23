@@ -195,6 +195,11 @@ const api = {
     ipcRenderer.invoke('ai:fileChangeResponse', sessionId, changeId, decision),
   readBrowserPreview: (id: string) =>
     ipcRenderer.invoke('browser:readPreview', id) as Promise<{ mime: string; data: string } | null>,
+  onBrowserOpenUrl: (cb: (url: string) => void) => {
+    const listener = (_e: IpcRendererEvent, url: string): void => cb(url)
+    ipcRenderer.on('browser:openUrl', listener)
+    return () => ipcRenderer.removeListener('browser:openUrl', listener)
+  },
 
   // Inline run
   runStart: (command: string, cwd: string) =>
@@ -233,6 +238,7 @@ const api = {
   aiSaveProfile: (draft: ProfileDraft) => ipcRenderer.invoke('ai:saveProfile', draft),
   aiDeleteProfile: (id: string) => ipcRenderer.invoke('ai:deleteProfile', id),
   aiTestConnection: (draft: ProfileDraft) => ipcRenderer.invoke('ai:testConnection', draft),
+  aiTestImageGeneration: (draft: ProfileDraft) => ipcRenderer.invoke('ai:testImageGeneration', draft),
   aiFimComplete: (req: import('@shared/agentTypes').FimRequest) =>
     ipcRenderer.invoke('ai:fimComplete', req) as Promise<import('@shared/agentTypes').FimResult>,
   aiInlineEdit: (req: import('@shared/agentTypes').InlineEditRequest) =>
@@ -249,6 +255,10 @@ const api = {
   aiGetWebSearchSettings: () => ipcRenderer.invoke('ai:getWebSearchSettings'),
   aiSaveWebSearchSettings: (draft: import('@shared/agentSettings').WebSearchSettingsDraft) =>
     ipcRenderer.invoke('ai:saveWebSearchSettings', draft),
+  aiGetImageGenSettings: () => ipcRenderer.invoke('ai:getImageGenSettings'),
+  aiSaveImageGenSettings: (draft: import('@shared/agentSettings').ImageGenSettingsDraft) =>
+    ipcRenderer.invoke('ai:saveImageGenSettings', draft),
+  aiTestImageGen: () => ipcRenderer.invoke('ai:testImageGen'),
   aiGetMemorySettings: () => ipcRenderer.invoke('ai:getMemorySettings'),
   aiSaveMemorySettings: (patch: Partial<import('@shared/memoryTypes').MemorySettings>) =>
     ipcRenderer.invoke('ai:saveMemorySettings', patch),
@@ -318,6 +328,26 @@ const api = {
     install: (source: string, listOnly?: boolean) =>
       ipcRenderer.invoke('skills:install', source, listOnly) as Promise<
         import('@shared/skillTypes').SkillInstallResult
+      >
+  },
+
+  plugins: {
+    install: (source: string, workspaceRoot?: string | null, installId?: string) =>
+      ipcRenderer.invoke('plugins:install', source, workspaceRoot, installId) as Promise<
+        import('@shared/pluginTypes').PluginInstallResult
+      >,
+    onInstallProgress: (cb: (p: import('@shared/pluginTypes').PluginInstallProgress) => void) => {
+      const listener = (_e: unknown, p: import('@shared/pluginTypes').PluginInstallProgress): void => cb(p)
+      ipcRenderer.on('plugins:installProgress', listener)
+      return () => ipcRenderer.removeListener('plugins:installProgress', listener)
+    },
+    list: () =>
+      ipcRenderer.invoke('plugins:list') as Promise<
+        import('@shared/pluginTypes').InstalledPluginInfo[]
+      >,
+    uninstall: (pluginName: string, workspaceRoot?: string | null) =>
+      ipcRenderer.invoke('plugins:uninstall', pluginName, workspaceRoot) as Promise<
+        import('@shared/pluginTypes').PluginUninstallResult
       >
   },
 

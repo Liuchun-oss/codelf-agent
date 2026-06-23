@@ -13,6 +13,7 @@ import type {
   RuleSummary,
   SaveProfileResult,
   TestConnectionResult,
+  TestImageGenResult,
   SubagentTaskSummary,
   AgentDefinitionSummary,
   AgentTask,
@@ -152,7 +153,7 @@ export interface EditorTab {
   dirty: boolean
   language: string
   
-  kind: 'text' | 'image' | 'diff'
+  kind: 'text' | 'image' | 'diff' | 'browser'
   
   diffOriginal?: string
   diffModified?: string
@@ -160,6 +161,9 @@ export interface EditorTab {
   encoding?: FileEncoding
   
   dataUrl?: string
+  
+  /** For kind==='browser': the current URL loaded in the embedded browser. */
+  url?: string
   
   size?: number
   
@@ -383,6 +387,7 @@ export interface LcApi {
     decision: FileChangeDecision
   ) => Promise<boolean>
   readBrowserPreview: (id: string) => Promise<{ mime: string; data: string } | null>
+  onBrowserOpenUrl: (cb: (url: string) => void) => () => void
   editorUpdateDirtyPaths: (paths: string[]) => Promise<boolean>
   aiRevertCheckpoint: (sessionId?: string) => Promise<{ ok: boolean; reverted: number }>
   aiRevertFileChange: (sessionId: string, changeId: string) => Promise<{ ok: boolean; reason?: string }>
@@ -396,6 +401,7 @@ export interface LcApi {
   aiSaveProfile: (draft: ProfileDraft) => Promise<SaveProfileResult>
   aiDeleteProfile: (id: string) => Promise<AgentOpResult>
   aiTestConnection: (draft: ProfileDraft) => Promise<TestConnectionResult>
+  aiTestImageGeneration: (draft: ProfileDraft) => Promise<TestImageGenResult>
   aiFimComplete: (req: FimRequest) => Promise<FimResult>
   aiInlineEdit: (req: InlineEditRequest) => Promise<InlineEditResult>
   aiInlineEditCancel: () => Promise<boolean>
@@ -413,6 +419,11 @@ export interface LcApi {
   aiSaveWebSearchSettings: (
     draft: import('@shared/agentSettings').WebSearchSettingsDraft
   ) => Promise<import('@shared/agentSettings').WebSearchSettingsSummary>
+  aiGetImageGenSettings: () => Promise<import('@shared/agentSettings').ImageGenSettingsSummary>
+  aiSaveImageGenSettings: (
+    draft: import('@shared/agentSettings').ImageGenSettingsDraft
+  ) => Promise<import('@shared/agentSettings').ImageGenSettingsSummary>
+  aiTestImageGen: () => Promise<import('@shared/agentSettings').ImageGenTestResult>
   aiGetMemorySettings: () => Promise<import('@shared/memoryTypes').MemorySettings>
   aiSaveMemorySettings: (
     patch: Partial<import('@shared/memoryTypes').MemorySettings>
@@ -479,6 +490,22 @@ export interface LcApi {
       source: string,
       listOnly?: boolean
     ) => Promise<import('@shared/skillTypes').SkillInstallResult>
+  }
+
+  plugins: {
+    install: (
+      source: string,
+      workspaceRoot?: string | null,
+      installId?: string
+    ) => Promise<import('@shared/pluginTypes').PluginInstallResult>
+    onInstallProgress: (
+      cb: (p: import('@shared/pluginTypes').PluginInstallProgress) => void
+    ) => () => void
+    list: () => Promise<import('@shared/pluginTypes').InstalledPluginInfo[]>
+    uninstall: (
+      pluginName: string,
+      workspaceRoot?: string | null
+    ) => Promise<import('@shared/pluginTypes').PluginUninstallResult>
   }
 
   

@@ -63,18 +63,30 @@ export interface ChatRequest {
   thinking?: { type: 'enabled' | 'disabled' }
   
   reasoningEffort?: 'high' | 'max'
+  
+  // 启用后改走 OpenAI Responses API，并注入 image_generation 托管工具，
+  // 让模型可在对话中直接生成图片。
+  imageGeneration?: boolean
 }
 
 
 export type StreamChunk =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
-  | {
-      type: 'tool_call_delta'
+  | { type: 'tool_call_delta'
       index: number
       id?: string
       name?: string
       argumentsDelta?: string
+    }
+  | {
+      // 模型通过 image_generation 托管工具生成的图片。
+      // partial=true 为流式中间预览（base64），最终图 partial=false。
+      type: 'image'
+      base64: string
+      mediaType: string
+      partial: boolean
+      index: number
     }
   | {
       type: 'usage'

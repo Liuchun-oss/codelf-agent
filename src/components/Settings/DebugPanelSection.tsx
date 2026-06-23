@@ -14,7 +14,8 @@ const KIND_LABEL: Record<DebugEventRecord['kind'], string> = {
   request_end: '请求结束',
   request_error: '请求错误',
   tool_call: '工具调用',
-  compact: '上下文压缩'
+  compact: '上下文压缩',
+  memory: '记忆提醒'
 }
 
 const ACTION_LABEL: Record<AuditEntry['action'], string> = {

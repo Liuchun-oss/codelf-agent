@@ -100,6 +100,67 @@ function toOpenAITools(tools: ToolDef[]): OpenAITool[] {
   }))
 }
 
+// ---- Responses API（/v1/responses）支持：把通用消息/工具转换为 Responses 输入格式 ----
+
+type RInputItem = Record<string, unknown>
+
+function pushToolImagesAsUser(out: RInputItem[], imgs: { dataUrl: string }[]): void {
+  if (imgs.length === 0) return
+  const content: RInputItem[] = [{ type: 'input_text', text: '上一批工具返回的图片：' }]
+  for (const img of imgs) content.push({ type: 'input_image', image_url: img.dataUrl })
+  out.push({ role: 'user', content })
+}
+
+// 把通用 ChatMessage[] 转为 Responses API 的 input 数组。
+// - assistant 工具调用 → function_call item（call_id/name/arguments）
+// - tool 结果 → function_call_output item（call_id/output）
+// - 其余 → role 消息，user/带图用 input_text/input_image，assistant 用 output_text
+function toResponsesInput(messages: ChatMessage[]): RInputItem[] {
+  const out: RInputItem[] = []
+  let pendingToolImages: { dataUrl: string }[] = []
+  const flush = (): void => {
+    pushToolImagesAsUser(out, pendingToolImages)
+    pendingToolImages = []
+  }
+  for (const m of messages) {
+    if (m.role === 'tool') {
+      out.push({ type: 'function_call_output', call_id: m.toolCallId ?? '', output: m.content })
+      if (m.images?.length) pendingToolImages.push(...m.images)
+      continue
+    }
+    flush()
+    if (m.role === 'assistant' && m.toolCalls?.length) {
+      if (m.content) out.push({ role: 'assistant', content: [{ type: 'output_text', text: m.content }] })
+      for (const tc of m.toolCalls) {
+        out.push({ type: 'function_call', call_id: tc.id, name: tc.name, arguments: tc.arguments })
+      }
+      continue
+    }
+    if (m.role === 'assistant') {
+      out.push({ role: 'assistant', content: [{ type: 'output_text', text: m.content }] })
+      continue
+    }
+    if (m.role === 'system') {
+      out.push({ role: 'system', content: [{ type: 'input_text', text: m.content }] })
+      continue
+    }
+    const content: RInputItem[] = []
+    if (m.content) content.push({ type: 'input_text', text: m.content })
+    for (const img of m.images ?? []) content.push({ type: 'input_image', image_url: img.dataUrl })
+    out.push({ role: 'user', content: content.length ? content : [{ type: 'input_text', text: '' }] })
+  }
+  flush()
+  return out
+}
+
+function toResponsesTools(tools: ToolDef[] | undefined): RInputItem[] {
+  const out: RInputItem[] = [{ type: 'image_generation', partial_images: 2 }]
+  for (const t of tools ?? []) {
+    out.push({ type: 'function', name: t.name, description: t.description, parameters: t.parameters, strict: false })
+  }
+  return out
+}
+
 // 判断某个 400 错误是否因为端点不支持图片（image_url）内容块。
 // 文本模型（如 deepseek-v4）会返回类似：
 //   "Failed to deserialize the JSON body ... unknown variant `image_url`, expected `text`"
@@ -191,6 +252,49 @@ function makeSSEIterable(
   }
 }
 
+// 通用 SSE 解析器（Responses API）：与 makeSSEIterable 同样的字节级 UTF-8 解码，
+// 但 Responses 事件结构各异，这里只产出已解析的 JSON 对象，事件路由交给调用方。
+function makeJsonSSEIterable(
+  reader: ReadableStreamDefaultReader<Uint8Array>
+): AsyncIterable<Record<string, unknown>> {
+  let byteBuf = Buffer.alloc(0)
+  const pending: Record<string, unknown>[] = []
+  const drainText = (text: string): void => {
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+      const data = trimmed.slice(5).trim()
+      if (!data || data === '[DONE]') continue
+      try { pending.push(JSON.parse(data) as Record<string, unknown>) } catch { /* skip */ }
+    }
+  }
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<Record<string, unknown>>> {
+          while (true) {
+            if (pending.length > 0) return { done: false, value: pending.shift()! }
+            const { done, value } = await reader.read()
+            if (done) {
+              drainText(byteBuf.toString('utf-8'))
+              byteBuf = Buffer.alloc(0)
+              if (pending.length > 0) return { done: false, value: pending.shift()! }
+              return { done: true, value: undefined as unknown as Record<string, unknown> }
+            }
+            byteBuf = Buffer.concat([byteBuf, Buffer.from(value)])
+            let lastNL = -1
+            for (let i = byteBuf.length - 1; i >= 0; i--) { if (byteBuf[i] === 0x0a) { lastNL = i; break } }
+            if (lastNL < 0) continue
+            const complete = byteBuf.slice(0, lastNL + 1).toString('utf-8')
+            byteBuf = byteBuf.slice(lastNL + 1)
+            drainText(complete)
+          }
+        }
+      }
+    }
+  }
+}
+
 export async function* streamChatViaOpenAI(
   client: OpenAI,
   req: ChatRequest,
@@ -200,9 +304,9 @@ export async function* streamChatViaOpenAI(
   uaState?: { neutralUa: boolean; baseUrl?: string }
 ): AsyncGenerator<StreamChunk, void, unknown> {
   const thinkingEnabled = req.thinking?.type === 'enabled'
-  const apiKey = (client as Record<string, unknown>).apiKey as string
-  const rawBaseUrl = ((client as Record<string, unknown>)._options as Record<string, unknown> | undefined)
-    ?.baseURL as string || (client as Record<string, unknown>).baseURL as string || ''
+  const apiKey = (client as unknown as Record<string, unknown>).apiKey as string
+  const rawBaseUrl = ((client as unknown as Record<string, unknown>)._options as Record<string, unknown> | undefined)
+    ?.baseURL as string || (client as unknown as Record<string, unknown>).baseURL as string || ''
   const fetchUrl = rawBaseUrl ? new URL('/v1/chat/completions', rawBaseUrl).href : ''
 
   const doRequest = async (
@@ -382,6 +486,150 @@ export async function* streamChatViaOpenAI(
 }
 
 
+// ---- Responses API 流式实现 ----
+
+function mapResponsesArgIndex(
+  itemIndexByOutput: Map<number, number>,
+  outputIndex: number
+): number {
+  // function_call 在 Responses 里以 output_index 标识；映射为递增的本地 index，
+  // 供 orchestrator 的 ToolCallAccumulator 累积参数。
+  let idx = itemIndexByOutput.get(outputIndex)
+  if (idx === undefined) {
+    idx = itemIndexByOutput.size
+    itemIndexByOutput.set(outputIndex, idx)
+  }
+  return idx
+}
+
+export async function* streamChatViaResponses(
+  client: OpenAI,
+  req: ChatRequest,
+  signal?: AbortSignal,
+  uaState?: { neutralUa: boolean; baseUrl?: string }
+): AsyncGenerator<StreamChunk, void, unknown> {
+  const apiKey = (client as unknown as Record<string, unknown>).apiKey as string
+  const rawBaseUrl = ((client as unknown as Record<string, unknown>)._options as Record<string, unknown> | undefined)
+    ?.baseURL as string || (client as unknown as Record<string, unknown>).baseURL as string || ''
+  const fetchUrl = rawBaseUrl ? new URL('/v1/responses', rawBaseUrl).href : ''
+
+  const doRequest = async (forceNeutralUa: boolean): Promise<ReadableStreamDefaultReader<Uint8Array>> => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    }
+    if (forceNeutralUa) headers['User-Agent'] = NEUTRAL_UA
+    const body: Record<string, unknown> = {
+      model: req.model,
+      input: toResponsesInput(req.messages),
+      tools: toResponsesTools(req.tools),
+      tool_choice: 'auto',
+      stream: true
+    }
+    if (typeof req.maxOutputTokens === 'number') body['max_output_tokens'] = req.maxOutputTokens
+    if (typeof req.temperature === 'number') body['temperature'] = req.temperature
+    if (req.promptCacheKey) body['prompt_cache_key'] = req.promptCacheKey
+    if (req.reasoningEffort) body['reasoning'] = { effort: req.reasoningEffort }
+
+    const resp = await fetch(fetchUrl, { method: 'POST', headers, body: JSON.stringify(body), signal })
+    if (!resp.ok) {
+      const errStatus = resp.status
+      const errText = await resp.text().catch(() => '')
+      const err: Error & { status?: number } = new Error(`HTTP ${errStatus}: ${errText}`)
+      err.status = errStatus
+      throw err
+    }
+    const reader = resp.body?.getReader()
+    if (!reader) throw new Error('No response body')
+    return reader
+  }
+
+  let reader: ReadableStreamDefaultReader<Uint8Array>
+  try {
+    reader = await doRequest(uaState?.neutralUa ?? false)
+  } catch (e) {
+    if (uaState && !uaState.neutralUa && isForbiddenError(e)) {
+      uaState.neutralUa = true
+      if (uaState.baseUrl) markEndpointNeutralUa(uaState.baseUrl)
+      try { reader = await doRequest(true) } catch (e2) { throw sdkErrorToProviderError(e2) }
+    } else {
+      throw sdkErrorToProviderError(e)
+    }
+  }
+
+  const itemIndexByOutput = new Map<number, number>()
+  const callIdByOutput = new Map<number, string>()
+  let imageCount = 0
+  try {
+    for await (const ev of makeJsonSSEIterable(reader)) {
+      const type = ev.type as string | undefined
+      if (!type) continue
+      if (type === 'response.output_text.delta' || type === 'response.refusal.delta') {
+        const delta = ev.delta
+        if (typeof delta === 'string' && delta.length > 0) yield { type: 'text', text: delta }
+      } else if (
+        type === 'response.reasoning_summary_text.delta' ||
+        type === 'response.reasoning_text.delta'
+      ) {
+        const delta = ev.delta
+        if (typeof delta === 'string' && delta.length > 0) yield { type: 'thinking', text: delta }
+      } else if (type === 'response.output_item.added') {
+        const item = ev.item as Record<string, unknown> | undefined
+        const outputIndex = typeof ev.output_index === 'number' ? ev.output_index : 0
+        if (item?.type === 'function_call') {
+          const callId = (item.call_id as string) || (item.id as string) || ''
+          callIdByOutput.set(outputIndex, callId)
+          const idx = mapResponsesArgIndex(itemIndexByOutput, outputIndex)
+          yield { type: 'tool_call_delta', index: idx, id: callId, name: item.name as string, argumentsDelta: '' }
+        }
+      } else if (type === 'response.function_call_arguments.delta') {
+        const outputIndex = typeof ev.output_index === 'number' ? ev.output_index : 0
+        const idx = mapResponsesArgIndex(itemIndexByOutput, outputIndex)
+        const delta = ev.delta
+        if (typeof delta === 'string') {
+          yield { type: 'tool_call_delta', index: idx, id: callIdByOutput.get(outputIndex), argumentsDelta: delta }
+        }
+      } else if (type === 'response.image_generation_call.partial_image') {
+        const b64 = ev.partial_image_b64
+        const idx = typeof ev.partial_image_index === 'number' ? ev.partial_image_index : 0
+        if (typeof b64 === 'string' && b64.length > 0) {
+          yield { type: 'image', base64: b64, mediaType: 'image/png', partial: true, index: idx }
+        }
+      } else if (type === 'response.completed' || type === 'response.incomplete') {
+        const response = ev.response as Record<string, unknown> | undefined
+        const output = Array.isArray(response?.output) ? (response!.output as Record<string, unknown>[]) : []
+        for (const item of output) {
+          if (item.type === 'image_generation_call' && typeof item.result === 'string' && item.result.length > 0) {
+            yield { type: 'image', base64: item.result, mediaType: 'image/png', partial: false, index: imageCount++ }
+          }
+        }
+        const usage = response?.usage as Record<string, unknown> | undefined
+        if (usage) {
+          const inputTokens = typeof usage.input_tokens === 'number' ? usage.input_tokens : undefined
+          const outputTokens = typeof usage.output_tokens === 'number' ? usage.output_tokens : undefined
+          const details = usage.input_tokens_details as Record<string, unknown> | undefined
+          const cached = typeof details?.cached_tokens === 'number' ? details.cached_tokens : undefined
+          yield {
+            type: 'usage',
+            inputTokens: cached !== undefined && inputTokens !== undefined ? Math.max(0, inputTokens - cached) : inputTokens,
+            outputTokens,
+            cacheReadInputTokens: cached
+          }
+        }
+        const reason = type === 'response.incomplete' ? 'length' : 'stop'
+        yield { type: 'done', finishReason: reason }
+      } else if (type === 'response.failed' || type === 'error') {
+        const response = ev.response as Record<string, unknown> | undefined
+        const errObj = (response?.error as Record<string, unknown> | undefined) ?? ev
+        const msg = typeof errObj?.message === 'string' ? errObj.message : 'Responses API 流式失败'
+        throw new ProviderError('unknown', msg)
+      }
+    }
+  } catch (e) {
+    throw sdkErrorToProviderError(e)
+  }
+}
+
 export class OpenAIAdapter extends BaseProviderAdapter {
   protected client: OpenAI
   // 记录该端点是否已被证实不支持图片，跨请求保持，避免反复触发 400。
@@ -408,6 +656,9 @@ export class OpenAIAdapter extends BaseProviderAdapter {
   }
 
   streamChat(req: ChatRequest, signal?: AbortSignal): AsyncGenerator<StreamChunk, void, unknown> {
+    if (req.imageGeneration) {
+      return streamChatViaResponses(this.client, req, signal, this.uaState)
+    }
     return streamChatViaOpenAI(this.client, req, signal, this.visionState, {
       dropReasoningContent: this.dropReasoningContent
     }, this.uaState)

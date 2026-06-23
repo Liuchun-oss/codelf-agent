@@ -18,7 +18,8 @@ export function isPersistableTabPath(path: string): boolean {
   return (
     !path.startsWith('untitled:') &&
     !path.startsWith('diff:') &&
-    !path.startsWith('gitdiff:')
+    !path.startsWith('gitdiff:') &&
+    !path.startsWith('browser:')
   )
 }
 

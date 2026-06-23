@@ -32,6 +32,12 @@ function AssistantPart({
 
   const hasBody = body.trim().length > 0
   const thinkingActive = !!msg.streaming && !hasBody
+  // 仅在流式且最终图尚未写入正文（content 不含 codelf-artifact 图片）时显示中间预览，
+  // 避免最终图落盘后与正文里的 markdown 图重复。
+  const partialPreviews =
+    msg.streaming && msg.partialImages && !/!\[[^\]]*\]\(codelf-artifact:/.test(msg.content)
+      ? Object.entries(msg.partialImages).sort((a, b) => Number(a[0]) - Number(b[0]))
+      : []
 
   useEffect(() => {
     if (!hasBody) onTypingDone?.(true)
@@ -47,6 +53,14 @@ function AssistantPart({
       {hasBody ? (
         <div className="agent-assistant-text">
           <MarkdownView text={body} streaming={msg.streaming} onTypingDone={onTypingDone} />
+        </div>
+      ) : null}
+      {partialPreviews.length > 0 ? (
+        <div className="agent-generated-image-preview">
+          {partialPreviews.map(([idx, src]) => (
+            <img key={idx} src={src} alt="生成中…" className="cm-md-img" />
+          ))}
+          <span className="agent-generated-image-hint">图片生成中…</span>
         </div>
       ) : null}
       {msg.stopped ? <div className="agent-stopped">已停止</div> : null}

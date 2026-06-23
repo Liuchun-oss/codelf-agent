@@ -20,6 +20,9 @@ export interface AgentBehaviorSettings {
   knowledgeTopK: number
   // 相似度下限（0–1），低于此值的片段不注入/不返回。
   knowledgeMinScore: number
+  // 安装插件时是否允许自动执行 npm install（会运行仓库的 postinstall 等脚本，
+  // 属于供应链风险点）。默认关闭：关闭时跳过自动安装，仅提示用户手动安装依赖。
+  pluginAllowNpmInstall: boolean
 }
 
 
@@ -99,6 +102,57 @@ export interface WebSearchSettingsDraft extends Partial<WebSearchSettings> {
   braveApiKey?: string
 }
 
+// ---- 图像生成（独立端点，走 OpenAI Images API: POST /v1/images/generations）----
+// 与主对话 Provider 解耦：无论主模型是 DeepSeek/Anthropic 还是别的，
+// 只要配了图像端点，GenerateImage 工具就能出图。
+export interface ImageGenSettings {
+  // 是否启用 GenerateImage 工具。
+  enabled: boolean
+  // 图像端点 base URL（如 https://api.openai.com/v1）。
+  baseUrl: string
+  // 图像模型名（如 gpt-image-1、dall-e-3，或第三方网关的模型名）。
+  model: string
+  // 默认图片尺寸（如 1024x1024、auto）。
+  size: string
+  // 请求超时（毫秒）。图像生成/编辑较慢，gpt-image 系列编辑常需 1~2 分钟。
+  timeoutMs: number
+}
+
+export const DEFAULT_IMAGE_GEN_SETTINGS: ImageGenSettings = {
+  enabled: false,
+  baseUrl: '',
+  model: 'gpt-image-1',
+  size: '1024x1024',
+  timeoutMs: 180000
+}
+
+export function normalizeImageGenSettings(partial: Partial<ImageGenSettings>): ImageGenSettings {
+  const rawTimeout = typeof partial.timeoutMs === 'number' ? partial.timeoutMs : DEFAULT_IMAGE_GEN_SETTINGS.timeoutMs
+  return {
+    enabled: typeof partial.enabled === 'boolean' ? partial.enabled : DEFAULT_IMAGE_GEN_SETTINGS.enabled,
+    baseUrl: typeof partial.baseUrl === 'string' ? partial.baseUrl.trim() : DEFAULT_IMAGE_GEN_SETTINGS.baseUrl,
+    model: typeof partial.model === 'string' && partial.model.trim() ? partial.model.trim() : DEFAULT_IMAGE_GEN_SETTINGS.model,
+    size: typeof partial.size === 'string' && partial.size.trim() ? partial.size.trim() : DEFAULT_IMAGE_GEN_SETTINGS.size,
+    timeoutMs: Number.isFinite(rawTimeout) && rawTimeout >= 10000 ? Math.min(rawTimeout, 600000) : DEFAULT_IMAGE_GEN_SETTINGS.timeoutMs
+  }
+}
+
+export interface ImageGenSettingsSummary extends ImageGenSettings {
+  hasApiKey: boolean
+}
+
+export interface ImageGenSettingsDraft extends Partial<ImageGenSettings> {
+  apiKey?: string
+}
+
+export interface ImageGenTestResult {
+  ok: boolean
+  error?: string
+  latencyMs?: number
+  // 生成图片的 data URL，供前端预览。
+  dataUrl?: string
+}
+
 export const DEFAULT_AGENT_BEHAVIOR: AgentBehaviorSettings = {
   maxToolSteps: 0,
   maxTurnDurationMs: 20 * 60 * 1000,
@@ -108,7 +162,8 @@ export const DEFAULT_AGENT_BEHAVIOR: AgentBehaviorSettings = {
   knowledgeInjectEnabled: false,
   knowledgeKbId: '',
   knowledgeTopK: 5,
-  knowledgeMinScore: 0.35
+  knowledgeMinScore: 0.35,
+  pluginAllowNpmInstall: false
 }
 
 export const AGENT_BEHAVIOR_BOUNDS = {
@@ -179,6 +234,10 @@ export function normalizeAgentBehavior(
           ? partial.knowledgeMinScore
           : DEFAULT_AGENT_BEHAVIOR.knowledgeMinScore
       return Math.min(b.knowledgeMinScore.max, Math.max(b.knowledgeMinScore.min, Math.round(x * 100) / 100))
-    })()
+    })(),
+    pluginAllowNpmInstall:
+      typeof partial.pluginAllowNpmInstall === 'boolean'
+        ? partial.pluginAllowNpmInstall
+        : DEFAULT_AGENT_BEHAVIOR.pluginAllowNpmInstall
   }
 }

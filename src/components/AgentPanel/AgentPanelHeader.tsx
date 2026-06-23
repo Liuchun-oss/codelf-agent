@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAgentStore } from '@/stores/agentStore'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import ContextMenu, { type MenuItem } from '@/components/common/ContextMenu'
+import { toast } from '@/stores/toastStore'
 import ChatHistory from './ChatHistory'
 
 
@@ -17,6 +19,7 @@ export default function AgentPanelHeader(): JSX.Element {
   const workspaceRoot = useWorkspaceStore((s) => s.workspace?.path)
 
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   const historyBtnRef = useRef<HTMLButtonElement>(null)
   const tabsRef = useRef<HTMLDivElement>(null)
   const activeTabRef = useRef<HTMLDivElement>(null)
@@ -44,6 +47,25 @@ export default function AgentPanelHeader(): JSX.Element {
     el.scrollLeft += e.deltaY
   }
 
+  const buildTabMenu = (id: string): MenuItem[] => {
+    const tabStreaming = id === currentSessionId ? streaming : !!sessionStreaming[id]?.streaming
+    return [
+      {
+        label: '复制对话ID',
+        onClick: () => {
+          void window.lc.clipboardWriteText(id)
+          toast.info('对话ID已复制')
+        }
+      },
+      { separator: true },
+      {
+        label: '关闭标签',
+        disabled: tabStreaming,
+        onClick: () => closeSessionTab(id)
+      }
+    ]
+  }
+
   return (
     <header className="agent-panel-header">
       <div className="agent-panel-tabs" ref={tabsRef} onWheel={handleTabsWheel}>
@@ -62,6 +84,10 @@ export default function AgentPanelHeader(): JSX.Element {
               }${needsAttention ? ' needs-attention' : ''}`}
               title={needsAttention ? `${meta.title}（需要你回应）` : meta.title}
               onClick={() => switchSession(meta.id)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setTabMenu({ x: e.clientX, y: e.clientY, id: meta.id })
+              }}
             >
               <span className="agent-panel-tab-title">{meta.title}</span>
               {needsAttention && <span className="agent-panel-tab-attention" />}
@@ -115,6 +141,14 @@ export default function AgentPanelHeader(): JSX.Element {
         anchorRef={historyBtnRef}
         workspaceRoot={workspaceRoot ?? null}
       />
+      {tabMenu && (
+        <ContextMenu
+          x={tabMenu.x}
+          y={tabMenu.y}
+          items={buildTabMenu(tabMenu.id)}
+          onClose={() => setTabMenu(null)}
+        />
+      )}
     </header>
   )
 }

@@ -1,5 +1,5 @@
 import type { ChatMessage } from '../providers'
-import type { ToolCallRequest } from '../tools/types'
+import type { ToolCallRequest } from '../providers'
 
 /**
  * 任务完成检测器。用于判断当前 turn 是否完成了值得记笔记的复杂任务。

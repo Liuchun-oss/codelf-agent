@@ -8,6 +8,8 @@ export interface McpStdioServerConfig {
   command: string
   args?: string[]
   env?: Record<string, string>
+  // 子进程工作目录。插件 MCP server 常依赖从其安装目录运行。
+  cwd?: string
 }
 
 export interface McpHttpServerConfig {
@@ -83,6 +85,7 @@ export function normalizeServerConfig(raw: unknown): McpServerConfig | null {
   }
   const env = normalizeStringRecord(obj.env)
   if (env) config.env = env
+  if (typeof obj.cwd === 'string' && obj.cwd.trim()) config.cwd = obj.cwd.trim()
   return config
 }
 

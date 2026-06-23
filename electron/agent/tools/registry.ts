@@ -24,6 +24,7 @@ import { notebookEditTool } from './notebookEditTool'
 import { notebookReadTool } from './notebookReadTool'
 import { getDiagnosticsTool } from './lspTools'
 import { searchHistoryTool } from './historyTools'
+import { listConversationsTool, readConversationTool } from './conversationTools'
 import { snipHistoryTool } from './snipHistoryTool'
 import { appendNoteTool } from './appendNoteTool'
 import { searchMemoryTool } from './searchMemoryTool'
@@ -37,6 +38,7 @@ import { contextInspectTool } from './contextTools'
 import { createDeferredDiscoveryTools, EXECUTE_EXTRA_TOOL_NAME, SEARCH_EXTRA_TOOLS_NAME, type DeferredToolSummary } from './deferredTools'
 import { skillTool, SKILL_TOOL_NAME } from './skillTool'
 import { installSkillTool, INSTALL_SKILL_TOOL_NAME } from './installSkillTool'
+import { installPluginTool, INSTALL_PLUGIN_TOOL_NAME } from './installPluginTool'
 import { reloadMcpServersTool } from './mcpTools'
 import {
   browserOpenTool,
@@ -52,6 +54,8 @@ import {
   browserCookiesTool,
   browserCloseTool
 } from './browserTools'
+import { openInAppBrowserTool } from './openInAppBrowserTool'
+import { generateImageTool, editImageTool } from './generateImageTool'
 import {
   desktopLaunchAppTool,
   desktopListWindowsTool,
@@ -99,7 +103,8 @@ const CORE_TOOL_NAMES = new Set<string>([
   'TaskGet',
   'run_subagent',
   SKILL_TOOL_NAME,
-  INSTALL_SKILL_TOOL_NAME
+  INSTALL_SKILL_TOOL_NAME,
+  INSTALL_PLUGIN_TOOL_NAME
 ])
 
 export type DeferredToolPolicy = 'explicit' | 'non-core' | 'auto'
@@ -339,6 +344,8 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...sleepTool, alwaysLoad: true })
   registry.register({ ...getDiagnosticsTool, alwaysLoad: true })
   registry.register({ ...searchHistoryTool, alwaysLoad: true })
+  registry.register({ ...listConversationsTool, deferred: true })
+  registry.register({ ...readConversationTool, deferred: true })
   registry.register({ ...appendNoteTool, alwaysLoad: true })
   registry.register({ ...searchMemoryTool, alwaysLoad: true })
   registry.register({ ...snipHistoryTool, deferred: true })
@@ -356,6 +363,7 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register(taskGetTool)
   registry.register(skillTool)
   registry.register({ ...installSkillTool, alwaysLoad: true })
+  registry.register({ ...installPluginTool, alwaysLoad: true })
   registry.register({ ...reloadMcpServersTool, deferred: true })
   registry.register(createRunSubagentTool())
   registry.register({ ...notebookReadTool, deferred: true })
@@ -374,6 +382,9 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...browserTabsTool, deferred: true, permissionGroup: 'browser' })
   registry.register({ ...browserCookiesTool, deferred: true, permissionGroup: 'browser' })
   registry.register({ ...browserCloseTool, deferred: true, permissionGroup: 'browser' })
+  registry.register({ ...openInAppBrowserTool, deferred: true })
+  registry.register({ ...generateImageTool, deferred: true })
+  registry.register({ ...editImageTool, deferred: true })
   registry.register({ ...desktopLaunchAppTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopListWindowsTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopGetWindowTool, deferred: true, permissionGroup: 'desktop' })
