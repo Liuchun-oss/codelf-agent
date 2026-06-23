@@ -1,7 +1,7 @@
 {
   "name": "codelf",
-  "version": "0.1.6",
-  "description": "Codelf（码灵）- 轻量级 AI 辅助编程 IDE",
+  "version": "0.1.7",
+  "description": "Codelf（码灵）- 轻量级 Agent 辅助编程 IDE",
   "main": "./out/main/index.js",
   "author": "巫枫",
   "license": "MIT",

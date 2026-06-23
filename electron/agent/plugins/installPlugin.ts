@@ -218,10 +218,10 @@ function adaptPluginSkillBody(
       '- 本 skill 原文引用了 Codex 专属的 in-app browser 启动流程（CODEX_HOME / node_repl / browser-client / openai-bundled）。在 Codelf 中请忽略那段 Node REPL bootstrap 代码，改为直接调用 `OpenInAppBrowser` 工具并传入本地 URL（如 http://127.0.0.1:PORT），页面会在 Codelf 内置浏览器标签中打开给用户，且支持 localhost。若只是需要 agent 读取/自动操作页面，则改用 Browser*（Playwright）工具组。'
     )
   }
-  // 4) Codex 内置 imagegen / 会话 JSONL：Codelf 暂无对应能力。
+  // 4) Codex 内置 imagegen / 会话 JSONL：改为指向 Codelf 的 GenerateImage / EditImage 工具。
   if (/\bimagegen\b|generated_images|session JSONL/i.test(body)) {
     adaptationNotes.push(
-      '- 本 skill 依赖 Codex 内置的图像生成（imagegen）与 $CODEX_HOME/generated_images 目录。Codelf 暂无内置图像生成工具：若无可用的图像生成 MCP，请让用户提供本地图片路径，或跳过生成步骤。'
+      '- 本 skill 原文依赖 Codex 内置图像生成（imagegen）与 $CODEX_HOME/generated_images 目录。Codelf **已内置图像生成工具**：凡是“用 imagegen 生成图片”的步骤，一律改为调用延迟工具 `GenerateImage`（文生图）或 `EditImage`（图生图/改图）。调用前先用 `SearchExtraTools` 以 select:GenerateImage（或 select:EditImage）发现该工具，再用 `ExecuteExtraTool` 执行。工具会返回 codelf-artifact:// 形式的本地图片路径，直接把该路径用于后续插入/保存步骤；不要再去 $CODEX_HOME/generated_images 找文件，也**不要跳过生成步骤或假称已生成**。'
     )
   }
 

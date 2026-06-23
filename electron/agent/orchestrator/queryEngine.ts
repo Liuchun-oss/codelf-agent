@@ -83,8 +83,31 @@ import { deleteBrowserPreview } from '../../services/browserPreviewImage'
 import { saveGeneratedImage } from '../../services/generatedImageStore'
 import { EXECUTE_EXTRA_TOOL_NAME } from '../tools/deferredTools'
 import { buildDeferredToolsAnnouncement, restoreDeferredToolDiscovery } from '../tools/deferredToolDiscovery'
+import { GENERATE_IMAGE_NAME, EDIT_IMAGE_NAME } from '../prompts/tools/imageGen'
 
 const DEFAULT_RESPONSE_LANGUAGE = 'Simplified Chinese'
+
+// 「防假完成」启发式：用户是否在请求生成/编辑图片。
+// 仅作粗判，用于检测模型是否声称完成却未真正调用图像工具。
+function userAskedForImage(text: string): boolean {
+  if (!text) return false
+  const t = text.toLowerCase()
+  // 中文：生成/画/绘制/做一张…图/海报/图标/插画/logo；英文：generate/draw/create … image/picture/poster/icon/logo
+  const zh = /(生成|画|绘制|做|制作|设计|来一?张|搞一?张).{0,12}(图|图片|海报|图标|插画|头像|壁纸|封面|logo)/.test(text) ||
+    /(图片|海报|插画|图标|壁纸|封面).{0,6}(生成|绘制|画出来)/.test(text)
+  const en = /\b(generate|draw|create|make|design|render)\b.{0,20}\b(image|picture|photo|poster|icon|logo|illustration|wallpaper|artwork)\b/.test(t)
+  return zh || en
+}
+
+// 模型是否在文本里「声称已完成」（却可能没真正出图）。
+function claimsImageDone(text: string): boolean {
+  if (!text) return false
+  const t = text.trim()
+  if (t.length === 0) return false
+  const zh = /(已|帮你).{0,4}(生成|完成|画好|做好|搞定)|生成好了|已经.{0,4}(生成|完成)|图片.{0,4}(已|生成)/.test(t)
+  const en = /\b(here('| i)s|i('| ?ve)?\s*(generated|created|made|drawn)|done|completed|image is ready)\b/i.test(t)
+  return zh || en
+}
 
 function todayISODate(): string {
   return new Date().toISOString().slice(0, 10)
@@ -694,6 +717,11 @@ export class QueryEngine {
     let hasAttemptedReactiveCompact = false
     let lengthContinuationCount = 0
     const MAX_LENGTH_CONTINUATIONS = 8
+    // 「防假完成」：本轮用户是否请求出图、是否真正调用过图像工具、已纠正次数。
+    const imageIntent = userAskedForImage(payload.message)
+    let imageToolInvokedThisTurn = false
+    let fakeImageCorrectionCount = 0
+    const MAX_FAKE_IMAGE_CORRECTIONS = 1
     const denials = new DenialTracker()
     const permOpts = {
       permissionMode: payload.permissionMode ?? ('default' as const),
@@ -1047,6 +1075,28 @@ export class QueryEngine {
             })
             continue
           }
+
+          // 「防假完成」：用户要求出图、模型声称已完成、但本轮从未真正调用图像工具
+          // （典型：某些中转模型幻觉式跳过工具直接说"已生成"）。注入纠正提示强制其真正调用，
+          // 最多纠正一次，避免死循环。
+          if (
+            imageIntent &&
+            !imageToolInvokedThisTurn &&
+            fakeImageCorrectionCount < MAX_FAKE_IMAGE_CORRECTIONS &&
+            claimsImageDone(roundText) &&
+            !signal.aborted
+          ) {
+            fakeImageCorrectionCount++
+            turnMessages.push({ role: 'assistant', content: roundText })
+            turnMessages.push({
+              role: 'user',
+              content: systemReminder(
+                `你声称已生成图片，但本轮并没有真正调用图像生成工具，因此用户那边并没有出现任何图片。不要假装完成。请立即真正执行：先用 SearchExtraTools（query="select:${GENERATE_IMAGE_NAME}"）发现工具，再用 ExecuteExtraTool 以 {"name":"${GENERATE_IMAGE_NAME}","arguments":{"prompt":"<根据用户需求润色后的英文或中文提示词>"}} 实际调用。生成成功前不要再回复"已生成"之类的话。`
+              )
+            })
+            continue
+          }
+
           turnMessages.push({ role: 'assistant', content: roundText })
           break
         }
@@ -1063,6 +1113,13 @@ export class QueryEngine {
         const startTimes = new Map<string, number>()
         for (const c of calls) {
           startTimes.set(c.id, Date.now())
+          // 记录本轮是否真正发起了图像工具调用（直接调用，或经 ExecuteExtraTool 调用）。
+          if (c.name === GENERATE_IMAGE_NAME || c.name === EDIT_IMAGE_NAME) {
+            imageToolInvokedThisTurn = true
+          } else if (c.name === EXECUTE_EXTRA_TOOL_NAME) {
+            const target = argsForEvent(c.arguments).name
+            if (target === GENERATE_IMAGE_NAME || target === EDIT_IMAGE_NAME) imageToolInvokedThisTurn = true
+          }
           yield {
             type: 'tool_call_start',
             turnId,
