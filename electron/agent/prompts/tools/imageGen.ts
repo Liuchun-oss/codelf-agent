@@ -11,8 +11,18 @@ Behavior:
 
 Usage:
 - "prompt": a detailed description of the image to generate. Be specific about subject, style, composition, colors.
-- "size" (optional): e.g. "1024x1024", "1024x1536", "1536x1024", or "auto". Defaults to the configured size.
-- "n" (optional): number of images (1-4, default 1).`
+- "size" (optional): use "2K" (recommended default) or "4K", or an explicit large WIDTHxHEIGHT (e.g. "2048x2048", "2304x1728"). NOTE: many endpoints (e.g. Seedream) reject small sizes like 1024x1024 — prefer "2K". Defaults to the configured size.
+- "n" (optional): number of images (1-4, default 1). For a coherent SET, prefer "series" instead of "n".
+- "referenceImages" (optional): one or more reference images to guide generation. Provide them when the user wants image-to-image ("make a close-up of this dog"), multi-image reference / fusion ("put the outfit from image 2 onto image 1"), or design derived from a reference (e.g. a logo). Accepts http(s) URLs, codelf-artifact:// URLs of prior generated images, absolute paths, or workspace-relative paths.
+- "series" (optional): set true WHENEVER the user asks for MULTIPLE related/consistent images in one request — e.g. "生成一组4张...", "4 illustrations of the same courtyard across the four seasons", a brand visual kit (bag, hat, box, lanyard...), or one scene at morning/noon/night. This makes the model output SEPARATE images instead of one collage/grid. If you do NOT set series=true for a multi-image request, the model will likely return a single grid image, which is wrong.
+- "maxImages" (optional): with series=true, the cap on how many images to produce (1-15). Set it to the number the user asked for (e.g. 4 for "一组4张").
+
+Deciding automatically:
+- Prompt mentions a specific count or "一组/a set/series/multiple/各一张/分别" → set series=true and maxImages to that count.
+- No reference + single image → plain text-to-image.
+- User gives/refers to an existing image to base the result on → put it in referenceImages.
+- User asks for several related/consistent images → set series=true and a suitable maxImages.
+- You can combine referenceImages + series (e.g. "using this logo, design a 5-piece brand kit").`
 
 export const EDIT_IMAGE_NAME = 'EditImage'
 

@@ -6,7 +6,7 @@ import type {
 } from '@shared/agentSettings'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
 
-const SIZE_OPTIONS = ['auto', '1024x1024', '1024x1536', '1536x1024', '512x512']
+const SIZE_OPTIONS = ['auto', '1024x1024', '1024x1536', '1536x1024', '512x512', '1k', '2k', '4k']
 
 export default function ImageGenSettingsSection(): JSX.Element {
   const [settings, setSettings] = useState<ImageGenSettingsSummary | null>(null)
@@ -71,6 +71,18 @@ export default function ImageGenSettingsSection(): JSX.Element {
               checked={settings.enabled}
               disabled={saving}
               onChange={(v) => void save({ enabled: v })}
+            />
+          }
+        />
+        <SettingsRow
+          title="AI 水印"
+          description="火山方舟 Seedream 默认给图片加 AI 生成水印；关闭则请求 watermark=false（OpenAI 等不支持该字段的端点会忽略它）。"
+          control={
+            <SettingsSwitch
+              id="imagegen-watermark"
+              checked={settings.watermark}
+              disabled={saving}
+              onChange={(v) => void save({ watermark: v })}
             />
           }
         />

@@ -116,6 +116,8 @@ export interface ImageGenSettings {
   size: string
   // 请求超时（毫秒）。图像生成/编辑较慢，gpt-image 系列编辑常需 1~2 分钟。
   timeoutMs: number
+  // 是否给生成图片加 AI 水印（火山方舟 Seedream 扩展字段；OpenAI 原生忽略此字段）。
+  watermark: boolean
 }
 
 export const DEFAULT_IMAGE_GEN_SETTINGS: ImageGenSettings = {
@@ -123,7 +125,8 @@ export const DEFAULT_IMAGE_GEN_SETTINGS: ImageGenSettings = {
   baseUrl: '',
   model: 'gpt-image-1',
   size: '1024x1024',
-  timeoutMs: 180000
+  timeoutMs: 180000,
+  watermark: false
 }
 
 export function normalizeImageGenSettings(partial: Partial<ImageGenSettings>): ImageGenSettings {
@@ -133,7 +136,8 @@ export function normalizeImageGenSettings(partial: Partial<ImageGenSettings>): I
     baseUrl: typeof partial.baseUrl === 'string' ? partial.baseUrl.trim() : DEFAULT_IMAGE_GEN_SETTINGS.baseUrl,
     model: typeof partial.model === 'string' && partial.model.trim() ? partial.model.trim() : DEFAULT_IMAGE_GEN_SETTINGS.model,
     size: typeof partial.size === 'string' && partial.size.trim() ? partial.size.trim() : DEFAULT_IMAGE_GEN_SETTINGS.size,
-    timeoutMs: Number.isFinite(rawTimeout) && rawTimeout >= 10000 ? Math.min(rawTimeout, 600000) : DEFAULT_IMAGE_GEN_SETTINGS.timeoutMs
+    timeoutMs: Number.isFinite(rawTimeout) && rawTimeout >= 10000 ? Math.min(rawTimeout, 600000) : DEFAULT_IMAGE_GEN_SETTINGS.timeoutMs,
+    watermark: typeof partial.watermark === 'boolean' ? partial.watermark : DEFAULT_IMAGE_GEN_SETTINGS.watermark
   }
 }
 

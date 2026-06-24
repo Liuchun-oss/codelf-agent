@@ -5,8 +5,11 @@ import { GENERATE_IMAGE_NAME, GENERATE_IMAGE_DESCRIPTION, EDIT_IMAGE_NAME, EDIT_
 
 const generateImageSchema = z.object({
   prompt: z.string().min(1).describe('Detailed description of the image to generate'),
-  size: z.string().optional().describe('Image size, e.g. "1024x1024", "1024x1536", "1536x1024", or "auto"'),
-  n: z.number().int().min(1).max(4).optional().describe('Number of images to generate (1-4, default 1)')
+  size: z.string().optional().describe('Image size. Prefer "2K" (default) or "4K"; small sizes like 1024x1024 are rejected by some endpoints. May also be an explicit large WIDTHxHEIGHT.'),
+  n: z.number().int().min(1).max(4).optional().describe('Number of images to generate (1-4, default 1)'),
+  referenceImages: z.array(z.string().min(1)).optional().describe('Optional reference image(s) for image-to-image, multi-image reference, or fusion. Each item is an http(s) URL, a codelf-artifact:// URL of a previously generated image, an absolute path, or a workspace-relative path. Pass one for single-image guidance, multiple for fusion/swap.'),
+  series: z.boolean().optional().describe('Set true to generate a coherent SET of images in one call (e.g. four-seasons sequence, brand kit, a story across multiple scenes). The model auto-decides how many to produce up to maxImages.'),
+  maxImages: z.number().int().min(1).max(15).optional().describe('When series=true, the max number of images to produce (1-15, default 4).')
 })
 
 type GenerateImageInput = z.infer<typeof generateImageSchema>
@@ -37,9 +40,24 @@ export const generateImageTool: Tool<GenerateImageInput> = {
     let outcome
     try {
       outcome = await generateImages(
-        { prompt: input.prompt, size: input.size, n: input.n },
+        {
+          prompt: input.prompt,
+          size: input.size,
+          n: input.n,
+          images: input.referenceImages,
+          series: input.series,
+          maxImages: input.maxImages,
+          workspaceRoot: ctx.workspaceRoot
+        },
         {
           signal: ctx.signal,
+          stream: true,
+          onPartialImage: (index, dataUrl) => {
+            if (ctx.emitEvent && ctx.turnId) {
+              ctx.emitEvent({ type: 'image_progress', turnId: ctx.turnId, index, dataUrl })
+            }
+            emit(`已生成第 ${index + 1} 张，继续生成中…`, 'running')
+          },
           onRetry: (attempt, reason) => emit(`端点超时/不稳定（${reason}），正在自动重试（第 ${attempt + 1} 次）…`, 'running')
         }
       )
@@ -93,6 +111,13 @@ export const editImageTool: Tool<EditImageInput> = {
         {
           signal: ctx.signal,
           workspaceRoot: ctx.workspaceRoot,
+          stream: true,
+          onPartialImage: (index, dataUrl) => {
+            if (ctx.emitEvent && ctx.turnId) {
+              ctx.emitEvent({ type: 'image_progress', turnId: ctx.turnId, index, dataUrl })
+            }
+            emit(`已生成第 ${index + 1} 张，继续生成中…`, 'running')
+          },
           onRetry: (attempt, reason) => emit(`端点超时/不稳定（${reason}），正在自动重试（第 ${attempt + 1} 次）…`, 'running')
         }
       )

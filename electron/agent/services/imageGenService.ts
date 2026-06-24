@@ -14,6 +14,15 @@ export interface ImageGenRequest {
   prompt: string
   size?: string
   n?: number
+  // 参考图（图生图 / 多图参考 / 融合）：可为 http(s) URL 或本地引用
+  // （codelf-artifact://、绝对路径、工作区相对路径）。本地引用会被读为 base64。
+  images?: string[]
+  // 组图：开启后让模型自动生成一组连贯图片（火山 Seedream sequential_image_generation）。
+  series?: boolean
+  // 组图最大张数（配合 series 使用）。
+  maxImages?: number
+  // 解析本地参考图引用所需的工作区根。
+  workspaceRoot?: string | null
 }
 
 export interface ImageGenOutcome {
@@ -27,6 +36,21 @@ export interface ImageGenOutcome {
 interface ImagesApiResponse {
   data?: { b64_json?: string; url?: string }[]
   error?: { message?: string }
+}
+
+// 下载远程图片并转 base64（用于端点只返回 URL 的回退路径）。
+async function downloadImageAsBase64(url: string, signal?: AbortSignal): Promise<string | null> {
+  const guard = await guardOutboundUrl(url)
+  if (!guard.ok || !guard.url) return null
+  const resp = await fetch(guard.url.toString(), {
+    headers: { 'User-Agent': userAgent('image_gen') },
+    signal,
+    ...(getFetchOptions() ?? {})
+  })
+  if (!resp.ok) return null
+  const buf = Buffer.from(await resp.arrayBuffer())
+  if (buf.length === 0) return null
+  return buf.toString('base64')
 }
 
 // "fetch failed" 是 undici 传输层的通用错误，真正原因藏在 error.cause 里。
@@ -143,27 +167,69 @@ async function runImageRequestWithRetry(cfg: ImageHttpConfig): Promise<ImageGenO
     const b64List = (json.data ?? [])
       .map((d) => d.b64_json)
       .filter((b): b is string => typeof b === 'string' && b.length > 0)
-    if (b64List.length === 0) {
-      const hadUrl = (json.data ?? []).some((d) => typeof d.url === 'string')
-      return {
-        ok: false,
-        error: hadUrl ? '端点返回的是图片 URL 而非 base64 数据，当前未支持该模式。' : cfg.emptyDataError
+    const urlList = (json.data ?? [])
+      .map((d) => d.url)
+      .filter((u): u is string => typeof u === 'string' && u.length > 0)
+
+    // 优先用 base64；没有 base64 时回退到下载 URL（火山在 response_format=url 或
+    // 部分网关下只返回 URL）。两种模式都兜住，避免"只支持 b64"导致的失败。
+    let resolvedB64 = b64List
+    if (resolvedB64.length === 0 && urlList.length > 0) {
+      const downloaded: string[] = []
+      for (const u of urlList) {
+        const b64 = await downloadImageAsBase64(u, cfg.signal).catch(() => null)
+        if (b64) downloaded.push(b64)
       }
+      resolvedB64 = downloaded
+    }
+
+    if (resolvedB64.length === 0) {
+      return { ok: false, error: cfg.emptyDataError }
     }
 
     if (!cfg.persist) {
-      return { ok: true, firstDataUrl: `data:image/png;base64,${b64List[0]}` }
+      return { ok: true, firstDataUrl: `data:image/png;base64,${resolvedB64[0]}` }
     }
     const saved: SavedGeneratedImage[] = []
-    for (const b64 of b64List) saved.push(await saveGeneratedImage(b64, 'image/png'))
-    return { ok: true, images: saved, firstDataUrl: `data:image/png;base64,${b64List[0]}` }
+    for (const b64 of resolvedB64) saved.push(await saveGeneratedImage(b64, 'image/png'))
+    return { ok: true, images: saved, firstDataUrl: `data:image/png;base64,${resolvedB64[0]}` }
   }
   return { ok: false, error: lastError }
 }
 
+// 把请求尺寸规整为图像端点能接受的值。
+// 火山 Seedream 4.x 要求像素总量较大（约 ≥368 万像素 / 2K 级），
+// 像 1024x1024(=105万) 这类小尺寸会被直接拒绝（HTTP 400 size too small）。
+// 这里把过小或不带档位关键字的小尺寸抬到 2K，避免模型误传小尺寸导致失败。
+function normalizeRequestSize(raw: string): string {
+  const s = (raw || '').trim()
+  if (!s) return '2K'
+  // 档位关键字（1K/2K/4K）直接交给端点。
+  if (/^[124]k$/i.test(s)) return s.toUpperCase()
+  const m = /^(\d+)\s*[x×]\s*(\d+)$/i.exec(s)
+  if (m) {
+    const w = parseInt(m[1], 10)
+    const h = parseInt(m[2], 10)
+    if (Number.isFinite(w) && Number.isFinite(h)) {
+      // 低于约 368 万像素的，抬到 2K 档（端点会按比例给到合规尺寸）。
+      if (w * h < 3_680_000) return '2K'
+      return `${w}x${h}`
+    }
+  }
+  // auto 或无法识别：交给 2K，最稳。
+  return '2K'
+}
+
 export async function generateImages(
   req: ImageGenRequest,
-  opts?: { persist?: boolean; signal?: AbortSignal; onRetry?: (attempt: number, reason: string) => void }
+  opts?: {
+    persist?: boolean
+    signal?: AbortSignal
+    onRetry?: (attempt: number, reason: string) => void
+    // 流式：每生成一张就回调一次（dataUrl 可直接预览）。设置后请求体启用 stream。
+    stream?: boolean
+    onPartialImage?: (index: number, dataUrl: string) => void
+  }
 ): Promise<ImageGenOutcome> {
   const settings = getImageGenSettings()
   if (!settings.enabled) {
@@ -183,14 +249,61 @@ export async function generateImages(
     return { ok: false, error: `端点被拒绝：${guard.error ?? 'URL 不安全'}` }
   }
 
+  const n = req.n && req.n > 0 ? Math.min(req.n, 4) : 1
   const body: Record<string, unknown> = {
     model: settings.model,
     prompt: req.prompt,
-    n: req.n && req.n > 0 ? Math.min(req.n, 4) : 1,
-    size: req.size || settings.size,
-    response_format: 'b64_json'
+    size: normalizeRequestSize(req.size || settings.size),
+    response_format: 'b64_json',
+    watermark: settings.watermark
+  }
+
+  // 参考图（图生图 / 多图参考 / 融合）：把本地引用解析为 data URL，http(s) 原样透传。
+  if (req.images?.length) {
+    const resolved: string[] = []
+    for (const ref of req.images) {
+      const r = await resolveImageForRequest(ref, req.workspaceRoot ?? null)
+      if ('error' in r) return { ok: false, error: r.error }
+      resolved.push(r.value)
+    }
+    // 火山约定：单图传字符串，多图传数组。
+    body.image = resolved.length === 1 ? resolved[0] : resolved
+  }
+
+  // 组图：开启后由模型自动决定生成一组连贯图片；否则按需要的张数（n>1 时也用组图实现）。
+  if (req.series) {
+    body.sequential_image_generation = 'auto'
+    body.sequential_image_generation_options = { max_images: Math.min(Math.max(req.maxImages ?? n, 1), 15) }
+  } else if (n > 1) {
+    body.sequential_image_generation = 'auto'
+    body.sequential_image_generation_options = { max_images: n }
+  } else {
+    body.sequential_image_generation = 'disabled'
+    body.n = 1
   }
   const url = guard.url.toString()
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`,
+    'User-Agent': userAgent('image_gen')
+  }
+
+  // 流式：火山 SSE 逐张返回（image_generation.partial_succeeded）。
+  // 出错时回退到非流式整批请求，保证最终仍能出图。
+  if (opts?.stream) {
+    const streamed = await runImageStream({
+      url,
+      headers,
+      body: { ...body, stream: true },
+      signal: opts.signal,
+      timeoutMs: settings.timeoutMs,
+      persist: opts.persist !== false,
+      onPartialImage: opts.onPartialImage
+    }).catch((e) => ({ ok: false as const, error: describeFetchError(e) }))
+    if (streamed.ok && (streamed.images?.length || streamed.firstDataUrl)) return streamed
+    opts.onRetry?.(0, '流式失败，回退非流式')
+  }
 
   return runImageRequestWithRetry({
     signal: opts?.signal,
@@ -202,16 +315,112 @@ export async function generateImages(
     doFetch: (signal) =>
       fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'User-Agent': userAgent('image_gen')
-        },
+        headers,
         body: JSON.stringify(body),
         signal,
         ...(getFetchOptions() ?? {})
       })
   })
+}
+
+interface ImageStreamConfig {
+  url: string
+  headers: Record<string, string>
+  body: Record<string, unknown>
+  signal?: AbortSignal
+  timeoutMs: number
+  persist: boolean
+  onPartialImage?: (index: number, dataUrl: string) => void
+}
+
+interface SseImageEvent {
+  type?: string
+  image_index?: number
+  url?: string
+  b64_json?: string
+  error?: { message?: string }
+}
+
+// 解析火山图片生成 SSE 流：逐张回调预览 + 收集结果落盘。
+async function runImageStream(cfg: ImageStreamConfig): Promise<ImageGenOutcome> {
+  const t = withTimeout(cfg.signal, cfg.timeoutMs)
+  let resp: Response
+  try {
+    resp = await fetch(cfg.url, {
+      method: 'POST',
+      headers: { ...cfg.headers, Accept: 'text/event-stream' },
+      body: JSON.stringify(cfg.body),
+      signal: t.signal,
+      ...(getFetchOptions() ?? {})
+    })
+  } catch (e) {
+    t.clear()
+    if (cfg.signal?.aborted) return { ok: false, error: '已取消' }
+    throw e
+  }
+
+  if (!resp.ok || !resp.body) {
+    t.clear()
+    const text = await resp.text().catch(() => '')
+    return { ok: false, error: `图像端点返回 HTTP ${resp.status}：${text.slice(0, 300)}` }
+  }
+
+  const saved: SavedGeneratedImage[] = []
+  let firstDataUrl: string | undefined
+  let lastError = ''
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+
+  const handleEvent = async (raw: string): Promise<void> => {
+    const dataLines = raw
+      .split('\n')
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).trim())
+    if (dataLines.length === 0) return
+    const payload = dataLines.join('')
+    if (!payload || payload === '[DONE]') return
+    let ev: SseImageEvent
+    try {
+      ev = JSON.parse(payload) as SseImageEvent
+    } catch {
+      return
+    }
+    if (ev.type === 'image_generation.partial_failed') {
+      lastError = ev.error?.message ?? '某张图片生成失败'
+      return
+    }
+    if (ev.type !== 'image_generation.partial_succeeded') return
+    let b64 = ev.b64_json
+    if (!b64 && ev.url) b64 = (await downloadImageAsBase64(ev.url, cfg.signal).catch(() => null)) ?? undefined
+    if (!b64) return
+    const dataUrl = `data:image/png;base64,${b64}`
+    if (!firstDataUrl) firstDataUrl = dataUrl
+    cfg.onPartialImage?.(ev.image_index ?? saved.length, dataUrl)
+    if (cfg.persist) saved.push(await saveGeneratedImage(b64, 'image/png'))
+  }
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      let sep: number
+      while ((sep = buf.indexOf('\n\n')) !== -1) {
+        const chunk = buf.slice(0, sep)
+        buf = buf.slice(sep + 2)
+        await handleEvent(chunk)
+      }
+    }
+    if (buf.trim()) await handleEvent(buf)
+  } finally {
+    t.clear()
+    reader.releaseLock()
+  }
+
+  if (!firstDataUrl) return { ok: false, error: lastError || '流式未返回任何图片。' }
+  if (!cfg.persist) return { ok: true, firstDataUrl }
+  return { ok: true, images: saved, firstDataUrl }
 }
 
 // 把 image edits 端点拼出来。
@@ -250,6 +459,20 @@ async function resolveImageRef(
   }
 }
 
+// 把图片引用规整为可放进请求体的形式：
+// - http(s) URL 原样返回（火山支持直接传 URL）；
+// - 本地引用（codelf-artifact://、绝对/相对路径）读为 data URL。
+async function resolveImageForRequest(
+  ref: string,
+  workspaceRoot: string | null
+): Promise<{ value: string } | { error: string }> {
+  const trimmed = ref.trim()
+  if (/^https?:\/\//i.test(trimmed)) return { value: trimmed }
+  const resolved = await resolveImageRef(trimmed, workspaceRoot)
+  if ('error' in resolved) return resolved
+  return { value: `data:image/png;base64,${resolved.buffer.toString('base64')}` }
+}
+
 export interface ImageEditRequest {
   prompt: string
   imageRefs: string[]
@@ -257,9 +480,53 @@ export interface ImageEditRequest {
   n?: number
 }
 
-// 用 OpenAI Images Edit API（POST {baseUrl}/images/edits，multipart）在原图基础上修改。
-// gpt-image-1 支持；dall-e-3 不支持编辑。
+// 图片编辑入口。不同后端的编辑机制不同：
+// - 火山方舟 / 多数兼容网关：编辑就是「带 image 参数的 generations」，没有独立 edits 端点；
+// - OpenAI：编辑走独立的 multipart /images/edits 端点。
+// 策略：先走 generations+image（火山可用，且能复用流式/尺寸兜底/重试/URL 回退），
+// 失败再回退到 OpenAI 风格的 multipart /images/edits，两类后端都兼容。
 export async function editImages(
+  req: ImageEditRequest,
+  opts?: {
+    persist?: boolean
+    signal?: AbortSignal
+    workspaceRoot?: string | null
+    onRetry?: (attempt: number, reason: string) => void
+    stream?: boolean
+    onPartialImage?: (index: number, dataUrl: string) => void
+  }
+): Promise<ImageGenOutcome> {
+  if (!req.imageRefs?.length) return { ok: false, error: '缺少要编辑的源图片。' }
+
+  const viaGenerations = await generateImages(
+    {
+      prompt: req.prompt,
+      size: req.size,
+      n: req.n,
+      images: req.imageRefs,
+      workspaceRoot: opts?.workspaceRoot ?? null
+    },
+    {
+      persist: opts?.persist,
+      signal: opts?.signal,
+      onRetry: opts?.onRetry,
+      stream: opts?.stream,
+      onPartialImage: opts?.onPartialImage
+    }
+  )
+  if (viaGenerations.ok && (viaGenerations.images?.length || viaGenerations.firstDataUrl)) {
+    return viaGenerations
+  }
+  if (opts?.signal?.aborted) return viaGenerations
+
+  // 回退：OpenAI 风格 multipart /images/edits。
+  opts?.onRetry?.(0, 'generations 编辑失败，回退 /images/edits')
+  return editImagesViaMultipart(req, opts)
+}
+
+// 用 OpenAI Images Edit API（POST {baseUrl}/images/edits，multipart）在原图基础上修改。
+// gpt-image-1 支持；dall-e-3 不支持编辑。火山方舟无此端点（会 404，由上层回退逻辑兜住）。
+async function editImagesViaMultipart(
   req: ImageEditRequest,
   opts?: { persist?: boolean; signal?: AbortSignal; workspaceRoot?: string | null; onRetry?: (attempt: number, reason: string) => void }
 ): Promise<ImageGenOutcome> {
@@ -289,6 +556,7 @@ export async function editImages(
     form.append('prompt', req.prompt)
     form.append('n', String(req.n && req.n > 0 ? Math.min(req.n, 4) : 1))
     form.append('size', req.size || settings.size)
+    form.append('watermark', String(settings.watermark))
     for (const img of resolvedImages) {
       const blob = new Blob([new Uint8Array(img.buffer)], { type: 'image/png' })
       // 单图用标准字段名 image；多图才用 image[]（部分网关只认 image）。
