@@ -2,16 +2,18 @@ import { app } from 'electron'
 import { readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { randomBytes } from 'crypto'
-import type { AgentBehaviorSettings, NetworkSettings, WebSearchSettings, ImageGenSettings } from '@shared/agentSettings'
+import type { AgentBehaviorSettings, NetworkSettings, WebSearchSettings, ImageGenSettings, VideoGenSettings } from '@shared/agentSettings'
 import {
   DEFAULT_AGENT_BEHAVIOR,
   DEFAULT_NETWORK_SETTINGS,
   DEFAULT_WEB_SEARCH_SETTINGS,
   DEFAULT_IMAGE_GEN_SETTINGS,
+  DEFAULT_VIDEO_GEN_SETTINGS,
   normalizeAgentBehavior,
   normalizeNetworkSettings,
   normalizeWebSearchSettings,
-  normalizeImageGenSettings
+  normalizeImageGenSettings,
+  normalizeVideoGenSettings
 } from '@shared/agentSettings'
 import type { McpSettings } from '@shared/mcpTypes'
 import { DEFAULT_MCP_SETTINGS, normalizeMcpSettings } from '@shared/mcpTypes'
@@ -26,6 +28,7 @@ interface SettingsFileShape {
   network?: Partial<NetworkSettings>
   webSearch?: Partial<WebSearchSettings>
   imageGen?: Partial<ImageGenSettings>
+  videoGen?: Partial<VideoGenSettings>
   mcp?: unknown
   skills?: unknown
   memory?: Partial<MemorySettings>
@@ -35,6 +38,7 @@ let cache: AgentBehaviorSettings | null = null
 let networkCache: NetworkSettings | null = null
 let webSearchCache: WebSearchSettings | null = null
 let imageGenCache: ImageGenSettings | null = null
+let videoGenCache: VideoGenSettings | null = null
 let mcpCache: McpSettings | null = null
 let skillsCache: SkillsSettings | null = null
 let memoryCache: MemorySettings | null = null
@@ -102,6 +106,7 @@ export function resetAgentSettingsCacheForTests(): void {
   networkCache = null
   webSearchCache = null
   imageGenCache = null
+  videoGenCache = null
   mcpCache = null
   skillsCache = null
   memoryCache = null
@@ -167,6 +172,24 @@ export function saveImageGenSettings(patch: Partial<ImageGenSettings>): ImageGen
   const next = normalizeImageGenSettings({ ...getImageGenSettings(), ...patch })
   writeFile({ ...file, imageGen: next })
   imageGenCache = next
+  return next
+}
+
+function loadVideoGenFromDisk(): VideoGenSettings {
+  const raw = readFile().videoGen ?? {}
+  return normalizeVideoGenSettings({ ...DEFAULT_VIDEO_GEN_SETTINGS, ...raw })
+}
+
+export function getVideoGenSettings(): VideoGenSettings {
+  if (!videoGenCache) videoGenCache = loadVideoGenFromDisk()
+  return videoGenCache
+}
+
+export function saveVideoGenSettings(patch: Partial<VideoGenSettings>): VideoGenSettings {
+  const file = readFile()
+  const next = normalizeVideoGenSettings({ ...getVideoGenSettings(), ...patch })
+  writeFile({ ...file, videoGen: next })
+  videoGenCache = next
   return next
 }
 

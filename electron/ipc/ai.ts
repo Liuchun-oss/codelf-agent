@@ -31,10 +31,12 @@ import {
   getMemorySettings,
   saveMemorySettings,
   getImageGenSettings,
-  saveImageGenSettings
+  saveImageGenSettings,
+  getVideoGenSettings,
+  saveVideoGenSettings
 } from '../agent/settings/agentSettingsStore'
 import { resetOutboundDispatcher } from '../agent/providers/network'
-import type { NetworkSettings, WebSearchSettingsDraft, WebSearchSettingsSummary, ImageGenSettingsDraft, ImageGenSettingsSummary, ImageGenTestResult } from '@shared/agentSettings'
+import type { NetworkSettings, WebSearchSettingsDraft, WebSearchSettingsSummary, ImageGenSettingsDraft, ImageGenSettingsSummary, ImageGenTestResult, VideoGenSettingsDraft, VideoGenSettingsSummary } from '@shared/agentSettings'
 import type { MemorySettings } from '@shared/memoryTypes'
 import {
   WEB_SEARCH_IQS_KEY_REF,
@@ -42,6 +44,7 @@ import {
   resolveWebSearchProvider
 } from '../agent/tools/webSearchTool'
 import { IMAGE_GEN_KEY_REF, generateImages } from '../agent/services/imageGenService'
+import { VIDEO_GEN_KEY_REF } from '../agent/services/videoGenService'
 import { setSecret, hasSecret, deleteSecret } from './secrets'
 import {
   listProfiles,
@@ -428,6 +431,26 @@ export function registerAiIpc(): void {
     }
     return { ok: true, latencyMs: Date.now() - started, dataUrl: outcome.firstDataUrl }
   })
+
+  const videoGenSummary = (): VideoGenSettingsSummary => {
+    const settings = getVideoGenSettings()
+    return { ...settings, hasApiKey: hasSecret(VIDEO_GEN_KEY_REF) }
+  }
+
+  ipcMain.handle('ai:getVideoGenSettings', async (): Promise<VideoGenSettingsSummary> => videoGenSummary())
+
+  ipcMain.handle(
+    'ai:saveVideoGenSettings',
+    async (_e, draft: VideoGenSettingsDraft): Promise<VideoGenSettingsSummary> => {
+      const { apiKey, ...config } = draft ?? {}
+      if (apiKey !== undefined) {
+        if (apiKey === '') deleteSecret(VIDEO_GEN_KEY_REF)
+        else setSecret(VIDEO_GEN_KEY_REF, apiKey)
+      }
+      saveVideoGenSettings(config)
+      return videoGenSummary()
+    }
+  )
 
   ipcMain.handle('ai:getMemorySettings', async (): Promise<MemorySettings> => getMemorySettings())
 

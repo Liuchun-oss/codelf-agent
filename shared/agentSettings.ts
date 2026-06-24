@@ -157,6 +157,76 @@ export interface ImageGenTestResult {
   dataUrl?: string
 }
 
+// ---- 视频生成（火山方舟异步任务：POST /contents/generations/tasks + 轮询）----
+// 与图像生成独立配置：自己的 baseUrl/model/key/参数。
+export interface VideoGenSettings {
+  // 是否启用 GenerateVideo 工具。
+  enabled: boolean
+  // 视频端点 base URL（如 https://ark.cn-beijing.volces.com/api/v3）。
+  baseUrl: string
+  // 视频模型名 / 推理接入点 ID（如 doubao-seedance-1-5-pro-250528 或 ep-xxx）。
+  model: string
+  // 默认分辨率（480p / 720p / 1080p）。
+  resolution: string
+  // 默认时长（秒）。
+  duration: number
+  // 默认画面比例（如 16:9、9:16、1:1、4:3、21:9、auto）。
+  ratio: string
+  // 是否生成音频（部分模型支持，有声通常加价）。
+  generateAudio: boolean
+  // 是否加 AI 水印。
+  watermark: boolean
+  // 轮询总超时（毫秒）。视频生成较慢，默认 10 分钟。
+  pollTimeoutMs: number
+}
+
+export const VIDEO_RESOLUTIONS: readonly string[] = ['480p', '720p', '1080p']
+export const VIDEO_RATIOS: readonly string[] = ['auto', '16:9', '9:16', '1:1', '4:3', '3:4', '21:9']
+
+export const DEFAULT_VIDEO_GEN_SETTINGS: VideoGenSettings = {
+  enabled: false,
+  baseUrl: '',
+  model: 'doubao-seedance-1-5-pro-251215',
+  resolution: '720p',
+  duration: 5,
+  ratio: '16:9',
+  generateAudio: false,
+  watermark: false,
+  pollTimeoutMs: 600000
+}
+
+export function normalizeVideoGenSettings(partial: Partial<VideoGenSettings>): VideoGenSettings {
+  const d = DEFAULT_VIDEO_GEN_SETTINGS
+  const rawTimeout = typeof partial.pollTimeoutMs === 'number' ? partial.pollTimeoutMs : d.pollTimeoutMs
+  const rawDuration = typeof partial.duration === 'number' ? Math.floor(partial.duration) : d.duration
+  return {
+    enabled: typeof partial.enabled === 'boolean' ? partial.enabled : d.enabled,
+    baseUrl: typeof partial.baseUrl === 'string' ? partial.baseUrl.trim() : d.baseUrl,
+    model: typeof partial.model === 'string' && partial.model.trim() ? partial.model.trim() : d.model,
+    resolution: typeof partial.resolution === 'string' && partial.resolution.trim() ? partial.resolution.trim() : d.resolution,
+    duration: Number.isFinite(rawDuration) && rawDuration >= 1 ? Math.min(rawDuration, 30) : d.duration,
+    ratio: typeof partial.ratio === 'string' && partial.ratio.trim() ? partial.ratio.trim() : d.ratio,
+    generateAudio: typeof partial.generateAudio === 'boolean' ? partial.generateAudio : d.generateAudio,
+    watermark: typeof partial.watermark === 'boolean' ? partial.watermark : d.watermark,
+    pollTimeoutMs: Number.isFinite(rawTimeout) && rawTimeout >= 30000 ? Math.min(rawTimeout, 1800000) : d.pollTimeoutMs
+  }
+}
+
+export interface VideoGenSettingsSummary extends VideoGenSettings {
+  hasApiKey: boolean
+}
+
+export interface VideoGenSettingsDraft extends Partial<VideoGenSettings> {
+  apiKey?: string
+}
+
+export interface VideoGenTestResult {
+  ok: boolean
+  error?: string
+  latencyMs?: number
+  videoUrl?: string
+}
+
 export const DEFAULT_AGENT_BEHAVIOR: AgentBehaviorSettings = {
   maxToolSteps: 0,
   maxTurnDurationMs: 20 * 60 * 1000,

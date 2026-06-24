@@ -2293,6 +2293,14 @@ body.resizing-x .sidebar-dock {
   object-fit: contain;
 }
 
+.agent-tool-preview-video {
+  max-width: 360px;
+  max-height: 280px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #000;
+}
+
 
 .preview-image-wrapper {
   position: relative;
@@ -6349,6 +6357,16 @@ kbd {
   margin: 0.6em 0;
   border-radius: 8px;
   border: 1px solid var(--border-soft);
+}
+
+.cm-md video.cm-md-video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.6em 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background: #000;
 }
 
 .cm-md .katex {

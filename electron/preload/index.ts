@@ -259,6 +259,9 @@ const api = {
   aiSaveImageGenSettings: (draft: import('@shared/agentSettings').ImageGenSettingsDraft) =>
     ipcRenderer.invoke('ai:saveImageGenSettings', draft),
   aiTestImageGen: () => ipcRenderer.invoke('ai:testImageGen'),
+  aiGetVideoGenSettings: () => ipcRenderer.invoke('ai:getVideoGenSettings'),
+  aiSaveVideoGenSettings: (draft: import('@shared/agentSettings').VideoGenSettingsDraft) =>
+    ipcRenderer.invoke('ai:saveVideoGenSettings', draft),
   aiGetMemorySettings: () => ipcRenderer.invoke('ai:getMemorySettings'),
   aiSaveMemorySettings: (patch: Partial<import('@shared/memoryTypes').MemorySettings>) =>
     ipcRenderer.invoke('ai:saveMemorySettings', patch),

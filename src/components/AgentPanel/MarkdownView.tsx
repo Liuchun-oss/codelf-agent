@@ -291,6 +291,30 @@ function MarkdownImage({ src, alt, ...rest }: { src?: string; alt?: string }): J
   return <img className="cm-md-img" src={src} alt={alt ?? ''} loading="lazy" onError={() => setFailed(true)} {...rest} />
 }
 
+// 生成的视频以 markdown 图片语法承载（![video](url)）。通过 alt=video 或视频扩展名识别，
+// 渲染为可播放的 <video> 播放器，而非图片。
+const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v)(\?|#|$)/i
+
+function isVideoSource(src: string, alt: string): boolean {
+  if (alt.trim().toLowerCase() === 'video') return true
+  return VIDEO_EXT_RE.test(src)
+}
+
+function MarkdownVideo({ src }: { src: string }): JSX.Element | null {
+  const [failed, setFailed] = useState(false)
+  if (failed) return null
+  return (
+    <video
+      className="cm-md-video"
+      src={src}
+      controls
+      playsInline
+      preload="metadata"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
 const COMPONENTS: Components = {
   a: ({ node: _node, children, href, ...rest }) => (
     <a className="cm-md-link" href={href} target="_blank" rel="noreferrer noopener" {...rest}>
@@ -299,6 +323,9 @@ const COMPONENTS: Components = {
   ),
   img: ({ node: _node, src, alt, ...rest }) => {
     if (typeof src === 'string') {
+      if (isVideoSource(src, alt ?? '')) {
+        return <MarkdownVideo src={src} />
+      }
       const previewId = parseBrowserPreviewId(src)
       if (previewId) {
         return <BrowserPreviewImage previewId={previewId} className="cm-md-img" alt={alt ?? ''} />

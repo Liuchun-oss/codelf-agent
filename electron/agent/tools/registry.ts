@@ -56,6 +56,7 @@ import {
 } from './browserTools'
 import { openInAppBrowserTool } from './openInAppBrowserTool'
 import { generateImageTool, editImageTool } from './generateImageTool'
+import { generateVideoTool } from './generateVideoTool'
 import {
   desktopLaunchAppTool,
   desktopListWindowsTool,
@@ -385,6 +386,7 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...openInAppBrowserTool, deferred: true })
   registry.register({ ...generateImageTool, deferred: true })
   registry.register({ ...editImageTool, deferred: true })
+  registry.register({ ...generateVideoTool, deferred: true })
   registry.register({ ...desktopLaunchAppTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopListWindowsTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopGetWindowTool, deferred: true, permissionGroup: 'desktop' })

@@ -34,6 +34,8 @@ function toolLabel(toolName: string | undefined): string {
       return '生成图片'
     case 'EditImage':
       return '编辑图片'
+    case 'GenerateVideo':
+      return '生成视频'
     default:
       return toolName ?? '工具'
   }
@@ -66,7 +68,18 @@ function extractArtifactImageUrls(result: string | undefined): string[] {
   if (!result) return []
   const urls: string[] = []
   for (const m of result.matchAll(ARTIFACT_IMG_RE)) {
-    if (m[1]) urls.push(m[1])
+    // 排除视频（GenerateVideo 用 ![video](...mp4) 承载），视频单独提取渲染播放器。
+    if (m[1] && !/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m[1])) urls.push(m[1])
+  }
+  return urls
+}
+
+// 提取工具结果里的 artifact 视频 URL（GenerateVideo 返回的 ![video](...mp4)）。
+function extractArtifactVideoUrls(result: string | undefined): string[] {
+  if (!result) return []
+  const urls: string[] = []
+  for (const m of result.matchAll(ARTIFACT_IMG_RE)) {
+    if (m[1] && /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m[1])) urls.push(m[1])
   }
   return urls
 }
@@ -108,6 +121,12 @@ function GeneratedImage({ src }: { src: string }): JSX.Element {
   )
 }
 
+function GeneratedVideo({ src }: { src: string }): JSX.Element {
+  return (
+    <video className="agent-tool-preview-video" src={src} controls playsInline preload="metadata" />
+  )
+}
+
 export default function ActivitySummary({ tools }: Props): JSX.Element | null {
   const visibleTools = tools.filter(
     (t) => t.toolName !== 'edit_file' && t.toolName !== 'write_file' && t.toolName !== 'run_subagent'
@@ -121,6 +140,7 @@ export default function ActivitySummary({ tools }: Props): JSX.Element | null {
         const fullText = fullArgsText(t.toolName, t.toolArgs)
         const previewIds = extractPreviewIds(t.toolResult)
         const artifactImages = extractArtifactImageUrls(t.toolResult)
+        const artifactVideos = extractArtifactVideoUrls(t.toolResult)
         return (
           <div key={t.id} className="agent-tool-entry">
             <span className={`agent-tool-item ${t.toolStatus ?? 'done'}`}>
@@ -145,6 +165,13 @@ export default function ActivitySummary({ tools }: Props): JSX.Element | null {
               <div className="agent-tool-previews">
                 {artifactImages.map((url) => (
                   <GeneratedImage key={url} src={url} />
+                ))}
+              </div>
+            )}
+            {artifactVideos.length > 0 && (
+              <div className="agent-tool-previews">
+                {artifactVideos.map((url) => (
+                  <GeneratedVideo key={url} src={url} />
                 ))}
               </div>
             )}

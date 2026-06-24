@@ -8,6 +8,7 @@ import AgentBehaviorSettingsSection from './AgentBehaviorSettingsSection'
 import NetworkSettingsSection from './NetworkSettingsSection'
 import WebSearchSettingsSection from './WebSearchSettingsSection'
 import ImageGenSettingsSection from './ImageGenSettingsSection'
+import VideoGenSettingsSection from './VideoGenSettingsSection'
 import McpSettingsSection from './McpSettingsSection'
 import SkillsSettingsSection from './SkillsSettingsSection'
 import PluginsSettingsSection from './PluginsSettingsSection'
@@ -18,7 +19,7 @@ import EnvSettingsSection from './EnvSettingsSection'
 import DebugPanelSection from './DebugPanelSection'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
 
-type SettingsSection = 'ai' | 'editor' | 'appearance' | 'agent' | 'network' | 'websearch' | 'imagegen' | 'mcp' | 'skills' | 'plugins' | 'memory' | 'knowledge' | 'env' | 'diagnostics'
+type SettingsSection = 'ai' | 'editor' | 'appearance' | 'agent' | 'network' | 'websearch' | 'imagegen' | 'videogen' | 'mcp' | 'skills' | 'plugins' | 'memory' | 'knowledge' | 'env' | 'diagnostics'
 
 interface NavItem {
   id: SettingsSection
@@ -63,6 +64,13 @@ const ICON = {
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <circle cx="8.5" cy="8.5" r="1.5" />
       <path d="M21 15l-5-5L5 21" />
+    </>
+  ),
+  videogen: (
+    <>
+      <rect x="3" y="5" width="14" height="14" rx="2" />
+      <path d="M21 8l-4 4 4 4V8z" />
+      <path d="M8 10l4 2-4 2v-4z" />
     </>
   ),
   mcp: (
@@ -112,6 +120,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'network', title: '网络', icon: ICON.network },
   { id: 'websearch', title: '联网搜索', icon: ICON.websearch },
   { id: 'imagegen', title: '图像生成', icon: ICON.imagegen },
+  { id: 'videogen', title: '视频生成', icon: ICON.videogen },
   { id: 'mcp', title: 'MCP 服务', icon: ICON.mcp },
   { id: 'skills', title: '技能', icon: ICON.skills },
   { id: 'plugins', title: '插件', icon: ICON.plugins },
@@ -250,6 +259,7 @@ export default function SettingsPanel(): JSX.Element | null {
             {activeSection === 'network' && <NetworkSettingsSection />}
             {activeSection === 'websearch' && <WebSearchSettingsSection />}
             {activeSection === 'imagegen' && <ImageGenSettingsSection />}
+            {activeSection === 'videogen' && <VideoGenSettingsSection />}
             {activeSection === 'mcp' && <McpSettingsSection />}
             {activeSection === 'skills' && <SkillsSettingsSection />}
             {activeSection === 'plugins' && <PluginsSettingsSection />}

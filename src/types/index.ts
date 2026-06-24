@@ -424,6 +424,10 @@ export interface LcApi {
     draft: import('@shared/agentSettings').ImageGenSettingsDraft
   ) => Promise<import('@shared/agentSettings').ImageGenSettingsSummary>
   aiTestImageGen: () => Promise<import('@shared/agentSettings').ImageGenTestResult>
+  aiGetVideoGenSettings: () => Promise<import('@shared/agentSettings').VideoGenSettingsSummary>
+  aiSaveVideoGenSettings: (
+    draft: import('@shared/agentSettings').VideoGenSettingsDraft
+  ) => Promise<import('@shared/agentSettings').VideoGenSettingsSummary>
   aiGetMemorySettings: () => Promise<import('@shared/memoryTypes').MemorySettings>
   aiSaveMemorySettings: (
     patch: Partial<import('@shared/memoryTypes').MemorySettings>
