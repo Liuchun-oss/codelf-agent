@@ -9,6 +9,9 @@ export interface Artifact {
   name: string
   language: string
   kind: ArtifactKind
+  // 该产物最后一次「应用写入」对应的消息 id，作为版本签名：
+  // 用户关闭某标签后，若同路径再次被写入（签名变化），标签会自动恢复显示。
+  sig: string
 }
 
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg'])
@@ -36,7 +39,7 @@ function extOf(p: string): string {
 }
 
 /** Classify a file into an artifact kind for the preview panel. */
-export function classifyArtifact(path: string): Artifact {
+export function classifyArtifact(path: string, sig = ''): Artifact {
   const language = detectLanguage(path)
   const ext = extOf(path)
   const name = basename(path)
@@ -56,7 +59,7 @@ export function classifyArtifact(path: string): Artifact {
     kind = 'other'
   }
 
-  return { path, name, language, kind }
+  return { path, name, language, kind, sig }
 }
 
 /**
@@ -74,7 +77,8 @@ export function deriveArtifacts(messages: ChatMessageView[]): Artifact[] {
     const path = m.filePath
     if (!path) continue
     if (!byPath.has(path)) order.push(path)
-    byPath.set(path, classifyArtifact(path))
+    // 用消息 id 作为版本签名：同路径再次写入时 id 变化，可触发已关闭标签恢复。
+    byPath.set(path, classifyArtifact(path, m.id))
   }
 
   return order.map((p) => byPath.get(p)!).filter(Boolean)

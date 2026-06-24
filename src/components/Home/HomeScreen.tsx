@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUiStore } from '@/stores/uiStore'
 import { useAgentStore } from '@/stores/agentStore'
+import { useVideoQueueStore } from '@/stores/videoQueueStore'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { useDialogStore } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
@@ -8,6 +9,8 @@ import { addRecentWorkspace } from '@/utils/session'
 import ConversationView from '@/components/AgentPanel/ConversationView'
 import ArtifactPanel from '@/components/AgentPanel/ArtifactPanel'
 import { deriveArtifacts } from '@/components/AgentPanel/artifacts'
+import { fileToImageAttachment, appendImage } from '@/components/AgentPanel/imageAttachment'
+import type { ImageAttachment } from '@shared/agentTypes'
 import { useAppVersion } from '@/hooks/useAppVersion'
 import CwdPicker from './CwdPicker'
 import ModelPicker from './ModelPicker'
@@ -68,6 +71,7 @@ export default function HomeScreen(): JSX.Element {
   const pickedWs = useUiStore((s) => s.homePickedWorkspace)
   const setPickedWs = useUiStore((s) => s.setHomePickedWorkspace)
   const [draft, setDraft] = useState('')
+  const [draftImages, setDraftImages] = useState<ImageAttachment[]>([])
   const initializedPick = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -83,9 +87,23 @@ export default function HomeScreen(): JSX.Element {
     (s) => s.sessions.find((m) => m.id === s.currentSessionId)?.cwd ?? null
   )
   const hasProfile = useAgentStore((s) => !!s.activeProfile)
+  const supportsVision = useAgentStore((s) => !!s.activeProfile?.supportsVision)
 
-  // 当前对话里是否存在可预览产物（决定右侧预览栏是否出现）
-  const hasArtifacts = useMemo(() => deriveArtifacts(messages).length > 0, [messages])
+  // 当前对话里是否存在可预览产物（决定右侧预览栏是否出现）。
+  // 视频队列里有任务（哪怕只提交还在后台生成）也算可预览产物，否则
+  // 只生成视频时右上角不会出现「产物预览」入口。
+  const videoTaskCount = useVideoQueueStore((s) => s.tasks.length)
+  const loadVideoTasks = useVideoQueueStore((s) => s.load)
+  const dismissedArtifacts = useUiStore((s) => s.dismissedArtifacts)
+  useEffect(() => {
+    void loadVideoTasks()
+  }, [loadVideoTasks])
+  const hasArtifacts = useMemo(
+    () =>
+      deriveArtifacts(messages).some((a) => dismissedArtifacts[a.path] !== a.sig) ||
+      videoTaskCount > 0,
+    [messages, videoTaskCount, dismissedArtifacts]
+  )
 
   // 是否存在“有内容”的历史对话（判定口径与左侧 RecentConversations 一致）
   const hasAnyConversation = sessions.some((m) => {
@@ -155,7 +173,8 @@ export default function HomeScreen(): JSX.Element {
 
   const startChat = (): void => {
     const text = draft.trim()
-    if (!text) return
+    const imgs = draftImages.length > 0 ? [...draftImages] : undefined
+    if (!text && !imgs) return
     if (!hasProfile) {
       // 不静默跳转：说明原因，草稿保留，配置完成回来可直接发送
       toast.warn('尚未配置 AI Provider，请先在设置中添加；输入内容已保留')
@@ -165,10 +184,31 @@ export default function HomeScreen(): JSX.Element {
     const cwd = pickedWs?.path ?? null
     newSession(cwd)
     if (pickedWs) addRecentWorkspace(pickedWs)
-    void sendMessage(text)
+    void sendMessage(text, undefined, imgs)
     setDraft('')
+    setDraftImages([])
     setChatOpen(true)
   }
+
+  const onComposerPaste = useCallback(
+    async (e: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
+      const items = Array.from(e.clipboardData?.items ?? [])
+      const imageItems = items.filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      if (imageItems.length === 0) return
+      e.preventDefault()
+      if (!supportsVision) {
+        toast.warn('当前模型不支持图片输入')
+        return
+      }
+      for (const it of imageItems) {
+        const file = it.getAsFile()
+        if (!file) continue
+        const att = await fileToImageAttachment(file)
+        if (att) setDraftImages((prev) => appendImage(prev, att))
+      }
+    },
+    [supportsVision]
+  )
 
   const openConversation = (sessionId: string): void => {
     switchSession(sessionId)
@@ -357,16 +397,42 @@ export default function HomeScreen(): JSX.Element {
                   </div>
                 )}
                 <div className="home-composer">
+                  {draftImages.length > 0 && (
+                    <div className="agent-image-strip" aria-label="已附加图片">
+                      {draftImages.map((img) => (
+                        <span key={img.dataUrl} className="agent-image-chip">
+                          <img src={img.dataUrl} alt={img.name ?? '图片'} className="agent-image-thumb" />
+                          <button
+                            type="button"
+                            className="agent-image-remove"
+                            aria-label="移除图片"
+                            onClick={() =>
+                              setDraftImages((prev) => prev.filter((i) => i.dataUrl !== img.dataUrl))
+                            }
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <textarea
                     ref={textareaRef}
                     className="home-composer-input"
-                    placeholder={hasProfile ? '描述你的任务，Enter 发送，Shift+Enter 换行' : '尚未配置 AI Provider，请先到「设置」添加'}
+                    placeholder={
+                      hasProfile
+                        ? supportsVision
+                          ? '描述你的任务，可粘贴图片，Enter 发送，Shift+Enter 换行'
+                          : '描述你的任务，Enter 发送，Shift+Enter 换行'
+                        : '尚未配置 AI Provider，请先到「设置」添加'
+                    }
                     rows={2}
                     value={draft}
                     onChange={(e) => {
                       setDraft(e.target.value)
                       autoGrow()
                     }}
+                    onPaste={(e) => void onComposerPaste(e)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                         e.preventDefault()
@@ -384,7 +450,7 @@ export default function HomeScreen(): JSX.Element {
                       type="button"
                       className="home-composer-send"
                       title="开始对话 (Enter)"
-                      disabled={!draft.trim()}
+                      disabled={!draft.trim() && draftImages.length === 0}
                       onClick={startChat}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">

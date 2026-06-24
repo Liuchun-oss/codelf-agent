@@ -16,6 +16,7 @@ Usage:
 - "referenceImages" (optional): one or more reference images to guide generation. Provide them when the user wants image-to-image ("make a close-up of this dog"), multi-image reference / fusion ("put the outfit from image 2 onto image 1"), or design derived from a reference (e.g. a logo). Accepts http(s) URLs, codelf-artifact:// URLs of prior generated images, absolute paths, or workspace-relative paths.
 - "series" (optional): set true WHENEVER the user asks for MULTIPLE related/consistent images in one request — e.g. "生成一组4张...", four seasons of the same courtyard, a brand visual kit, or one scene at morning/noon/night. This makes the model output SEPARATE images; without it a multi-image request usually returns a single collage/grid, which is wrong.
 - "maxImages" (optional): with series=true, the cap on how many images to produce (1-15). Set it to the number the user asked for (e.g. 4 for "一组4张").
+- "outputPath" (REQUIRED): the full output file path INCLUDING a file name and an image extension (.png/.jpg/.webp), absolute or workspace-relative, e.g. "images/icon.png". A directory-only path is rejected — you MUST give the file name. When multiple images are produced (n>1 or series), each file is auto-numbered before the extension (icon.png → icon-1.png, icon-2.png …).
 
 Deciding automatically:
 - Prompt mentions a specific count or "一组/a set/series/multiple/各一张/分别" → set series=true and maxImages to that count.
@@ -39,4 +40,5 @@ Behavior:
 Usage:
 - "imageRefs": one or more references to the source image(s). Use the codelf-artifact:// URL of a previously generated image (from a GenerateImage/EditImage result), an absolute file path, or a workspace-relative path. To tweak the image you just made, pass its markdown URL.
 - "prompt": the edit instruction describing what to change.
-- "size"/"n": optional, same as GenerateImage.`
+- "size"/"n": optional, same as GenerateImage.
+- "outputPath" (REQUIRED): the full output file path INCLUDING a file name and an image extension (.png/.jpg/.webp), absolute or workspace-relative, e.g. "images/icon-edited.png". A directory-only path is rejected. When n>1, files are auto-numbered before the extension.`

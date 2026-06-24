@@ -227,6 +227,111 @@ export interface VideoGenTestResult {
   videoUrl?: string
 }
 
+// ---- 音频生成 / 文生音（多供应商适配：火山豆包 / OpenAI 兼容 / MiniMax）----
+// 与图像/视频生成独立配置。第一期仅支持预设音色 TTS（文本→语音），
+// 音色克隆（参考音频→speaker_id）留待后续迭代。
+// 不同供应商的请求/响应结构差异很大（火山走 JSON 内嵌 base64，OpenAI 走二进制流），
+// 故按 provider 选择不同适配器，而非单纯换 baseUrl。
+export type AudioProvider = 'volcano' | 'openai' | 'minimax'
+
+export interface AudioGenSettings {
+  // 是否启用 GenerateSpeech 工具。
+  enabled: boolean
+  // 供应商，决定请求/响应适配器。
+  provider: AudioProvider
+  // 语音端点 base URL。
+  baseUrl: string
+  // 模型名（OpenAI: tts-1 / gpt-4o-mini-tts；MiniMax: speech-01 等。火山不使用）。
+  model: string
+  // 火山应用 App ID（仅 volcano）。
+  appid: string
+  // 火山业务集群（仅 volcano，如 volcano_tts）。
+  cluster: string
+  // MiniMax group_id（仅 minimax）。
+  groupId: string
+  // 默认音色（火山 voice_type / OpenAI voice / MiniMax voice_id）。
+  voiceType: string
+  // 默认输出音频格式（mp3 / wav / pcm / ogg_opus）。
+  encoding: string
+  // 默认语速，范围 0.5~2.0。
+  speed: number
+  // 请求超时（毫秒）。TTS 通常秒级，给足冗余。
+  timeoutMs: number
+}
+
+// 供应商元信息：默认 baseUrl 与展示名。
+export const AUDIO_PROVIDERS: readonly { id: AudioProvider; label: string; defaultBaseUrl: string }[] = [
+  { id: 'volcano', label: '火山豆包语音', defaultBaseUrl: 'https://openspeech.bytedance.com' },
+  { id: 'openai', label: 'OpenAI 兼容（/v1/audio/speech）', defaultBaseUrl: 'https://api.openai.com/v1' },
+  { id: 'minimax', label: 'MiniMax（海螺 T2A）', defaultBaseUrl: 'https://api.minimax.chat/v1' }
+]
+
+// 常用预设音色（火山大模型音色，实际可用列表以账号开通为准）。
+// OpenAI/MiniMax 的音色名不同，可在「自定义音色 ID」里直接填写。
+export const AUDIO_VOICES: readonly { id: string; label: string }[] = [
+  { id: 'zh_female_qingxin', label: '清新女声' },
+  { id: 'zh_female_shuangkuai', label: '爽快女声' },
+  { id: 'zh_male_baqigangbu', label: '霸气男声' },
+  { id: 'zh_male_qingse', label: '青涩男声' },
+  { id: 'zh_female_wennuan', label: '温暖女声' },
+  { id: 'zh_male_chunhou', label: '醇厚男声' }
+]
+
+export const AUDIO_ENCODINGS: readonly string[] = ['mp3', 'wav', 'ogg_opus', 'pcm']
+
+export const DEFAULT_AUDIO_GEN_SETTINGS: AudioGenSettings = {
+  enabled: false,
+  provider: 'volcano',
+  baseUrl: 'https://openspeech.bytedance.com',
+  model: '',
+  appid: '',
+  cluster: 'volcano_tts',
+  groupId: '',
+  voiceType: 'zh_female_qingxin',
+  encoding: 'mp3',
+  speed: 1.0,
+  timeoutMs: 60000
+}
+
+export function normalizeAudioGenSettings(partial: Partial<AudioGenSettings>): AudioGenSettings {
+  const d = DEFAULT_AUDIO_GEN_SETTINGS
+  const rawTimeout = typeof partial.timeoutMs === 'number' ? partial.timeoutMs : d.timeoutMs
+  const rawSpeed = typeof partial.speed === 'number' && Number.isFinite(partial.speed) ? partial.speed : d.speed
+  const provider: AudioProvider =
+    partial.provider === 'openai' || partial.provider === 'minimax' || partial.provider === 'volcano'
+      ? partial.provider
+      : d.provider
+  return {
+    enabled: typeof partial.enabled === 'boolean' ? partial.enabled : d.enabled,
+    provider,
+    baseUrl: typeof partial.baseUrl === 'string' && partial.baseUrl.trim() ? partial.baseUrl.trim() : d.baseUrl,
+    model: typeof partial.model === 'string' ? partial.model.trim() : d.model,
+    appid: typeof partial.appid === 'string' ? partial.appid.trim() : d.appid,
+    cluster: typeof partial.cluster === 'string' && partial.cluster.trim() ? partial.cluster.trim() : d.cluster,
+    groupId: typeof partial.groupId === 'string' ? partial.groupId.trim() : d.groupId,
+    voiceType: typeof partial.voiceType === 'string' && partial.voiceType.trim() ? partial.voiceType.trim() : d.voiceType,
+    encoding: typeof partial.encoding === 'string' && partial.encoding.trim() ? partial.encoding.trim() : d.encoding,
+    speed: Math.min(2, Math.max(0.5, Math.round(rawSpeed * 10) / 10)),
+    timeoutMs: Number.isFinite(rawTimeout) && rawTimeout >= 5000 ? Math.min(rawTimeout, 300000) : d.timeoutMs
+  }
+}
+
+export interface AudioGenSettingsSummary extends AudioGenSettings {
+  hasApiKey: boolean
+}
+
+export interface AudioGenSettingsDraft extends Partial<AudioGenSettings> {
+  apiKey?: string
+}
+
+export interface AudioGenTestResult {
+  ok: boolean
+  error?: string
+  latencyMs?: number
+  // 生成音频的 data URL，供前端试听。
+  dataUrl?: string
+}
+
 export type VideoTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 // 后台视频生成任务（持久化到磁盘，跨重启可见）。
@@ -246,6 +351,10 @@ export interface VideoTask {
   error?: string
   // 成功后的本地视频 artifact URL。
   videoUrl?: string
+  // 成功后落盘的本地绝对文件路径（供 agent 后续处理，如拼接多镜头）。
+  filePath?: string
+  // agent 请求的输出位置（目录或文件路径）。展示/调试用。
+  outputPath?: string
   createdAt: number
   updatedAt: number
 }

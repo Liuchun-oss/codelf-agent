@@ -30,7 +30,14 @@ interface Props {
  */
 export default function ArtifactPanel({ onClose }: Props): JSX.Element | null {
   const messages = useAgentStore((s) => s.messages)
-  const artifacts = useMemo<Artifact[]>(() => deriveArtifacts(messages), [messages])
+  const allArtifacts = useMemo<Artifact[]>(() => deriveArtifacts(messages), [messages])
+  const dismissed = useUiStore((s) => s.dismissedArtifacts)
+  const dismissArtifact = useUiStore((s) => s.dismissArtifact)
+  const artifacts = useMemo<Artifact[]>(
+    // 仅当签名与关闭时一致才隐藏；同路径重新写入（签名变化）会自动恢复显示。
+    () => allArtifacts.filter((a) => dismissed[a.path] !== a.sig),
+    [allArtifacts, dismissed]
+  )
   const browserOpen = useUiStore((s) => s.homeBrowserOpen)
   const browserUrl = useUiStore((s) => s.homeBrowserUrl)
   const closeHomeBrowser = useUiStore((s) => s.closeHomeBrowser)
@@ -117,6 +124,18 @@ export default function ArtifactPanel({ onClose }: Props): JSX.Element | null {
           >
             <span className="artifact-tab-kind">{KIND_LABEL[a.kind]}</span>
             <span className="artifact-tab-name">{a.name}</span>
+            <span
+              className="artifact-tab-close"
+              title="关闭此产物标签"
+              role="button"
+              aria-label="关闭此产物标签"
+              onClick={(e) => {
+                e.stopPropagation()
+                dismissArtifact(a.path, a.sig)
+              }}
+            >
+              ×
+            </span>
           </button>
         ))}
         {hasVideoQueue && (

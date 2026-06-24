@@ -2,7 +2,7 @@ import { getImageGenSettings } from '../settings/agentSettingsStore'
 import { getSecret } from '../../ipc/secrets'
 import { guardOutboundUrl } from '../tools/ssrfGuard'
 import { getFetchOptions } from '../providers/network'
-import { saveGeneratedImage, type SavedGeneratedImage } from '../../services/generatedImageStore'
+import { saveGeneratedImage, type SavedGeneratedImage, type SaveImageTarget } from '../../services/generatedImageStore'
 import { userAgent, ARTIFACT_FILE_SCHEME } from '@shared/appConfig'
 import { readFile } from 'fs/promises'
 import { isAbsolute, resolve as resolvePath, basename } from 'path'
@@ -23,6 +23,8 @@ export interface ImageGenRequest {
   maxImages?: number
   // 解析本地参考图引用所需的工作区根。
   workspaceRoot?: string | null
+  // agent 指定的输出文件路径（含文件名+扩展名）；多张时自动按 -1/-2… 编号。
+  outputPath?: string
 }
 
 export interface ImageGenOutcome {
@@ -110,6 +112,8 @@ interface ImageHttpConfig {
   httpErrorPrefix: string
   emptyDataError: string
   onRetry?: (attempt: number, reason: string) => void
+  // 落盘目标（含 outputPath / multi）；为空则用默认随机命名。
+  saveTarget?: SaveImageTarget
 }
 
 // 执行一次图像 HTTP 请求并解析；对可重试错误自动重试（指数退避）。
@@ -191,7 +195,9 @@ async function runImageRequestWithRetry(cfg: ImageHttpConfig): Promise<ImageGenO
       return { ok: true, firstDataUrl: `data:image/png;base64,${resolvedB64[0]}` }
     }
     const saved: SavedGeneratedImage[] = []
-    for (const b64 of resolvedB64) saved.push(await saveGeneratedImage(b64, 'image/png'))
+    for (let i = 0; i < resolvedB64.length; i += 1) {
+      saved.push(await saveGeneratedImage(resolvedB64[i], 'image/png', cfg.saveTarget, i))
+    }
     return { ok: true, images: saved, firstDataUrl: `data:image/png;base64,${resolvedB64[0]}` }
   }
   return { ok: false, error: lastError }
@@ -250,6 +256,11 @@ export async function generateImages(
   }
 
   const n = req.n && req.n > 0 ? Math.min(req.n, 4) : 1
+  // 落盘目标：multi 取决于是否可能产出多张（series 或 n>1 或 maxImages>1）。
+  const willBeMulti = Boolean(req.series) || n > 1 || (req.maxImages ?? 0) > 1
+  const saveTarget: SaveImageTarget | undefined = req.outputPath
+    ? { outputPath: req.outputPath, workspaceRoot: req.workspaceRoot ?? null, multi: willBeMulti }
+    : undefined
   const body: Record<string, unknown> = {
     model: settings.model,
     prompt: req.prompt,
@@ -299,7 +310,8 @@ export async function generateImages(
       signal: opts.signal,
       timeoutMs: settings.timeoutMs,
       persist: opts.persist !== false,
-      onPartialImage: opts.onPartialImage
+      onPartialImage: opts.onPartialImage,
+      saveTarget
     }).catch((e) => ({ ok: false as const, error: describeFetchError(e) }))
     if (streamed.ok && (streamed.images?.length || streamed.firstDataUrl)) return streamed
     opts.onRetry?.(0, '流式失败，回退非流式')
@@ -312,6 +324,7 @@ export async function generateImages(
     httpErrorPrefix: '图像端点返回',
     emptyDataError: '端点未返回任何图片数据。',
     onRetry: opts?.onRetry,
+    saveTarget,
     doFetch: (signal) =>
       fetch(url, {
         method: 'POST',
@@ -331,6 +344,8 @@ interface ImageStreamConfig {
   timeoutMs: number
   persist: boolean
   onPartialImage?: (index: number, dataUrl: string) => void
+  // 落盘目标（含 outputPath / multi）；为空则用默认随机命名。
+  saveTarget?: SaveImageTarget
 }
 
 interface SseImageEvent {
@@ -397,7 +412,7 @@ async function runImageStream(cfg: ImageStreamConfig): Promise<ImageGenOutcome> 
     const dataUrl = `data:image/png;base64,${b64}`
     if (!firstDataUrl) firstDataUrl = dataUrl
     cfg.onPartialImage?.(ev.image_index ?? saved.length, dataUrl)
-    if (cfg.persist) saved.push(await saveGeneratedImage(b64, 'image/png'))
+    if (cfg.persist) saved.push(await saveGeneratedImage(b64, 'image/png', cfg.saveTarget, saved.length))
   }
 
   try {
@@ -478,6 +493,10 @@ export interface ImageEditRequest {
   imageRefs: string[]
   size?: string
   n?: number
+  // agent 指定的输出文件路径（含文件名+扩展名）；多张时自动按 -1/-2… 编号。
+  outputPath?: string
+  // 解析 outputPath 相对路径所需的工作区根。
+  workspaceRoot?: string | null
 }
 
 // 图片编辑入口。不同后端的编辑机制不同：
@@ -504,7 +523,8 @@ export async function editImages(
       size: req.size,
       n: req.n,
       images: req.imageRefs,
-      workspaceRoot: opts?.workspaceRoot ?? null
+      workspaceRoot: opts?.workspaceRoot ?? req.workspaceRoot ?? null,
+      outputPath: req.outputPath
     },
     {
       persist: opts?.persist,
@@ -549,6 +569,14 @@ async function editImagesViaMultipart(
   }
 
   const singleImage = resolvedImages.length === 1
+  const editN = req.n && req.n > 0 ? Math.min(req.n, 4) : 1
+  const saveTarget: SaveImageTarget | undefined = req.outputPath
+    ? {
+        outputPath: req.outputPath,
+        workspaceRoot: opts?.workspaceRoot ?? req.workspaceRoot ?? null,
+        multi: editN > 1
+      }
+    : undefined
   // FormData/Blob 的 body 一旦被 fetch 消费就不可复用，故每次尝试都重建。
   const buildForm = (): FormData => {
     const form = new FormData()
@@ -573,6 +601,7 @@ async function editImagesViaMultipart(
     httpErrorPrefix: '图像编辑端点返回',
     emptyDataError: '编辑端点未返回图片数据（可能不支持 b64_json 或该模型不支持编辑）。',
     onRetry: opts?.onRetry,
+    saveTarget,
     doFetch: (signal) =>
       fetch(url, {
         method: 'POST',

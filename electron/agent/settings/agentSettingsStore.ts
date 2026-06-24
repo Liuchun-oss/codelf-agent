@@ -2,18 +2,20 @@ import { app } from 'electron'
 import { readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { randomBytes } from 'crypto'
-import type { AgentBehaviorSettings, NetworkSettings, WebSearchSettings, ImageGenSettings, VideoGenSettings } from '@shared/agentSettings'
+import type { AgentBehaviorSettings, NetworkSettings, WebSearchSettings, ImageGenSettings, VideoGenSettings, AudioGenSettings } from '@shared/agentSettings'
 import {
   DEFAULT_AGENT_BEHAVIOR,
   DEFAULT_NETWORK_SETTINGS,
   DEFAULT_WEB_SEARCH_SETTINGS,
   DEFAULT_IMAGE_GEN_SETTINGS,
   DEFAULT_VIDEO_GEN_SETTINGS,
+  DEFAULT_AUDIO_GEN_SETTINGS,
   normalizeAgentBehavior,
   normalizeNetworkSettings,
   normalizeWebSearchSettings,
   normalizeImageGenSettings,
-  normalizeVideoGenSettings
+  normalizeVideoGenSettings,
+  normalizeAudioGenSettings
 } from '@shared/agentSettings'
 import type { McpSettings } from '@shared/mcpTypes'
 import { DEFAULT_MCP_SETTINGS, normalizeMcpSettings } from '@shared/mcpTypes'
@@ -29,6 +31,7 @@ interface SettingsFileShape {
   webSearch?: Partial<WebSearchSettings>
   imageGen?: Partial<ImageGenSettings>
   videoGen?: Partial<VideoGenSettings>
+  audioGen?: Partial<AudioGenSettings>
   mcp?: unknown
   skills?: unknown
   memory?: Partial<MemorySettings>
@@ -39,6 +42,7 @@ let networkCache: NetworkSettings | null = null
 let webSearchCache: WebSearchSettings | null = null
 let imageGenCache: ImageGenSettings | null = null
 let videoGenCache: VideoGenSettings | null = null
+let audioGenCache: AudioGenSettings | null = null
 let mcpCache: McpSettings | null = null
 let skillsCache: SkillsSettings | null = null
 let memoryCache: MemorySettings | null = null
@@ -107,6 +111,7 @@ export function resetAgentSettingsCacheForTests(): void {
   webSearchCache = null
   imageGenCache = null
   videoGenCache = null
+  audioGenCache = null
   mcpCache = null
   skillsCache = null
   memoryCache = null
@@ -190,6 +195,24 @@ export function saveVideoGenSettings(patch: Partial<VideoGenSettings>): VideoGen
   const next = normalizeVideoGenSettings({ ...getVideoGenSettings(), ...patch })
   writeFile({ ...file, videoGen: next })
   videoGenCache = next
+  return next
+}
+
+function loadAudioGenFromDisk(): AudioGenSettings {
+  const raw = readFile().audioGen ?? {}
+  return normalizeAudioGenSettings({ ...DEFAULT_AUDIO_GEN_SETTINGS, ...raw })
+}
+
+export function getAudioGenSettings(): AudioGenSettings {
+  if (!audioGenCache) audioGenCache = loadAudioGenFromDisk()
+  return audioGenCache
+}
+
+export function saveAudioGenSettings(patch: Partial<AudioGenSettings>): AudioGenSettings {
+  const file = readFile()
+  const next = normalizeAudioGenSettings({ ...getAudioGenSettings(), ...patch })
+  writeFile({ ...file, audioGen: next })
+  audioGenCache = next
   return next
 }
 

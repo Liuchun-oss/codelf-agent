@@ -262,6 +262,10 @@ const api = {
   aiGetVideoGenSettings: () => ipcRenderer.invoke('ai:getVideoGenSettings'),
   aiSaveVideoGenSettings: (draft: import('@shared/agentSettings').VideoGenSettingsDraft) =>
     ipcRenderer.invoke('ai:saveVideoGenSettings', draft),
+  aiGetAudioGenSettings: () => ipcRenderer.invoke('ai:getAudioGenSettings'),
+  aiSaveAudioGenSettings: (draft: import('@shared/agentSettings').AudioGenSettingsDraft) =>
+    ipcRenderer.invoke('ai:saveAudioGenSettings', draft),
+  aiTestAudioGen: () => ipcRenderer.invoke('ai:testAudioGen'),
   aiListVideoTasks: () => ipcRenderer.invoke('ai:listVideoTasks'),
   aiCancelVideoTask: (id: string) => ipcRenderer.invoke('ai:cancelVideoTask', id),
   aiDeleteVideoTask: (id: string) => ipcRenderer.invoke('ai:deleteVideoTask', id),

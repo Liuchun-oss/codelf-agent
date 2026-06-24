@@ -33,10 +33,12 @@ import {
   getImageGenSettings,
   saveImageGenSettings,
   getVideoGenSettings,
-  saveVideoGenSettings
+  saveVideoGenSettings,
+  getAudioGenSettings,
+  saveAudioGenSettings
 } from '../agent/settings/agentSettingsStore'
 import { resetOutboundDispatcher } from '../agent/providers/network'
-import type { NetworkSettings, WebSearchSettingsDraft, WebSearchSettingsSummary, ImageGenSettingsDraft, ImageGenSettingsSummary, ImageGenTestResult, VideoGenSettingsDraft, VideoGenSettingsSummary, VideoTask } from '@shared/agentSettings'
+import type { NetworkSettings, WebSearchSettingsDraft, WebSearchSettingsSummary, ImageGenSettingsDraft, ImageGenSettingsSummary, ImageGenTestResult, VideoGenSettingsDraft, VideoGenSettingsSummary, VideoTask, AudioGenSettingsDraft, AudioGenSettingsSummary, AudioGenTestResult } from '@shared/agentSettings'
 import type { MemorySettings } from '@shared/memoryTypes'
 import {
   WEB_SEARCH_IQS_KEY_REF,
@@ -45,6 +47,7 @@ import {
 } from '../agent/tools/webSearchTool'
 import { IMAGE_GEN_KEY_REF, generateImages } from '../agent/services/imageGenService'
 import { VIDEO_GEN_KEY_REF } from '../agent/services/videoGenService'
+import { AUDIO_GEN_KEY_REF, generateSpeech } from '../agent/services/audioGenService'
 import { listVideoTasks, cancelVideoTask, deleteVideoTask, clearFinishedVideoTasks } from '../services/videoTaskQueue'
 import { setSecret, hasSecret, deleteSecret } from './secrets'
 import {
@@ -457,6 +460,38 @@ export function registerAiIpc(): void {
   ipcMain.handle('ai:cancelVideoTask', async (_e, id: string): Promise<VideoTask | null> => cancelVideoTask(id))
   ipcMain.handle('ai:deleteVideoTask', async (_e, id: string): Promise<void> => deleteVideoTask(id))
   ipcMain.handle('ai:clearFinishedVideoTasks', async (): Promise<void> => clearFinishedVideoTasks())
+
+  const audioGenSummary = (): AudioGenSettingsSummary => {
+    const settings = getAudioGenSettings()
+    return { ...settings, hasApiKey: hasSecret(AUDIO_GEN_KEY_REF) }
+  }
+
+  ipcMain.handle('ai:getAudioGenSettings', async (): Promise<AudioGenSettingsSummary> => audioGenSummary())
+
+  ipcMain.handle(
+    'ai:saveAudioGenSettings',
+    async (_e, draft: AudioGenSettingsDraft): Promise<AudioGenSettingsSummary> => {
+      const { apiKey, ...config } = draft ?? {}
+      if (apiKey !== undefined) {
+        if (apiKey === '') deleteSecret(AUDIO_GEN_KEY_REF)
+        else setSecret(AUDIO_GEN_KEY_REF, apiKey)
+      }
+      saveAudioGenSettings(config)
+      return audioGenSummary()
+    }
+  )
+
+  ipcMain.handle('ai:testAudioGen', async (): Promise<AudioGenTestResult> => {
+    const started = Date.now()
+    const outcome = await generateSpeech(
+      { text: '你好，这是一段文生音测试。' },
+      { persist: false }
+    )
+    if (!outcome.ok || !outcome.firstDataUrl) {
+      return { ok: false, error: outcome.error ?? '语音合成失败', latencyMs: Date.now() - started }
+    }
+    return { ok: true, latencyMs: Date.now() - started, dataUrl: outcome.firstDataUrl }
+  })
 
   ipcMain.handle('ai:getMemorySettings', async (): Promise<MemorySettings> => getMemorySettings())
 

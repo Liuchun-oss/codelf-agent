@@ -6,6 +6,7 @@ import {
   ProviderError,
   sdkErrorToProviderError,
   normalizeBaseUrl,
+  buildEndpointUrl,
   endpointNeedsNeutralUa,
   markEndpointNeutralUa,
   NEUTRAL_UA,
@@ -307,7 +308,7 @@ export async function* streamChatViaOpenAI(
   const apiKey = (client as unknown as Record<string, unknown>).apiKey as string
   const rawBaseUrl = ((client as unknown as Record<string, unknown>)._options as Record<string, unknown> | undefined)
     ?.baseURL as string || (client as unknown as Record<string, unknown>).baseURL as string || ''
-  const fetchUrl = rawBaseUrl ? new URL('/v1/chat/completions', rawBaseUrl).href : ''
+  const fetchUrl = rawBaseUrl ? buildEndpointUrl(rawBaseUrl, 'chat/completions') : ''
 
   const doRequest = async (
     messages: ChatMessage[],
@@ -511,7 +512,7 @@ export async function* streamChatViaResponses(
   const apiKey = (client as unknown as Record<string, unknown>).apiKey as string
   const rawBaseUrl = ((client as unknown as Record<string, unknown>)._options as Record<string, unknown> | undefined)
     ?.baseURL as string || (client as unknown as Record<string, unknown>).baseURL as string || ''
-  const fetchUrl = rawBaseUrl ? new URL('/v1/responses', rawBaseUrl).href : ''
+  const fetchUrl = rawBaseUrl ? buildEndpointUrl(rawBaseUrl, 'responses') : ''
 
   const doRequest = async (forceNeutralUa: boolean): Promise<ReadableStreamDefaultReader<Uint8Array>> => {
     const headers: Record<string, string> = {

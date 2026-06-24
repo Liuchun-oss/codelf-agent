@@ -428,6 +428,11 @@ export interface LcApi {
   aiSaveVideoGenSettings: (
     draft: import('@shared/agentSettings').VideoGenSettingsDraft
   ) => Promise<import('@shared/agentSettings').VideoGenSettingsSummary>
+  aiGetAudioGenSettings: () => Promise<import('@shared/agentSettings').AudioGenSettingsSummary>
+  aiSaveAudioGenSettings: (
+    draft: import('@shared/agentSettings').AudioGenSettingsDraft
+  ) => Promise<import('@shared/agentSettings').AudioGenSettingsSummary>
+  aiTestAudioGen: () => Promise<import('@shared/agentSettings').AudioGenTestResult>
   aiListVideoTasks: () => Promise<import('@shared/agentSettings').VideoTask[]>
   aiCancelVideoTask: (id: string) => Promise<import('@shared/agentSettings').VideoTask | null>
   aiDeleteVideoTask: (id: string) => Promise<void>

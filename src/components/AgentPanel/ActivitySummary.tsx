@@ -3,6 +3,7 @@ import type { ChatMessageView } from '@/stores/agentStore'
 import { toolHeadlineArg } from '@/stores/agentStore'
 import BrowserPreviewImage, { parseBrowserPreviewId } from './BrowserPreviewImage'
 import ImageLightbox from './ImageLightbox'
+import AudioPlayer from './AudioPlayer'
 import { BROWSER_PREVIEW_SCHEME, ARTIFACT_FILE_SCHEME } from '@shared/appConfig'
 
 interface Props {
@@ -36,6 +37,8 @@ function toolLabel(toolName: string | undefined): string {
       return '编辑图片'
     case 'GenerateVideo':
       return '生成视频'
+    case 'GenerateSpeech':
+      return '生成语音'
     default:
       return toolName ?? '工具'
   }
@@ -68,8 +71,11 @@ function extractArtifactImageUrls(result: string | undefined): string[] {
   if (!result) return []
   const urls: string[] = []
   for (const m of result.matchAll(ARTIFACT_IMG_RE)) {
-    // 排除视频（GenerateVideo 用 ![video](...mp4) 承载），视频单独提取渲染播放器。
-    if (m[1] && !/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m[1])) urls.push(m[1])
+    // 排除视频（GenerateVideo 用 ![video](...mp4) 承载）与音频（GenerateSpeech 用 ![audio](...) 承载），
+    // 它们单独提取渲染对应播放器。
+    if (m[1] && !/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m[1]) && !/\.(mp3|wav|ogg|oga|opus|flac|m4a|aac)(\?|#|$)/i.test(m[1])) {
+      urls.push(m[1])
+    }
   }
   return urls
 }
@@ -80,6 +86,16 @@ function extractArtifactVideoUrls(result: string | undefined): string[] {
   const urls: string[] = []
   for (const m of result.matchAll(ARTIFACT_IMG_RE)) {
     if (m[1] && /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m[1])) urls.push(m[1])
+  }
+  return urls
+}
+
+// 提取工具结果里的 artifact 音频 URL（GenerateSpeech 返回的 ![audio](...)）。
+function extractArtifactAudioUrls(result: string | undefined): string[] {
+  if (!result) return []
+  const urls: string[] = []
+  for (const m of result.matchAll(ARTIFACT_IMG_RE)) {
+    if (m[1] && /\.(mp3|wav|ogg|oga|opus|flac|m4a|aac)(\?|#|$)/i.test(m[1])) urls.push(m[1])
   }
   return urls
 }
@@ -127,6 +143,10 @@ function GeneratedVideo({ src }: { src: string }): JSX.Element {
   )
 }
 
+function GeneratedAudio({ src }: { src: string }): JSX.Element {
+  return <AudioPlayer src={src} className="agent-tool-preview-audio" />
+}
+
 export default function ActivitySummary({ tools }: Props): JSX.Element | null {
   const visibleTools = tools.filter(
     (t) => t.toolName !== 'edit_file' && t.toolName !== 'write_file' && t.toolName !== 'run_subagent'
@@ -141,6 +161,7 @@ export default function ActivitySummary({ tools }: Props): JSX.Element | null {
         const previewIds = extractPreviewIds(t.toolResult)
         const artifactImages = extractArtifactImageUrls(t.toolResult)
         const artifactVideos = extractArtifactVideoUrls(t.toolResult)
+        const artifactAudios = extractArtifactAudioUrls(t.toolResult)
         return (
           <div key={t.id} className="agent-tool-entry">
             <span className={`agent-tool-item ${t.toolStatus ?? 'done'}`}>
@@ -172,6 +193,13 @@ export default function ActivitySummary({ tools }: Props): JSX.Element | null {
               <div className="agent-tool-previews">
                 {artifactVideos.map((url) => (
                   <GeneratedVideo key={url} src={url} />
+                ))}
+              </div>
+            )}
+            {artifactAudios.length > 0 && (
+              <div className="agent-tool-previews">
+                {artifactAudios.map((url) => (
+                  <GeneratedAudio key={url} src={url} />
                 ))}
               </div>
             )}

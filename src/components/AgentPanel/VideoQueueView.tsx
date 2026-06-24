@@ -45,6 +45,11 @@ function TaskCard({ task }: { task: VideoTask }): JSX.Element {
       {task.status === 'succeeded' && task.videoUrl && (
         <video className="video-task-video" src={task.videoUrl} controls playsInline preload="metadata" />
       )}
+      {task.status === 'succeeded' && task.filePath && (
+        <div className="video-task-path" title={task.filePath}>
+          已保存到：{task.filePath}
+        </div>
+      )}
     </div>
   )
 }

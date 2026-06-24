@@ -111,6 +111,10 @@ interface UiState {
   /** 产物面板当前激活的标签 path（'__browser__' 表示浏览器标签；null 表示自动） */
   homeArtifactActiveTab: string | null
   setHomeArtifactActiveTab: (path: string | null) => void
+  /** 被用户手动关闭的「文件」产物标签：path → 关闭时的版本签名。
+   *  同路径再次写入（签名变化）时该标签自动恢复显示。 */
+  dismissedArtifacts: Record<string, string>
+  dismissArtifact: (path: string, sig: string) => void
   openHomeBrowser: (url?: string) => void
   closeHomeBrowser: () => void
   setHomeBrowserUrl: (url: string) => void
@@ -170,6 +174,13 @@ export const useUiStore = create<UiState>((set, get) => {
     homeBrowserFocusNonce: 0,
     homeArtifactActiveTab: null,
     setHomeArtifactActiveTab: (path) => set({ homeArtifactActiveTab: path }),
+    dismissedArtifacts: {},
+    dismissArtifact: (path, sig) =>
+      set((s) => ({
+        dismissedArtifacts: { ...s.dismissedArtifacts, [path]: sig },
+        // 关闭的若是当前激活标签，重置为自动选择。
+        homeArtifactActiveTab: s.homeArtifactActiveTab === path ? null : s.homeArtifactActiveTab
+      })),
     openHomeBrowser: (url) =>
       set((s) => ({
         homeBrowserOpen: true,

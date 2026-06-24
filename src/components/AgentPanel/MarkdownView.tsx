@@ -10,6 +10,7 @@ import { highlightCodeHtml } from '@/highlight'
 import { onThemeChange } from '@/stores/themeStore'
 import { useTypewriterText } from './useTypewriterText'
 import BrowserPreviewImage, { parseBrowserPreviewId } from './BrowserPreviewImage'
+import AudioPlayer from './AudioPlayer'
 
 
 
@@ -315,6 +316,19 @@ function MarkdownVideo({ src }: { src: string }): JSX.Element | null {
   )
 }
 
+// 生成的语音以 markdown 图片语法承载（![audio](url)）。通过 alt=audio 或音频扩展名识别，
+// 渲染为可播放的 <audio> 播放条，而非图片。
+const AUDIO_EXT_RE = /\.(mp3|wav|ogg|oga|opus|flac|m4a|aac)(\?|#|$)/i
+
+function isAudioSource(src: string, alt: string): boolean {
+  if (alt.trim().toLowerCase() === 'audio') return true
+  return AUDIO_EXT_RE.test(src)
+}
+
+function MarkdownAudio({ src }: { src: string }): JSX.Element | null {
+  return <AudioPlayer src={src} className="cm-md-audio" />
+}
+
 const COMPONENTS: Components = {
   a: ({ node: _node, children, href, ...rest }) => (
     <a className="cm-md-link" href={href} target="_blank" rel="noreferrer noopener" {...rest}>
@@ -325,6 +339,9 @@ const COMPONENTS: Components = {
     if (typeof src === 'string') {
       if (isVideoSource(src, alt ?? '')) {
         return <MarkdownVideo src={src} />
+      }
+      if (isAudioSource(src, alt ?? '')) {
+        return <MarkdownAudio src={src} />
       }
       const previewId = parseBrowserPreviewId(src)
       if (previewId) {

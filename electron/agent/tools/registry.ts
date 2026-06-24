@@ -41,6 +41,7 @@ import { installSkillTool, INSTALL_SKILL_TOOL_NAME } from './installSkillTool'
 import { installPluginTool, INSTALL_PLUGIN_TOOL_NAME } from './installPluginTool'
 import { reloadMcpServersTool } from './mcpTools'
 import { modelConfigTool } from './modelConfigTool'
+import { mediaConfigTool } from './mediaConfigTool'
 import {
   browserOpenTool,
   browserNavigateTool,
@@ -58,6 +59,8 @@ import {
 import { openInAppBrowserTool } from './openInAppBrowserTool'
 import { generateImageTool, editImageTool } from './generateImageTool'
 import { generateVideoTool } from './generateVideoTool'
+import { getVideoTaskTool } from './getVideoTaskTool'
+import { generateAudioTool } from './generateAudioTool'
 import {
   desktopLaunchAppTool,
   desktopListWindowsTool,
@@ -368,6 +371,7 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...installPluginTool, alwaysLoad: true })
   registry.register({ ...reloadMcpServersTool, deferred: true })
   registry.register({ ...modelConfigTool, deferred: true })
+  registry.register({ ...mediaConfigTool, deferred: true })
   registry.register(createRunSubagentTool())
   registry.register({ ...notebookReadTool, deferred: true })
   registry.register({ ...notebookEditTool, deferred: true })
@@ -389,6 +393,8 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...generateImageTool, deferred: true })
   registry.register({ ...editImageTool, deferred: true })
   registry.register({ ...generateVideoTool, deferred: true })
+  registry.register({ ...getVideoTaskTool, deferred: true })
+  registry.register({ ...generateAudioTool, deferred: true })
   registry.register({ ...desktopLaunchAppTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopListWindowsTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopGetWindowTool, deferred: true, permissionGroup: 'desktop' })

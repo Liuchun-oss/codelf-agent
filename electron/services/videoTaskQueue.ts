@@ -125,13 +125,17 @@ async function pollOnce(id: string): Promise<void> {
   }
   // succeeded：下载转存。
   update(id, { progress: '生成完成，正在下载…' })
-  const localUrl = await downloadAndSaveVideo(res.videoUrl ?? '')
+  // outputPath 在入队时已解析为绝对路径，这里无需再依赖 workspaceRoot。
+  const saved = await downloadAndSaveVideo(res.videoUrl ?? '', {
+    outputPath: current.outputPath,
+    workspaceRoot: null
+  })
   stopPolling(id)
-  if (!localUrl) {
+  if (!saved) {
     update(id, { status: 'failed', error: '视频已生成但本地保存失败。', progress: undefined })
     return
   }
-  update(id, { status: 'succeeded', videoUrl: localUrl, progress: undefined })
+  update(id, { status: 'succeeded', videoUrl: saved.url, filePath: saved.filePath, progress: undefined })
 }
 
 export interface EnqueueParams {
@@ -141,6 +145,8 @@ export interface EnqueueParams {
   ratio: string
   duration: number
   generateAudio: boolean
+  // agent 指定的输出位置（已解析为绝对路径，目录或完整文件路径）。
+  outputPath?: string
 }
 
 // 入队一个视频任务：先创建本地记录（queued），异步提交火山，成功后开始轮询。
@@ -155,6 +161,7 @@ export function enqueueVideoTask(params: EnqueueParams): VideoTask {
     ratio: params.ratio,
     duration: params.duration,
     generateAudio: params.generateAudio,
+    outputPath: params.outputPath,
     createdAt: now,
     updatedAt: now
   }
@@ -180,6 +187,11 @@ export function enqueueVideoTask(params: EnqueueParams): VideoTask {
 export function listVideoTasks(): VideoTask[] {
   ensureLoaded()
   return [...tasks].sort((a, b) => b.createdAt - a.createdAt)
+}
+
+export function getVideoTask(id: string): VideoTask | null {
+  ensureLoaded()
+  return tasks.find((t) => t.id === id) ?? null
 }
 
 export function cancelVideoTask(id: string): VideoTask | null {

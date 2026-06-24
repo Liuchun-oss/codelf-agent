@@ -2,7 +2,7 @@ import { getVideoGenSettings } from '../settings/agentSettingsStore'
 import { getSecret } from '../../ipc/secrets'
 import { guardOutboundUrl } from '../tools/ssrfGuard'
 import { getFetchOptions } from '../providers/network'
-import { saveGeneratedVideo, type SavedGeneratedVideo } from '../../services/generatedVideoStore'
+import { saveGeneratedVideo, type SavedGeneratedVideo, type SaveVideoTarget } from '../../services/generatedVideoStore'
 import { userAgent, ARTIFACT_FILE_SCHEME } from '@shared/appConfig'
 import { readFile } from 'fs/promises'
 import { isAbsolute, resolve as resolvePath } from 'path'
@@ -23,6 +23,9 @@ export interface VideoGenRequest {
   ratio?: string
   generateAudio?: boolean
   workspaceRoot?: string | null
+  // agent 指定的输出位置：目录或完整文件路径（工作区相对或绝对）。
+  // 留空则落到默认的 generated-videos 目录并用随机文件名。
+  outputPath?: string
 }
 
 export interface VideoGenOutcome {
@@ -126,7 +129,11 @@ async function buildContent(req: VideoGenRequest): Promise<unknown[] | { error: 
 }
 
 // 下载视频签名 URL 为本地文件。
-async function downloadVideo(url: string, signal?: AbortSignal): Promise<SavedGeneratedVideo | null> {
+async function downloadVideo(
+  url: string,
+  signal?: AbortSignal,
+  target?: SaveVideoTarget
+): Promise<SavedGeneratedVideo | null> {
   const guard = await guardOutboundUrl(url)
   if (!guard.ok || !guard.url) return null
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -146,7 +153,7 @@ async function downloadVideo(url: string, signal?: AbortSignal): Promise<SavedGe
       const mime = resp.headers.get('content-type') ?? 'video/mp4'
       const buf = Buffer.from(await resp.arrayBuffer())
       if (buf.length === 0) return null
-      return await saveGeneratedVideo(buf, mime)
+      return await saveGeneratedVideo(buf, mime, target)
     } catch {
       if (signal?.aborted) return null
       if (attempt < 3) {
@@ -271,7 +278,10 @@ export async function generateVideo(
   // —— 阶段三：下载转存 ——
   if (opts?.persist === false) return { ok: true, remoteUrl: videoUrl }
   opts?.onProgress?.('视频生成完成，正在下载…')
-  const saved = await downloadVideo(videoUrl, opts?.signal)
+  const saved = await downloadVideo(videoUrl, opts?.signal, {
+    outputPath: req.outputPath,
+    workspaceRoot: req.workspaceRoot ?? null
+  })
   if (!saved) {
     // 落盘失败也把签名 URL 返回，用户仍可在 24h 内访问。
     return { ok: true, remoteUrl: videoUrl, error: '视频已生成但本地保存失败，已返回临时链接（24 小时内有效）。' }
@@ -378,8 +388,12 @@ export async function pollVideoTaskOnce(remoteTaskId: string): Promise<PollResul
   return { state: 'running', statusText: '视频生成中…' }
 }
 
-// 下载并保存视频，返回本地 artifact URL（失败返回 null）。
-export async function downloadAndSaveVideo(videoUrl: string): Promise<string | null> {
-  const saved = await downloadVideo(videoUrl)
-  return saved?.url ?? null
+// 下载并保存视频，返回本地 artifact URL 和落盘文件路径（失败返回 null）。
+export async function downloadAndSaveVideo(
+  videoUrl: string,
+  target?: SaveVideoTarget
+): Promise<{ url: string; filePath: string } | null> {
+  const saved = await downloadVideo(videoUrl, undefined, target)
+  if (!saved) return null
+  return { url: saved.url, filePath: saved.filePath }
 }

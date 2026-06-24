@@ -121,8 +121,9 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
     }
   }
 
-  const switchableProfiles = profiles.filter((profile) => profile.id !== activeProfile?.id)
-  const modelSwitcherDisabled = streaming || switchingProfile || profiles.length === 0 || switchableProfiles.length === 0
+  // 菜单展示全部已配置模型（含当前），当前项高亮并打勾；只有一个模型时无需展开。
+  const canOpenMenu = profiles.length > 1
+  const modelSwitcherDisabled = streaming || switchingProfile || profiles.length === 0 || !canOpenMenu
 
   return (
     <div className="agent-composer">
@@ -216,7 +217,7 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
                     ? '未配置模型'
                     : streaming
                       ? '生成中无法切换模型'
-                      : switchableProfiles.length === 0
+                      : !canOpenMenu
                         ? `${activeProfile.name} · ${activeProfile.model}（仅此一个可用模型）`
                         : `${activeProfile.name} · ${activeProfile.model}`
                 }
@@ -226,26 +227,33 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
                 onClick={() => setModelMenuOpen((open) => !open)}
               >
                 <span>{activeProfile ? `${activeProfile.name} · ${activeProfile.model}` : '未配置模型'}</span>
-                {switchableProfiles.length > 0 && (
+                {canOpenMenu && (
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
                     <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 )}
               </button>
-              {modelMenuOpen && switchableProfiles.length > 0 && (
+              {modelMenuOpen && profiles.length > 0 && (
                 <div className="agent-composer-model-menu" role="listbox">
-                  {switchableProfiles.map((profile) => (
-                    <button
-                      key={profile.id}
-                      type="button"
-                      className="agent-composer-model-option"
-                      role="option"
-                      title={`${profile.name} · ${profile.model}`}
-                      onClick={() => void switchProfile(profile.id)}
-                    >
-                      {profile.name} · {profile.model}
-                    </button>
-                  ))}
+                  {profiles.map((profile) => {
+                    const isActive = profile.id === activeProfile?.id
+                    return (
+                      <button
+                        key={profile.id}
+                        type="button"
+                        className={`agent-composer-model-option${isActive ? ' active' : ''}`}
+                        role="option"
+                        aria-selected={isActive}
+                        title={`${profile.name} · ${profile.model}`}
+                        onClick={() => void switchProfile(profile.id)}
+                      >
+                        <span className="agent-composer-model-check" aria-hidden>
+                          {isActive ? '✓' : ''}
+                        </span>
+                        {profile.name} · {profile.model}
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>

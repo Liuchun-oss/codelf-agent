@@ -194,6 +194,25 @@ export function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '')
 }
 
+// 基于 baseUrl 拼接 API 端点，保留 baseUrl 已有的路径段。
+// 关键点：不能用 new URL('/v1/xxx', base)——绝对路径会丢掉 base 原有路径，
+// 导致 GLM(.../api/paas/v4)、DashScope(.../compatible-mode/v1) 等带路径端点被打到不存在的 /v1 上（405）。
+// 兼容两种填法：base 仅为根域名时补默认 /v1 前缀；已含路径时直接在其后追加。
+export function buildEndpointUrl(baseUrl: string, suffix: string): string {
+  const trimmed = normalizeBaseUrl(baseUrl)
+  if (!trimmed) return ''
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    return ''
+  }
+  const path = url.pathname.replace(/\/+$/, '')
+  const cleanSuffix = suffix.replace(/^\/+/, '')
+  url.pathname = path === '' ? `/v1/${cleanSuffix}` : `${path}/${cleanSuffix}`
+  return url.href
+}
+
 // 进程级缓存：记住哪些端点（按 baseUrl）会因 SDK 默认 User-Agent 被网关
 // （如 Cloudflare 前置的 new-api）拦截返回 403，需要改用中性 UA。一旦探测到，
 // 整个进程生命周期内对该端点直接用中性 UA，避免每轮提问都先吃一次 403 再重试。
