@@ -36,7 +36,7 @@ import {
   saveVideoGenSettings
 } from '../agent/settings/agentSettingsStore'
 import { resetOutboundDispatcher } from '../agent/providers/network'
-import type { NetworkSettings, WebSearchSettingsDraft, WebSearchSettingsSummary, ImageGenSettingsDraft, ImageGenSettingsSummary, ImageGenTestResult, VideoGenSettingsDraft, VideoGenSettingsSummary } from '@shared/agentSettings'
+import type { NetworkSettings, WebSearchSettingsDraft, WebSearchSettingsSummary, ImageGenSettingsDraft, ImageGenSettingsSummary, ImageGenTestResult, VideoGenSettingsDraft, VideoGenSettingsSummary, VideoTask } from '@shared/agentSettings'
 import type { MemorySettings } from '@shared/memoryTypes'
 import {
   WEB_SEARCH_IQS_KEY_REF,
@@ -45,6 +45,7 @@ import {
 } from '../agent/tools/webSearchTool'
 import { IMAGE_GEN_KEY_REF, generateImages } from '../agent/services/imageGenService'
 import { VIDEO_GEN_KEY_REF } from '../agent/services/videoGenService'
+import { listVideoTasks, cancelVideoTask, deleteVideoTask, clearFinishedVideoTasks } from '../services/videoTaskQueue'
 import { setSecret, hasSecret, deleteSecret } from './secrets'
 import {
   listProfiles,
@@ -451,6 +452,11 @@ export function registerAiIpc(): void {
       return videoGenSummary()
     }
   )
+
+  ipcMain.handle('ai:listVideoTasks', async (): Promise<VideoTask[]> => listVideoTasks())
+  ipcMain.handle('ai:cancelVideoTask', async (_e, id: string): Promise<VideoTask | null> => cancelVideoTask(id))
+  ipcMain.handle('ai:deleteVideoTask', async (_e, id: string): Promise<void> => deleteVideoTask(id))
+  ipcMain.handle('ai:clearFinishedVideoTasks', async (): Promise<void> => clearFinishedVideoTasks())
 
   ipcMain.handle('ai:getMemorySettings', async (): Promise<MemorySettings> => getMemorySettings())
 

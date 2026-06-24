@@ -40,6 +40,7 @@ import { skillTool, SKILL_TOOL_NAME } from './skillTool'
 import { installSkillTool, INSTALL_SKILL_TOOL_NAME } from './installSkillTool'
 import { installPluginTool, INSTALL_PLUGIN_TOOL_NAME } from './installPluginTool'
 import { reloadMcpServersTool } from './mcpTools'
+import { modelConfigTool } from './modelConfigTool'
 import {
   browserOpenTool,
   browserNavigateTool,
@@ -366,6 +367,7 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...installSkillTool, alwaysLoad: true })
   registry.register({ ...installPluginTool, alwaysLoad: true })
   registry.register({ ...reloadMcpServersTool, deferred: true })
+  registry.register({ ...modelConfigTool, deferred: true })
   registry.register(createRunSubagentTool())
   registry.register({ ...notebookReadTool, deferred: true })
   registry.register({ ...notebookEditTool, deferred: true })

@@ -1905,6 +1905,8 @@ body.resizing-x .sidebar-dock {
 /* tabs */
 .artifact-panel-tabs {
   display: flex;
+  flex-shrink: 0;
+  align-items: center;
   gap: 4px;
   padding: 6px 8px;
   overflow-x: auto;
@@ -1937,6 +1939,8 @@ body.resizing-x .sidebar-dock {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  min-height: 28px;
+  box-sizing: border-box;
   max-width: 200px;
   padding: 4px 10px;
   border: 1px solid var(--border-soft);
@@ -1984,6 +1988,108 @@ body.resizing-x .sidebar-dock {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
+}
+
+/* 视频队列面板 */
+.video-queue {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.video-queue-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.video-queue-count {
+  font-size: 12px;
+}
+.video-queue-empty {
+  padding: 24px 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+.video-queue-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.video-task-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.02));
+}
+.video-task-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.video-task-spacer {
+  flex: 1 1 auto;
+}
+.video-task-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.video-task-badge.queued { color: #c9a227; border-color: #c9a227; }
+.video-task-badge.running { color: #6fb3a3; border-color: #6fb3a3; }
+.video-task-badge.succeeded { color: #5fae6a; border-color: #5fae6a; }
+.video-task-badge.failed { color: #d06b5c; border-color: #d06b5c; }
+.video-task-badge.cancelled { color: var(--text-dim); border-color: var(--border); }
+.video-task-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.video-task-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.video-task-btn:hover {
+  border-color: var(--border-strong, var(--border));
+}
+.video-task-prompt {
+  font-size: 12px;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.video-task-progress {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.video-task-error {
+  font-size: 12px;
+  color: #d06b5c;
+}
+.video-task-video {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  background: #000;
+  margin-top: 6px;
 }
 
 /* 内置浏览器（IDE 编辑区标签 & 对话产物标签复用） */

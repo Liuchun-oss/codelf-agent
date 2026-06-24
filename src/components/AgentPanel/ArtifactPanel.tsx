@@ -1,8 +1,10 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useAgentStore } from '@/stores/agentStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useVideoQueueStore } from '@/stores/videoQueueStore'
 import { deriveArtifacts, type Artifact, type ArtifactKind } from './artifacts'
 import ArtifactView from './ArtifactView'
+import VideoQueueView from './VideoQueueView'
 import BrowserView from '@/components/common/BrowserView'
 
 const KIND_LABEL: Record<ArtifactKind, string> = {
@@ -15,6 +17,7 @@ const KIND_LABEL: Record<ArtifactKind, string> = {
 }
 
 const BROWSER_TAB_PATH = '__browser__'
+const VIDEO_QUEUE_TAB_PATH = '__video_queue__'
 
 interface Props {
   onClose?: () => void
@@ -34,21 +37,33 @@ export default function ArtifactPanel({ onClose }: Props): JSX.Element | null {
   const setHomeBrowserUrl = useUiStore((s) => s.setHomeBrowserUrl)
   const activeTab = useUiStore((s) => s.homeArtifactActiveTab)
   const setActiveTab = useUiStore((s) => s.setHomeArtifactActiveTab)
+  const videoTasks = useVideoQueueStore((s) => s.tasks)
+  const loadVideoTasks = useVideoQueueStore((s) => s.load)
+  const hasVideoQueue = videoTasks.length > 0
+  const videoActiveCount = videoTasks.filter((t) => t.status === 'queued' || t.status === 'running').length
 
-  // 激活标签的「有效值」：store 为唯一来源。store 指向浏览器/已存在产物时直接采用；
-  // 否则（null 或指向已消失的产物）回退到最后一个产物标签，再不行回退到浏览器标签。
+  // 进入主界面即加载/订阅视频队列，保证后台任务状态实时同步到面板。
+  useEffect(() => {
+    void loadVideoTasks()
+  }, [loadVideoTasks])
+
+  // 激活标签的「有效值」：store 为唯一来源。store 指向浏览器/视频队列/已存在产物时直接采用；
+  // 否则（null 或指向已消失的产物）回退到最后一个产物标签，再不行回退到浏览器/视频队列标签。
   const effectiveTab = useMemo<string | null>(() => {
     if (activeTab === BROWSER_TAB_PATH) return browserOpen ? BROWSER_TAB_PATH : (artifacts[artifacts.length - 1]?.path ?? null)
+    if (activeTab === VIDEO_QUEUE_TAB_PATH) return hasVideoQueue ? VIDEO_QUEUE_TAB_PATH : (artifacts[artifacts.length - 1]?.path ?? null)
     if (activeTab && artifacts.some((a) => a.path === activeTab)) return activeTab
     if (artifacts.length > 0) return artifacts[artifacts.length - 1].path
-    return browserOpen ? BROWSER_TAB_PATH : null
-  }, [activeTab, artifacts, browserOpen])
+    if (browserOpen) return BROWSER_TAB_PATH
+    return hasVideoQueue ? VIDEO_QUEUE_TAB_PATH : null
+  }, [activeTab, artifacts, browserOpen, hasVideoQueue])
 
-  if (artifacts.length === 0 && !browserOpen) return null
+  if (artifacts.length === 0 && !browserOpen && !hasVideoQueue) return null
 
-  const tabCount = artifacts.length + (browserOpen ? 1 : 0)
+  const tabCount = artifacts.length + (browserOpen ? 1 : 0) + (hasVideoQueue ? 1 : 0)
   const showingBrowser = effectiveTab === BROWSER_TAB_PATH
-  const active = artifacts.find((a) => a.path === effectiveTab) ?? (showingBrowser ? null : artifacts[artifacts.length - 1] ?? null)
+  const showingVideoQueue = effectiveTab === VIDEO_QUEUE_TAB_PATH
+  const active = artifacts.find((a) => a.path === effectiveTab) ?? (showingBrowser || showingVideoQueue ? null : artifacts[artifacts.length - 1] ?? null)
 
   return (
     <div className="artifact-panel">
@@ -104,11 +119,28 @@ export default function ArtifactPanel({ onClose }: Props): JSX.Element | null {
             <span className="artifact-tab-name">{a.name}</span>
           </button>
         ))}
+        {hasVideoQueue && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={showingVideoQueue}
+            className={`artifact-tab${showingVideoQueue ? ' active' : ''}`}
+            title="视频队列"
+            onClick={() => setActiveTab(VIDEO_QUEUE_TAB_PATH)}
+          >
+            <span className="artifact-tab-kind">视频</span>
+            <span className="artifact-tab-name">
+              视频队列{videoActiveCount > 0 ? ` (${videoActiveCount})` : ''}
+            </span>
+          </button>
+        )}
       </div>
 
       <div className="artifact-panel-body">
         {showingBrowser ? (
           <BrowserView initialUrl={browserUrl} onUrlChange={setHomeBrowserUrl} />
+        ) : showingVideoQueue ? (
+          <VideoQueueView />
         ) : active ? (
           <ArtifactView key={active.path} artifact={active} />
         ) : null}

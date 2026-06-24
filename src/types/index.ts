@@ -428,6 +428,13 @@ export interface LcApi {
   aiSaveVideoGenSettings: (
     draft: import('@shared/agentSettings').VideoGenSettingsDraft
   ) => Promise<import('@shared/agentSettings').VideoGenSettingsSummary>
+  aiListVideoTasks: () => Promise<import('@shared/agentSettings').VideoTask[]>
+  aiCancelVideoTask: (id: string) => Promise<import('@shared/agentSettings').VideoTask | null>
+  aiDeleteVideoTask: (id: string) => Promise<void>
+  aiClearFinishedVideoTasks: () => Promise<void>
+  onVideoTaskUpdate: (cb: (task: import('@shared/agentSettings').VideoTask) => void) => () => void
+  onVideoTaskDeleted: (cb: (payload: { id: string }) => void) => () => void
+  onVideoTaskCleared: (cb: () => void) => () => void
   aiGetMemorySettings: () => Promise<import('@shared/memoryTypes').MemorySettings>
   aiSaveMemorySettings: (
     patch: Partial<import('@shared/memoryTypes').MemorySettings>

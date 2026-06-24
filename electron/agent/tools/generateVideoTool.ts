@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Tool, ToolResult } from './types'
-import { generateVideo } from '../services/videoGenService'
+import { enqueueVideoTask } from '../../services/videoTaskQueue'
+import { getVideoGenSettings } from '../settings/agentSettingsStore'
 import { GENERATE_VIDEO_NAME, GENERATE_VIDEO_DESCRIPTION } from '../prompts/tools/videoGen'
 
 const generateVideoSchema = z.object({
@@ -30,10 +31,20 @@ export const generateVideoTool: Tool<GenerateVideoInput> = {
         ctx.emitEvent({ type: 'tool_call_progress', turnId: ctx.turnId, callId: ctx.toolCallId, status, message })
       }
     }
-    emit('正在提交视频生成任务…', 'running')
 
-    const outcome = await generateVideo(
-      {
+    const settings = getVideoGenSettings()
+    if (!settings.enabled) {
+      emit('视频生成未启用。', 'error')
+      return { content: '视频生成未启用，请在「视频生成」设置中开启并配置端点。', isError: true }
+    }
+
+    const task = enqueueVideoTask({
+      prompt: input.prompt,
+      resolution: input.resolution || settings.resolution,
+      ratio: input.ratio || settings.ratio,
+      duration: input.duration && input.duration > 0 ? input.duration : settings.duration,
+      generateAudio: input.generateAudio ?? settings.generateAudio,
+      req: {
         prompt: input.prompt,
         firstFrame: input.firstFrame,
         lastFrame: input.lastFrame,
@@ -43,28 +54,12 @@ export const generateVideoTool: Tool<GenerateVideoInput> = {
         ratio: input.ratio,
         generateAudio: input.generateAudio,
         workspaceRoot: ctx.workspaceRoot
-      },
-      {
-        signal: ctx.signal,
-        onProgress: (message) => emit(message, 'running')
       }
-    )
+    })
 
-    if (!outcome.ok || (!outcome.video && !outcome.remoteUrl)) {
-      emit(outcome.error ?? '视频生成失败。', 'error')
-      return { content: outcome.error ?? '视频生成失败。', isError: true }
-    }
-
-    emit('视频已生成', 'completed')
-    if (outcome.video?.url) {
-      return {
-        content: `已生成视频并在界面中以播放器展示给用户。无需在回复里重复粘贴视频 markdown 或 URL。\n\n![video](${outcome.video.url})`
-      }
-    }
-    // 仅有远程签名 URL（本地保存失败）：给可点击链接，提示 24h 有效。
-    const remote = outcome.remoteUrl ?? ''
+    emit('已加入视频生成队列，正在后台生成…', 'completed')
     return {
-      content: `视频已生成，但本地保存失败，只能提供临时下载链接（24 小时内有效，请尽快下载保存）：\n\n[点击下载视频](${remote})`
+      content: `视频生成任务已加入后台队列（任务 ID: ${task.id}）。视频生成较慢，会在后台继续生成，进度和结果会显示在右侧「产物预览 → 视频队列」面板中，不影响当前对话。无需等待或重复提交；生成完成后用户可在视频队列里查看和播放。`
     }
   }
 }

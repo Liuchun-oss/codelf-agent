@@ -227,6 +227,29 @@ export interface VideoGenTestResult {
   videoUrl?: string
 }
 
+export type VideoTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+
+// 后台视频生成任务（持久化到磁盘，跨重启可见）。
+export interface VideoTask {
+  id: string
+  // 火山返回的任务 ID（cgt-xxx）；提交成功后填入。
+  remoteTaskId?: string
+  status: VideoTaskStatus
+  prompt: string
+  // 提交时的参数快照（用于展示）。
+  resolution: string
+  ratio: string
+  duration: number
+  generateAudio: boolean
+  // 最新进度文本（如「生成中…已用时 45s」）。
+  progress?: string
+  error?: string
+  // 成功后的本地视频 artifact URL。
+  videoUrl?: string
+  createdAt: number
+  updatedAt: number
+}
+
 export const DEFAULT_AGENT_BEHAVIOR: AgentBehaviorSettings = {
   maxToolSteps: 0,
   maxTurnDurationMs: 20 * 60 * 1000,

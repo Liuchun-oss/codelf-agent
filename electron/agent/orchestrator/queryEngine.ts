@@ -87,6 +87,28 @@ import { GENERATE_IMAGE_NAME, EDIT_IMAGE_NAME } from '../prompts/tools/imageGen'
 
 const DEFAULT_RESPONSE_LANGUAGE = 'Simplified Chinese'
 
+// 把用户附件图片（data URL）落盘为本地 codelf-artifact:// 路径。
+// 返回成功落盘的 artifact URL 列表，供模型作为参考图引用。
+async function persistUserImages(images: { dataUrl: string; name?: string }[]): Promise<string[]> {
+  const paths: string[] = []
+  for (const img of images) {
+    const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(img.dataUrl)
+    if (!m) continue
+    try {
+      const saved = await saveGeneratedImage(m[2], m[1])
+      paths.push(saved.url)
+    } catch { /* 单张落盘失败则跳过 */ }
+  }
+  return paths
+}
+
+// 生成告知模型「附件图片本地路径」的文本块。模型可把这些路径作为参考图
+// 传给 GenerateImage（referenceImages）/ GenerateVideo（firstFrame 等）工具。
+function buildAttachedImagesNote(paths: string[]): string {
+  const list = paths.map((p, i) => `${i + 1}. ${p}`).join('\n')
+  return `[附件图片] 用户随消息附带了以下本地图片（已保存）。如果需要把它们作为参考图/首帧用于图像或视频生成等工具，请直接使用下面的路径作为工具入参（如 GenerateImage 的 referenceImages、GenerateVideo 的 firstFrame）：\n${list}`
+}
+
 // 「防假完成」启发式：用户是否在请求生成/编辑图片。
 // 仅作粗判，用于检测模型是否声称完成却未真正调用图像工具。
 function userAskedForImage(text: string): boolean {
@@ -641,16 +663,29 @@ export class QueryEngine {
       }
     }
 
+    // 用户粘贴/拖拽的图片：既作为多模态视觉内容发给模型"看"，也落盘成 codelf-artifact://
+    // 本地路径并在文本里告知模型——这样模型可把它作为参考图传给 GenerateImage / GenerateVideo
+    // 等工具（这些工具的入参要的是路径/URL，而非 dataUrl）。
+    let attachedImagePaths: string[] = []
+    if (payload.images?.length) {
+      attachedImagePaths = await persistUserImages(payload.images)
+    }
+
+    const userMessageText = buildUserMessage(payload.message, payload.editorContext, payload.attachments, {
+      model: profile.model,
+      providerKind: profile.kind
+    })
+    const userMessageWithImages = attachedImagePaths.length
+      ? `${userMessageText}\n\n${buildAttachedImagesNote(attachedImagePaths)}`
+      : userMessageText
+
     const userMsg: ChatMessage = {
-      role: 'user',
-      content: buildUserMessage(payload.message, payload.editorContext, payload.attachments, {
-        model: profile.model,
-        providerKind: profile.kind
-      }),
+      content: userMessageWithImages,
       
       ...(profile.supportsVision && payload.images?.length
         ? { images: payload.images.map((i) => ({ dataUrl: i.dataUrl })) }
-        : {})
+        : {}),
+      role: 'user'
     }
     const turnMessages: ChatMessage[] = [userMsg]
 

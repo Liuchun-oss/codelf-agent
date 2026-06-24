@@ -18,6 +18,7 @@ import { registerWindowIpc } from '../ipc/window'
 import { registerAppIpc } from '../ipc/app'
 import { initLogging } from '../logger'
 import { setLocalWriteTarget } from '../services/localWriteRegistry'
+import { resumeVideoTasksOnStartup } from '../services/videoTaskQueue'
 import { BROWSER_PREVIEW_SCHEME, readBrowserPreview } from '../services/browserPreviewImage'
 import { ARTIFACT_FILE_SCHEME, readArtifactFile } from '../services/artifactFileServer'
 import { cleanupRendererBoundResources } from '../services/appLifecycle'
@@ -144,6 +145,8 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+    // 恢复上次未完成的视频生成任务，继续后台轮询。
+    resumeVideoTasksOnStartup()
   })
 
   

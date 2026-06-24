@@ -262,6 +262,25 @@ const api = {
   aiGetVideoGenSettings: () => ipcRenderer.invoke('ai:getVideoGenSettings'),
   aiSaveVideoGenSettings: (draft: import('@shared/agentSettings').VideoGenSettingsDraft) =>
     ipcRenderer.invoke('ai:saveVideoGenSettings', draft),
+  aiListVideoTasks: () => ipcRenderer.invoke('ai:listVideoTasks'),
+  aiCancelVideoTask: (id: string) => ipcRenderer.invoke('ai:cancelVideoTask', id),
+  aiDeleteVideoTask: (id: string) => ipcRenderer.invoke('ai:deleteVideoTask', id),
+  aiClearFinishedVideoTasks: () => ipcRenderer.invoke('ai:clearFinishedVideoTasks'),
+  onVideoTaskUpdate: (cb: (task: import('@shared/agentSettings').VideoTask) => void) => {
+    const listener = (_e: IpcRendererEvent, task: import('@shared/agentSettings').VideoTask) => cb(task)
+    ipcRenderer.on('video:taskUpdate', listener)
+    return () => ipcRenderer.removeListener('video:taskUpdate', listener)
+  },
+  onVideoTaskDeleted: (cb: (payload: { id: string }) => void) => {
+    const listener = (_e: IpcRendererEvent, payload: { id: string }) => cb(payload)
+    ipcRenderer.on('video:taskDeleted', listener)
+    return () => ipcRenderer.removeListener('video:taskDeleted', listener)
+  },
+  onVideoTaskCleared: (cb: () => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('video:taskCleared', listener)
+    return () => ipcRenderer.removeListener('video:taskCleared', listener)
+  },
   aiGetMemorySettings: () => ipcRenderer.invoke('ai:getMemorySettings'),
   aiSaveMemorySettings: (patch: Partial<import('@shared/memoryTypes').MemorySettings>) =>
     ipcRenderer.invoke('ai:saveMemorySettings', patch),

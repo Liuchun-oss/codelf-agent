@@ -372,14 +372,19 @@ export default function AiSettingsSection(): JSX.Element {
       <SettingsGroup label="参数">
         <SettingsRow
           title="上下文窗口"
-          description="留空则自动探测。"
+          description="留空（自动）则自动探测。"
           control={
-            <input
-              type="number"
-              value={form.contextWindow}
-              placeholder="自动"
-              onChange={(e) => patch({ contextWindow: e.target.value })}
-            />
+            <select value={form.contextWindow} onChange={(e) => patch({ contextWindow: e.target.value })}>
+              <option value="">自动</option>
+              <option value="128000">128K</option>
+              <option value="200000">200K</option>
+              <option value="300000">300K</option>
+              <option value="1000000">1M</option>
+              {form.contextWindow !== '' &&
+                !['128000', '200000', '300000', '1000000'].includes(form.contextWindow) && (
+                  <option value={form.contextWindow}>{`${form.contextWindow}（自定义）`}</option>
+                )}
+            </select>
           }
         />
         <SettingsRow
