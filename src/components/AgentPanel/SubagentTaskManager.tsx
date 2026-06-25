@@ -119,6 +119,7 @@ export default function SubagentTaskManager(): JSX.Element {
                       <div className="subagent-task-row-title" title={task.description}>{task.description}</div>
                       <div className="subagent-task-row-meta">
                         <span>{task.subagentType ?? 'readonly'}</span>
+                        {task.model ? <span title={`模型：${task.model}`}>{task.model}</span> : null}
                         <span>{formatAge(task.updatedAt)}</span>
                         {duration ? <span>{duration}</span> : null}
                       </div>

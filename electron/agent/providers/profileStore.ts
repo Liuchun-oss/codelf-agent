@@ -114,6 +114,26 @@ export function getActiveProfileApiKey(): string | null {
   return active ? getSecret(active.apiKeyRef) : null
 }
 
+export function getProfileApiKey(profile: ProviderProfile | null): string | null {
+  return profile ? getSecret(profile.apiKeyRef) : null
+}
+
+// 按 id 精确匹配，其次按名称/模型名不区分大小写匹配。
+// 供子 Agent 指定模型时解析主 Agent 传入的标识符。
+export function resolveProfileByIdOrName(ref: string | null | undefined): ProviderProfile | null {
+  const key = ref?.trim()
+  if (!key) return null
+  const { profiles } = load()
+  const byId = profiles.find((p) => p.id === key)
+  if (byId) return byId
+  const lower = key.toLowerCase()
+  const byName = profiles.find((p) => p.name.toLowerCase() === lower)
+  if (byName) return byName
+  const byModel = profiles.find((p) => p.model.toLowerCase() === lower)
+  if (byModel) return byModel
+  return profiles.find((p) => p.name.toLowerCase().includes(lower) || p.model.toLowerCase().includes(lower)) ?? null
+}
+
 
 
 export function setActiveProfile(id: string | null): AgentOpResult {

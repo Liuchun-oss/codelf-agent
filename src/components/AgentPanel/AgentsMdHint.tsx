@@ -33,67 +33,126 @@ const AGENTS_MD_TEMPLATE = `# AGENTS.md
 - 修改前先说明思路
 `
 
-function joinPath(root: string, name: string): string {
+const EXAMPLE_AGENT_TEMPLATE = `---
+title: 示例子 Agent
+description: 一句话说明这个子 Agent 负责什么
+readOnly: true
+# model: 可选。填你在设置里配置的模型名/Provider 名，留空则用当前激活模型
+---
+
+你是「示例」子 Agent。
+
+职责：
+- （描述这个子 Agent 要做的事）
+
+硬性约束：
+- readOnly: true 时只能调查/分析/总结，不要修改文件；改为 false 才能写文件、跑命令。
+- 优先用工具读取真实内容，不要凭空想象。
+- 输出结构化、附带关键文件与证据。
+`
+
+function joinPath(root: string, ...segs: string[]): string {
   const sep = root.includes('\\') && !root.includes('/') ? '\\' : '/'
   const trimmed = root.replace(/[\\/]+$/, '')
-  return `${trimmed}${sep}${name}`
+  return [trimmed, ...segs].join(sep)
 }
 
 export default function AgentsMdHint({ workspaceRoot }: AgentsMdHintProps): JSX.Element | null {
-  const [hidden, setHidden] = useState(true)
-  const [creating, setCreating] = useState(false)
+  const [hasAgentsMd, setHasAgentsMd] = useState(true)
+  const [hasProjectAgent, setHasProjectAgent] = useState(true)
+  const [creating, setCreating] = useState<null | 'agentsMd' | 'subagent'>(null)
   const openFile = useEditorStore((s) => s.openFile)
 
   useEffect(() => {
     let cancelled = false
     if (!workspaceRoot) {
-      setHidden(true)
+      setHasAgentsMd(true)
+      setHasProjectAgent(true)
       return
     }
     void Promise.all([
+      window.lc.exists(joinPath(workspaceRoot, '.codelf', 'AGENTS.md')),
+      window.lc.exists(joinPath(workspaceRoot, '.codelf', 'agents.md')),
       window.lc.exists(joinPath(workspaceRoot, 'AGENTS.md')),
       window.lc.exists(joinPath(workspaceRoot, 'agents.md'))
     ])
-      .then(([upper, lower]) => {
-        if (!cancelled) setHidden(upper || lower)
+      .then((found) => {
+        if (!cancelled) setHasAgentsMd(found.some(Boolean))
       })
       .catch(() => {
-        if (!cancelled) setHidden(true)
+        if (!cancelled) setHasAgentsMd(true)
+      })
+    void window.lc
+      .aiListAgentDefinitions(workspaceRoot)
+      .then((defs) => {
+        if (!cancelled) setHasProjectAgent(defs.some((d) => d.source === 'project'))
+      })
+      .catch(() => {
+        if (!cancelled) setHasProjectAgent(true)
       })
     return () => {
       cancelled = true
     }
   }, [workspaceRoot])
 
-  if (hidden || !workspaceRoot) return null
+  if (!workspaceRoot || (hasAgentsMd && hasProjectAgent)) return null
 
-  const handleCreate = async (): Promise<void> => {
-    setCreating(true)
+  const createAgentsMd = async (): Promise<void> => {
+    setCreating('agentsMd')
     try {
-      const target = joinPath(workspaceRoot, 'AGENTS.md')
+      const target = joinPath(workspaceRoot, '.codelf', 'AGENTS.md')
       const ok = await window.lc.writeFile(target, AGENTS_MD_TEMPLATE)
       if (!ok) {
         toast.error('创建 AGENTS.md 失败')
         return
       }
-      setHidden(true)
+      setHasAgentsMd(true)
       await openFile(target, 'AGENTS.md')
-      toast.info('已创建 AGENTS.md，内容会自动注入到对话上下文')
+      toast.info('已创建 .codelf/AGENTS.md，内容会自动注入到对话上下文')
     } catch {
       toast.error('创建 AGENTS.md 失败')
     } finally {
-      setCreating(false)
+      setCreating(null)
+    }
+  }
+
+  const createSubagent = async (): Promise<void> => {
+    setCreating('subagent')
+    try {
+      const target = joinPath(workspaceRoot, '.codelf', 'agents', 'example.md')
+      const ok = await window.lc.writeFile(target, EXAMPLE_AGENT_TEMPLATE)
+      if (!ok) {
+        toast.error('创建示例子 Agent 失败')
+        return
+      }
+      setHasProjectAgent(true)
+      await openFile(target, 'example.md')
+      toast.info('已创建示例子 Agent，编辑后主 Agent 即可通过 subagentType 调用')
+    } catch {
+      toast.error('创建示例子 Agent 失败')
+    } finally {
+      setCreating(null)
     }
   }
 
   return (
     <div className="agents-md-hint">
       <span className="agents-md-hint-text">
-        提示：在项目根目录放一个 <code>AGENTS.md</code>，其内容会自动注入到每轮对话的上下文，让 Agent 了解你的项目约定。这是可选的，不创建也不影响正常使用。
+        可选：放 <code>.codelf/AGENTS.md</code> 写项目约定（每轮自动注入），或在 <code>.codelf/agents/</code>{' '}
+        放自定义子 Agent（可单独指定模型）。不创建也不影响使用。
       </span>
-      <button type="button" className="btn-link" disabled={creating} onClick={() => void handleCreate()}>
-        {creating ? '创建中…' : '一键创建'}
-      </button>
+      <div className="agents-md-hint-actions">
+        {!hasAgentsMd && (
+          <button type="button" className="btn-link" disabled={creating !== null} onClick={() => void createAgentsMd()}>
+            {creating === 'agentsMd' ? '创建中…' : '创建 AGENTS.md'}
+          </button>
+        )}
+        {!hasProjectAgent && (
+          <button type="button" className="btn-link" disabled={creating !== null} onClick={() => void createSubagent()}>
+            {creating === 'subagent' ? '创建中…' : '创建示例子 Agent'}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

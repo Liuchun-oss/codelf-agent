@@ -4,6 +4,7 @@ import { useAgentStore, type SessionMeta } from '@/stores/agentStore'
 import { useDialogStore } from '@/stores/dialogStore'
 import { exportSessionToMarkdown, exportFileName } from './exportSession'
 import { toast } from '@/stores/toastStore'
+import { pathsEqual } from '@/utils/path'
 
 interface ChatHistoryProps {
   open: boolean
@@ -83,7 +84,7 @@ export default function ChatHistory({ open, onClose, anchorRef, workspaceRoot }:
 
   // 在 IDE 模式下，只显示当前工作区的对话
   const filteredSessions = workspaceRoot
-    ? sessions.filter((s) => s.cwd === workspaceRoot)
+    ? sessions.filter((s) => !!s.cwd && pathsEqual(s.cwd, workspaceRoot))
     : sessions
 
   const sorted = [...filteredSessions].sort((a, b) => b.updatedAt - a.updatedAt)

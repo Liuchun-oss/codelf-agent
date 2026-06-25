@@ -11,9 +11,11 @@ import { getMemorySection } from './sections/memory'
 import { getMirrorsSection } from './sections/mirrors'
 import { getLanguageSection, getEnvSection } from './sections/language'
 import { getWorkingApproachSection } from './sections/workingApproach'
+import { getProjectLayoutSection } from './sections/projectLayout'
 import { collectUserContext, renderUserContext } from './context/userContext'
 import { collectSystemContext, renderSystemContext } from './context/systemContext'
 import { collectMemoryContext, renderMemoryContext } from './context/memoryContext'
+import { collectSubagentContext, renderSubagentContext } from './context/subagentContext'
 import { loadApplicableSkills, renderAvailableSkillsSection, summarizeSkill } from '../skills/loadSkills'
 
 
@@ -41,6 +43,7 @@ export function getStaticSystemCore(ctx: PromptContext): string {
     getIntroSection(ctx),
     getSystemSection(ctx),
     getWorkingApproachSection(ctx),
+    getProjectLayoutSection(ctx),
     getDoingTasksSection(),
     getActionsSection(),
     getUsingToolsSection(ctx),
@@ -67,12 +70,14 @@ export async function fetchSystemPromptPartsAsync(
   const userCtx = renderUserContext(userCtxSnap)
   const sysCtx = renderSystemContext(sysCtxSnap)
   const memCtx = renderMemoryContext(memCtxSnap)
+  const subagentCtx = renderSubagentContext(collectSubagentContext(ctx))
   const skillsCtx = renderAvailableSkillsSection(skills.map(summarizeSkill))
 
   const staticSections: string[] = filterEmpty([
     getIntroSection(ctx),
     getSystemSection(ctx),
     getWorkingApproachSection(ctx),
+    getProjectLayoutSection(ctx),
     getDoingTasksSection(),
     getActionsSection(),
     getUsingToolsSection(ctx),
@@ -86,6 +91,7 @@ export async function fetchSystemPromptPartsAsync(
     getMirrorsSection(ctx),
     getEnvSection(ctx),
     userCtx,
+    subagentCtx,
     skillsCtx,
     sysCtx,
     memCtx
@@ -102,6 +108,7 @@ export function fetchSystemPromptParts(ctx: PromptContext): SystemPromptParts {
     getIntroSection(ctx),
     getSystemSection(ctx),
     getWorkingApproachSection(ctx),
+    getProjectLayoutSection(ctx),
     getDoingTasksSection(),
     getActionsSection(),
     getUsingToolsSection(ctx),

@@ -3,6 +3,7 @@ import { useAgentStore } from '@/stores/agentStore'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import ContextMenu, { type MenuItem } from '@/components/common/ContextMenu'
 import { toast } from '@/stores/toastStore'
+import { pathsEqual } from '@/utils/path'
 import ChatHistory from './ChatHistory'
 
 
@@ -28,7 +29,7 @@ export default function AgentPanelHeader(): JSX.Element {
   const filteredOpenTabs = workspaceRoot
     ? openTabs.filter((id) => {
         const session = sessions.find((s) => s.id === id)
-        return session?.cwd === workspaceRoot
+        return !!session?.cwd && pathsEqual(session.cwd, workspaceRoot)
       })
     : openTabs
 

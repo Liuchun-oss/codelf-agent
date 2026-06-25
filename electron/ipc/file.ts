@@ -1,6 +1,8 @@
 import { ipcMain, dialog, BrowserWindow, clipboard, shell } from 'electron'
 import { promises as fs } from 'fs'
 import { join, basename, dirname, normalize, sep } from 'path'
+import { execFile } from 'child_process'
+import { fileURLToPath } from 'url'
 import { type Ignore } from 'ignore'
 import { suppressWatchPath } from './watcher'
 import {
@@ -219,6 +221,8 @@ export function registerFileIpc(): void {
 
   ipcMain.handle('clipboard:readText', async () => clipboard.readText())
 
+  ipcMain.handle('clipboard:readFiles', async (): Promise<string[]> => readClipboardFiles())
+
   
   ipcMain.handle('fs:move', async (_e, src: string, destDir: string): Promise<OpResult> => {
     const target = join(destDir, basename(src))
@@ -281,4 +285,45 @@ export function registerFileIpc(): void {
     const err = await shell.openPath(target)
     return err === ''
   })
+}
+
+function execFileAsync(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { windowsHide: true, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+      resolve(err ? '' : stdout)
+    })
+  })
+}
+
+async function readClipboardFiles(): Promise<string[]> {
+  if (process.platform === 'win32') {
+    
+    const out = await execFileAsync('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName }'
+    ])
+    return out
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+  }
+  
+  const uriList = clipboard.read('text/uri-list')
+  if (uriList) {
+    return uriList
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith('file://'))
+      .map((u) => {
+        try {
+          return fileURLToPath(u)
+        } catch {
+          return ''
+        }
+      })
+      .filter((p) => p.length > 0)
+  }
+  return []
 }

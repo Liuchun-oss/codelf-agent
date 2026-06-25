@@ -142,12 +142,14 @@ export type AgentEvent =
       callId: string
       description: string
       task: string
-      
+
       background?: boolean
-      
+
       subagentType?: string
-      
+
       readOnly?: boolean
+
+      model?: string
     }
   | {
       type: 'subagent_delta'
@@ -520,6 +522,7 @@ export interface SubagentTaskSummary {
   failureSummary?: string
   durationMs?: number
   updatedAt: number
+  model?: string
 }
 
 export interface AgentDefinitionSummary {
@@ -531,6 +534,7 @@ export interface AgentDefinitionSummary {
   allowedTools?: string[]
   deniedTools: string[]
   path?: string
+  model?: string
 }
 
 

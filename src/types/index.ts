@@ -337,6 +337,8 @@ export interface LcApi {
   saveFileAs: (suggestedName: string, content: string) => Promise<OpResult>
   clipboardWriteText: (text: string) => Promise<boolean>
   clipboardReadText: () => Promise<string>
+  clipboardReadFiles: () => Promise<string[]>
+  getPathForFile: (file: File) => string
 
   
   terminalCreate: (cwd: string, cols?: number, rows?: number) => Promise<TerminalCreateResult>

@@ -160,6 +160,41 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
     [supportsVision]
   )
 
+  const insertAtCursor = useCallback(
+    (text: string): void => {
+      const el = textareaRef.current
+      const start = el?.selectionStart ?? input.length
+      const end = el?.selectionEnd ?? input.length
+      const next = input.slice(0, start) + text + input.slice(end)
+      setInput(next)
+      const caret = start + text.length
+      requestAnimationFrame(() => {
+        const node = textareaRef.current
+        if (node) {
+          node.focus()
+          node.setSelectionRange(caret, caret)
+          setCursor(caret)
+        }
+      })
+    },
+    [input]
+  )
+
+  const onDropFiles = useCallback(
+    (e: React.DragEvent<HTMLTextAreaElement>): void => {
+      const files = Array.from(e.dataTransfer?.files ?? [])
+      if (files.length === 0) return
+      const paths = files
+        .map((f) => window.lc.getPathForFile(f))
+        .filter((p) => p.length > 0)
+      if (paths.length === 0) return
+      e.preventDefault()
+      const sep = input.length > 0 && !/\s$/.test(input.slice(0, textareaRef.current?.selectionStart ?? input.length)) ? ' ' : ''
+      insertAtCursor(sep + paths.join(' ') + ' ')
+    },
+    [input, insertAtCursor]
+  )
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (showPicker) {
       if (e.key === 'Escape') {
@@ -256,6 +291,7 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
           onSyncCursor={syncCursor}
           onKeyDown={onKeyDown}
           onPaste={(e) => void onPaste(e)}
+          onDropFiles={onDropFiles}
           onSend={onSend}
           onStop={stop}
           onPick={(item) => void applyPick(item)}

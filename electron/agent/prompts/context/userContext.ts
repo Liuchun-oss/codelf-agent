@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
+import { DATA_DIR_NAME } from '@shared/appConfig'
 import type { PromptContext } from '../types'
 import {
   loadProjectRules,
@@ -64,7 +65,13 @@ export function renderUserContext(snap: UserContextSnapshot): string | null {
 
 async function readAgentsMd(workspaceRoot: string | undefined): Promise<string | undefined> {
   if (!workspaceRoot) return undefined
-  const candidates = [join(workspaceRoot, 'AGENTS.md'), join(workspaceRoot, 'agents.md')]
+  // 优先读 .codelf/ 下的新位置，其次兼容根目录旧位置。
+  const candidates = [
+    join(workspaceRoot, DATA_DIR_NAME, 'AGENTS.md'),
+    join(workspaceRoot, DATA_DIR_NAME, 'agents.md'),
+    join(workspaceRoot, 'AGENTS.md'),
+    join(workspaceRoot, 'agents.md')
+  ]
   for (const p of candidates) {
     try {
       const stat = await fs.stat(p)

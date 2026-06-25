@@ -109,6 +109,20 @@ function fullArgsText(toolName: string | undefined, args?: Record<string, unknow
   return `${toolName ?? '工具'}\n${parts.join('\n')}`
 }
 
+// 从 read_file 的结果里解析实际读取的行号范围。结果每行形如 "  123\t内容"。
+function readLineRange(result: string | undefined): string | null {
+  if (!result) return null
+  const lineNums: number[] = []
+  for (const line of result.split('\n')) {
+    const m = /^\s*(\d+)\t/.exec(line)
+    if (m) lineNums.push(Number(m[1]))
+  }
+  if (lineNums.length === 0) return null
+  const start = lineNums[0]
+  const end = lineNums[lineNums.length - 1]
+  return start === end ? `第${start}行` : `${start}-${end}行`
+}
+
 
 function GeneratedImage({ src }: { src: string }): JSX.Element {
   const [zoom, setZoom] = useState(false)
@@ -157,6 +171,8 @@ export default function ActivitySummary({ tools }: Props): JSX.Element | null {
     <div className="agent-tool-list" aria-label="工具调用">
       {visibleTools.map((t) => {
         const headline = toolHeadlineArg(t.toolName, t.toolArgs)
+        const lineRange = t.toolName === 'read_file' ? readLineRange(t.toolResult) : null
+        const headlineText = headline && lineRange ? `${headline}  ${lineRange}` : headline
         const fullText = fullArgsText(t.toolName, t.toolArgs)
         const previewIds = extractPreviewIds(t.toolResult)
         const artifactImages = extractArtifactImageUrls(t.toolResult)
@@ -169,7 +185,7 @@ export default function ActivitySummary({ tools }: Props): JSX.Element | null {
               <span className="agent-tool-name">{toolLabel(t.toolName)}</span>
               {headline ? (
                 <span className="agent-tool-arg-wrap">
-                  <span className="agent-tool-arg">{headline}</span>
+                  <span className="agent-tool-arg">{headlineText}</span>
                   <span className="agent-tool-arg-tooltip">{fullText}</span>
                 </span>
               ) : null}

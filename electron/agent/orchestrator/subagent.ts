@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { APP_NAME, DATA_DIR_NAME } from '@shared/appConfig'
 import type { AgentEvent, ContentReplacementRecord, SubagentTaskSummary, TokenUsage } from '@shared/agentTypes'
 import { createAdapter, ProviderError, type ChatMessage, type ToolDef, type ToolCallRequest } from '../providers'
-import { getActiveProfileApiKey, getActiveProfileId, getProfileRaw } from '../providers/profileStore'
+import { getActiveProfileApiKey, getActiveProfileId, getProfileRaw, getProfileApiKey, resolveProfileByIdOrName } from '../providers/profileStore'
 import { fetchSystemPromptPartsAsync, assembleSystemMessage, fetchDynamicContextBlock } from '../prompts/assembler'
 import type { PromptContext } from '../prompts/types'
 import { countChatMessagesTokens, countTokens } from '../context/tokenCounter'
@@ -163,7 +163,8 @@ function toSubagentTaskSummary(record: SubagentTranscriptRecord): SubagentTaskSu
     finalText: record.finalText,
     failureSummary: record.failureSummary,
     durationMs: record.durationMs,
-    updatedAt: record.updatedAt
+    updatedAt: record.updatedAt,
+    model: resolveSubagentModelLabel(record.input.model)
   }
 }
 
@@ -278,6 +279,11 @@ export const runSubagentSchema = z.object({
     .max(80)
     .optional()
     .describe(`The kind of sub-agent to run. Defaults to readonly. Project agents from ${DATA_DIR_NAME}/agents/*.md are supported.`),
+  model: z
+    .string()
+    .max(120)
+    .optional()
+    .describe('Optional model/provider for this sub-agent. Accepts a configured provider profile id, name, or model name (fuzzy match). Defaults to the parent agent\'s active model when omitted or unresolved.'),
   expectedOutput: z
     .string()
     .max(1000)
@@ -313,7 +319,8 @@ const RUN_SUBAGENT_DESCRIPTION = [
   'Use this when work benefits from delegation: broad codebase exploration, independent research, review, validation, or a well-scoped implementation/analysis task supported by the selected subagentType.',
   'Do NOT use this when you only need to read a specific file, search for a specific string/class, or inspect 2-3 known files; use read_file, Glob, grep, or codebase_search instead.',
   'Always include a short user-visible description and a complete task. Each sub-agent starts without the parent conversation unless forkContext is true, so brief it like a smart colleague who has not seen this chat: include goal, context, relevant files, constraints, what you already know, and expected output.',
-  `Use subagentType to select readonly, explore, reviewer, general-purpose, implementer, or a project agent from ${DATA_DIR_NAME}/agents/*.md. The default is readonly. Only implementer (or a project agent with readOnly:false) can write files or run commands, and only while the user has auto-approval (Accept Edits) on; otherwise its writes are denied since a sub-agent cannot prompt for approval.`,
+  `Use subagentType to select readonly, explore, reviewer, general-purpose, implementer, planner, or a project agent from ${DATA_DIR_NAME}/agents/*.md. The default is readonly. Only implementer (or a project agent with readOnly:false) can write files or run commands, and only while the user has auto-approval (Accept Edits) on; otherwise its writes are denied since a sub-agent cannot prompt for approval.`,
+  'Use model to run this sub-agent on a different configured provider/model than the parent: pass a provider profile id, name, or model name (fuzzy matched against the user\'s configured models). This lets you delegate cheap/bulk work to a smaller model and reserve a stronger model for hard subtasks. If omitted or it cannot be resolved, the sub-agent inherits the parent\'s active model.',
   'Use runInBackground to start it asynchronously and return immediately with a subagent id when you have independent work to continue. Do not assume or fabricate background results before completion.',
   'CRITICAL for runInBackground: this call returns ONLY a started confirmation, NOT the result. You will NOT receive the result later in this same turn. Do NOT use Sleep, polling, or repeated checks to wait for a background sub-agent — that wastes turns and leads to false "stuck" conclusions. After starting a background sub-agent, either continue with other independent work or end your turn; the user is notified when it finishes and can hand the result back to you. If you actually need the result before continuing, run the sub-agent in the FOREGROUND instead (omit runInBackground); multiple foreground sub-agents in one turn run in parallel.',
   'Use resumeSubagentId to continue a previously started background sub-agent with a follow-up task.',
@@ -520,13 +527,24 @@ export async function runReadOnlySubagent(
   isError?: boolean
   messages?: ChatMessage[]
   replacementRecords?: ContentReplacementRecord[]
+  modelLabel?: string
 }> {
   const started = Date.now()
-  let profileId: string | null = null
+  const definition = options.agentDefinition ?? getAgentDefinition(input.subagentType, options.workspaceRoot)
   let profile: ReturnType<typeof getProfileRaw> | null = null
+  let apiKey: string | null = null
+  // 模型优先级：调用时显式传入的 input.model > 项目 agent 定义的默认 model > 当前激活模型。
+  const requestedModel = input.model?.trim() || definition.model?.trim() || undefined
+  const requested = requestedModel ? resolveProfileByIdOrName(requestedModel) : null
   try {
-    profileId = getActiveProfileId()
-    profile = profileId ? getProfileRaw(profileId) : null
+    if (requested) {
+      profile = requested
+      apiKey = getProfileApiKey(requested)
+    } else {
+      const profileId = getActiveProfileId()
+      profile = profileId ? getProfileRaw(profileId) : null
+      apiKey = getActiveProfileApiKey()
+    }
   } catch {
     profile = null
   }
@@ -540,7 +558,7 @@ export async function runReadOnlySubagent(
 
   let adapter
   try {
-    adapter = createAdapter(profile, getActiveProfileApiKey())
+    adapter = createAdapter(profile, apiKey)
   } catch (e) {
     return {
       finalText: e instanceof Error ? e.message : '创建 Provider 失败',
@@ -549,10 +567,16 @@ export async function runReadOnlySubagent(
     }
   }
 
+  // 标注本次子 Agent 实际使用的模型；指定的模型解析失败时回退激活模型并说明。
+  const modelLabel = requested
+    ? `${profile.name}（${profile.model}）`
+    : requestedModel
+      ? `${profile.name}（${profile.model}，未匹配到「${requestedModel}」已回退激活模型）`
+      : `${profile.name}（${profile.model}）`
+
   const behavior = getAgentBehaviorSettings()
   const maxToolSteps = behavior.maxToolSteps
   const maxDurationMs = behavior.maxTurnDurationMs || MAX_SUBAGENT_DURATION_MS
-  const definition = options.agentDefinition ?? getAgentDefinition(input.subagentType, options.workspaceRoot)
   const registry = subagentRegistry(definition)
   const permissionEngine = new PermissionEngine()
   permissionEngine.loadRules(options.workspaceRoot)
@@ -616,7 +640,8 @@ export async function runReadOnlySubagent(
     usage,
     isError,
     messages,
-    replacementRecords: exportContentReplacementRecords(contentReplacementState)
+    replacementRecords: exportContentReplacementRecords(contentReplacementState),
+    modelLabel
   })
 
   try {
@@ -759,7 +784,8 @@ export async function runReadOnlySubagent(
     usage,
     durationMs: Date.now() - started,
     messages,
-    replacementRecords: exportContentReplacementRecords(contentReplacementState)
+    replacementRecords: exportContentReplacementRecords(contentReplacementState),
+    modelLabel
   }
 }
 
@@ -787,6 +813,7 @@ export function createRunSubagentTool(options: RunSubagentToolOptions = {}): Too
             description: input.description || resumeRecord.input.description,
             task: input.task,
             subagentType: input.subagentType ?? resumeRecord.input.subagentType,
+            model: input.model ?? resumeRecord.input.model,
             expectedOutput: input.expectedOutput ?? resumeRecord.input.expectedOutput,
             runInBackground: input.runInBackground,
             forkContext: input.forkContext ?? resumeRecord.input.forkContext,
@@ -823,7 +850,8 @@ export function createRunSubagentTool(options: RunSubagentToolOptions = {}): Too
         task: startedInput.task,
         background: input.runInBackground,
         subagentType: definition.id,
-        readOnly: definition.readOnly
+        readOnly: definition.readOnly,
+        model: resolveSubagentModelLabel(startedInput.model, definition.model)
       })
 
       const backgroundController = input.runInBackground ? new AbortController() : null
@@ -938,7 +966,7 @@ export function createRunSubagentTool(options: RunSubagentToolOptions = {}): Too
           usage: result.usage,
           durationMs: result.durationMs,
           failureSummary
-        })}\n\nSubagent ID: ${subagentId}`,
+        })}${result.modelLabel ? `\nModel: ${result.modelLabel}` : ''}\n\nSubagent ID: ${subagentId}`,
         isError: result.isError
       }
     }
@@ -947,4 +975,23 @@ export function createRunSubagentTool(options: RunSubagentToolOptions = {}): Too
 
 export function createSubagentId(): string {
   return `subagent-${randomUUID()}`
+}
+
+// 解析子 Agent 将要使用的模型显示名：优先 explicit（调用传入），其次 definition 默认，回退当前激活模型。
+function resolveSubagentModelLabel(explicit: string | undefined, definitionModel?: string | undefined): string | undefined {
+  const requested = explicit?.trim() || definitionModel?.trim() || undefined
+  try {
+    if (requested) {
+      const matched = resolveProfileByIdOrName(requested)
+      if (matched) return `${matched.name}（${matched.model}）`
+      const activeId = getActiveProfileId()
+      const active = activeId ? getProfileRaw(activeId) : null
+      return active ? `${active.name}（${active.model}，未匹配「${requested}」已回退）` : undefined
+    }
+    const activeId = getActiveProfileId()
+    const active = activeId ? getProfileRaw(activeId) : null
+    return active ? `${active.name}（${active.model}）` : undefined
+  } catch {
+    return undefined
+  }
 }

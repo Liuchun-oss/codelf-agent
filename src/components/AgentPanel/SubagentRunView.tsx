@@ -138,6 +138,7 @@ export default function SubagentRunView({ tab }: { tab: SubagentTabView }): JSX.
             <div className="subagent-run-kicker">
               <span className="subagent-run-badge">子 Agent</span>
               <span>{subagentTypeLabel(tab)}</span>
+              {tab.model ? <span className="subagent-run-model" title={`模型：${tab.model}`}>{tab.model}</span> : null}
               {duration ? <span className="subagent-run-elapsed">{duration}</span> : null}
             </div>
             <h3>{tab.title}</h3>

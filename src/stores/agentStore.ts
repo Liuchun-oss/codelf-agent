@@ -21,6 +21,7 @@ import { useInlineDiffStore } from '@/stores/inlineDiffStore'
 import { toast } from '@/stores/toastStore'
 import { getEditorInstance } from '@/components/Editor/editorBridge'
 import { syncEditorDirtyPaths } from '@/utils/syncEditorSnapshot'
+import { pathsEqual } from '@/utils/path'
 
 
 export interface SessionMeta {
@@ -42,7 +43,7 @@ interface AgentPreferences {
 }
 
 const DEFAULT_AGENT_PREFERENCES: AgentPreferences = {
-  permissionMode: 'default'
+  permissionMode: 'acceptEdits'
 }
 
 function isPermissionMode(value: unknown): value is PermissionMode {
@@ -113,6 +114,8 @@ export interface SubagentTabView {
   subagentType?: string
   
   readOnly?: boolean
+  
+  model?: string
 }
 
 export interface ChatMessageView {
@@ -631,6 +634,7 @@ function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): SessionRunti
                 background: event.background ?? m.subagent.background,
                 subagentType: event.subagentType ?? m.subagent.subagentType,
                 readOnly: event.readOnly ?? m.subagent.readOnly,
+                model: event.model ?? m.subagent.model,
                 messages: [...finalized, promptMessage]
               }
             }
@@ -654,6 +658,7 @@ function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): SessionRunti
               background: event.background,
               subagentType: event.subagentType,
               readOnly: event.readOnly,
+              model: event.model,
               messages: [promptMessage]
             }
           }
@@ -1382,8 +1387,42 @@ export const useAgentStore = create<AgentState>((set, get) => {
     },
 
     setWorkspace: async (workspaceId) => {
-
       set({ currentWorkspaceId: workspaceId ?? null })
+
+      
+      
+      if (!workspaceId) return
+      const s = get()
+      if (s.streaming) return
+      const belongs = (cwd: string | null): boolean => !!cwd && pathsEqual(cwd, workspaceId)
+
+      const current = s.sessions.find((m) => m.id === s.currentSessionId)
+      if (current && belongs(current.cwd)) return
+
+      
+      const targetId = s.openTabs.find((id) => {
+        const meta = s.sessions.find((m) => m.id === id)
+        return meta && belongs(meta.cwd)
+      })
+      if (targetId) {
+        get().switchSession(targetId)
+        return
+      }
+
+      
+      const stashed = stashCurrentSessionState(s)
+      set({
+        ...stashed,
+        currentSessionId: '',
+        messages: [],
+        tasks: [],
+        streaming: false,
+        currentTurnId: null,
+        currentAssistantId: null,
+        canRevert: false,
+        lastTokenUsage: null,
+        lastUserText: null
+      })
     },
 
     loadAllSessions: async () => {

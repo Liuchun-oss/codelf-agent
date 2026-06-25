@@ -25,6 +25,7 @@ export interface AgentComposerProps {
   onSyncCursor: () => void
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   onPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
+  onDropFiles: (e: React.DragEvent<HTMLTextAreaElement>) => void
   onSend: () => void
   onStop: () => void
   onPick: (item: import('./ContextPicker').PickItem) => void
@@ -55,6 +56,7 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
     onSyncCursor,
     onKeyDown,
     onPaste,
+    onDropFiles,
     onSend,
     onStop,
     onPick,
@@ -204,6 +206,10 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
           onKeyUp={onSyncCursor}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
+          onDragOver={(e) => {
+            if (Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault()
+          }}
+          onDrop={onDropFiles}
         />
 
         <div className="agent-composer-toolbar">
@@ -259,14 +265,14 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
             </div>
             <label
               className="agent-composer-toolbar-accept"
-              title="自动接受文件修改和普通终端命令；危险操作仍需确认"
+              title="自动审批文件修改和普通终端命令；危险操作仍需确认"
             >
               <input
                 type="checkbox"
                 checked={permissionMode === 'acceptEdits'}
                 onChange={(e) => setPermissionMode(e.target.checked ? 'acceptEdits' : 'default')}
               />
-              自动接受
+              自动审批
             </label>
           </div>
           <div className="agent-composer-toolbar-right">

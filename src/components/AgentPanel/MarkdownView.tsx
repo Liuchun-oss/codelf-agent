@@ -8,6 +8,11 @@ import remarkMath from 'remark-math'
 import 'katex/dist/katex.min.css'
 import { highlightCodeHtml } from '@/highlight'
 import { onThemeChange } from '@/stores/themeStore'
+import { useEditorStore } from '@/stores/editorStore'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { useUiStore } from '@/stores/uiStore'
+import { toast } from '@/stores/toastStore'
+import { basename, getSep } from '@/utils/path'
 import { useTypewriterText } from './useTypewriterText'
 import BrowserPreviewImage, { parseBrowserPreviewId } from './BrowserPreviewImage'
 import AudioPlayer from './AudioPlayer'
@@ -329,11 +334,174 @@ function MarkdownAudio({ src }: { src: string }): JSX.Element | null {
   return <AudioPlayer src={src} className="cm-md-audio" />
 }
 
-const COMPONENTS: Components = {
-  a: ({ node: _node, children, href, ...rest }) => (
+// 识别 inline code 是否像一个文件路径（保守判断，避免把普通代码片段当文件）。
+const FILE_EXT_RE =
+  /\.(tsx?|jsx?|mjs|cjs|vue|svelte|css|scss|less|html?|json|jsonc|ya?ml|toml|ini|md|mdx|py|rb|go|rs|java|kt|c|cc|cpp|h|hpp|cs|php|swift|sh|bash|ps1|sql|xml|txt|env|lock|cfg|conf|gitignore|dockerfile)$/i
+
+// 末尾可选的 :行 或 :行:列
+const LINE_SUFFIX_RE = /:(\d+)(?::(\d+))?$/
+
+function parseFileRef(raw: string): { path: string; line?: number; col?: number } | null {
+  const text = raw.trim()
+  if (!text || /\s/.test(text)) return null
+  
+  if (/^[a-z]+:\/\//i.test(text)) return null
+
+  let path = text
+  let line: number | undefined
+  let col: number | undefined
+  const m = LINE_SUFFIX_RE.exec(text)
+  if (m) {
+    path = text.slice(0, m.index)
+    line = Number(m[1])
+    col = m[2] ? Number(m[2]) : undefined
+  }
+  if (!path) return null
+
+  const hasSep = path.includes('/') || path.includes('\\')
+  const looksLikeFile = FILE_EXT_RE.test(path) || /(^|[\\/])dockerfile$/i.test(path)
+  // 要么含路径分隔符，要么带可识别的代码文件扩展名，才认为是文件引用
+  if (!hasSep && !looksLikeFile) return null
+  
+  if (path.length > 260) return null
+  return { path, line, col }
+}
+
+function resolveAbsPath(workspaceRoot: string | undefined, p: string): string {
+  const isAbsolute = /^[a-z]:[\\/]/i.test(p) || p.startsWith('/') || p.startsWith('\\')
+  if (isAbsolute || !workspaceRoot) return p
+  const sep = getSep(workspaceRoot)
+  const rel = p.replace(/^\.?[\\/]/, '').replace(/[\\/]/g, sep)
+  return workspaceRoot.replace(/[\\/]$/, '') + sep + rel
+}
+
+function FileLink({
+  fileRef,
+  children
+}: {
+  fileRef: { path: string; line?: number; col?: number }
+  children: ReactNode
+}): JSX.Element {
+  const open = async (): Promise<void> => {
+    const workspaceRoot = useWorkspaceStore.getState().workspace?.path
+    const abs = resolveAbsPath(workspaceRoot, fileRef.path)
+    const exists = await window.lc.exists(abs)
+    if (!exists) {
+      toast.warn(`找不到文件：${fileRef.path}`)
+      return
+    }
+    const name = basename(abs)
+    if (fileRef.line != null) {
+      await useEditorStore.getState().openFileAt(abs, name, fileRef.line, fileRef.col ?? 1)
+    } else {
+      await useEditorStore.getState().openFile(abs, name)
+    }
+  }
+  return (
+    <code
+      className="cm-md-code-inline cm-md-file-link"
+      role="link"
+      tabIndex={0}
+      title={`打开 ${fileRef.path}`}
+      onClick={() => void open()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          void open()
+        }
+      }}
+    >
+      {children}
+    </code>
+  )
+}
+
+function InlineCode({ children, ...rest }: { children?: ReactNode }): JSX.Element {
+  const text = extractText(children)
+  const inAppUrl = normalizeInAppUrl(text)
+  if (inAppUrl) {
+    return (
+      <code
+        className="cm-md-code-inline cm-md-file-link"
+        role="link"
+        tabIndex={0}
+        title={`在内置浏览器打开 ${text.trim()}`}
+        onClick={() => openInAppBrowser(inAppUrl)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            openInAppBrowser(inAppUrl)
+          }
+        }}
+      >
+        {children}
+      </code>
+    )
+  }
+  const fileRef = parseFileRef(text)
+  if (fileRef) return <FileLink fileRef={fileRef}>{children}</FileLink>
+  return (
+    <code className="cm-md-code-inline" {...rest}>
+      {children}
+    </code>
+  )
+}
+
+// 判断链接是否应由内置浏览器打开：http/https 以及 localhost / 127.0.0.1 / 裸 host:port。
+function normalizeInAppUrl(href: string | undefined): string | null {
+  if (!href) return null
+  const h = href.trim()
+  if (/^https?:\/\//i.test(h)) return h
+  // localhost:3000 / 127.0.0.1:8080 / localhost/path 等无协议写法，补 http://
+  if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(h)) return `http://${h}`
+  return null
+}
+
+// 按当前视图把 URL 分发到对应的内置浏览器面板（IDE → 编辑器浏览器；首页 → 产物区浏览器）。
+function openInAppBrowser(url: string): void {
+  if (useUiStore.getState().appView === 'workspace') {
+    useEditorStore.getState().openBrowser(url)
+  } else {
+    useUiStore.getState().openHomeBrowser(url)
+  }
+}
+
+function MarkdownLink({
+  href,
+  children,
+  ...rest
+}: {
+  href?: string
+  children?: ReactNode
+}): JSX.Element {
+  const inAppUrl = normalizeInAppUrl(href)
+  if (inAppUrl) {
+    return (
+      <a
+        className="cm-md-link"
+        href={href}
+        onClick={(e) => {
+          e.preventDefault()
+          openInAppBrowser(inAppUrl)
+        }}
+        {...rest}
+      >
+        {children}
+      </a>
+    )
+  }
+  return (
     <a className="cm-md-link" href={href} target="_blank" rel="noreferrer noopener" {...rest}>
       {children}
     </a>
+  )
+}
+
+const COMPONENTS: Components = {
+  a: ({ node: _node, children, href, ...rest }) => (
+    <MarkdownLink href={href} {...rest}>
+      {children}
+    </MarkdownLink>
   ),
   img: ({ node: _node, src, alt, ...rest }) => {
     if (typeof src === 'string') {
@@ -384,11 +552,7 @@ const COMPONENTS: Components = {
     const lang = match?.[1]?.toLowerCase()
     const isBlock = !!match || text.includes('\n')
     if (!isBlock) {
-      return (
-        <code className="cm-md-code-inline" {...rest}>
-          {children}
-        </code>
-      )
+      return <InlineCode {...rest}>{children}</InlineCode>
     }
     const code = text.replace(/\n$/, '')
     if (lang === 'mermaid' || lang === 'mmd') return <MermaidBlock code={code} />

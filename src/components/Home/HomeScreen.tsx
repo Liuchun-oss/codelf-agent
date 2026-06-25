@@ -37,7 +37,7 @@ const COMPOSER_MAX_HEIGHT = 220
  * 右侧主区在「新对话落地页」与「当前对话」之间切换——首页不再是独立页面。
  */
 /**
- * 落地页底部自动接受复选框（与 AgentComposer 中保持一致）
+ * 落地页底部自动审批复选框（与 AgentComposer 中保持一致）
  */
 function HomeAutoAccept(): JSX.Element {
   const permissionMode = useAgentStore((s) => s.permissionMode)
@@ -45,14 +45,14 @@ function HomeAutoAccept(): JSX.Element {
   return (
     <label
       className="home-composer-accept"
-      title="自动接受文件修改和普通终端命令；危险操作仍需确认"
+      title="自动审批文件修改和普通终端命令；危险操作仍需确认"
     >
       <input
         type="checkbox"
         checked={permissionMode === 'acceptEdits'}
         onChange={(e) => setPermissionMode(e.target.checked ? 'acceptEdits' : 'default')}
       />
-      自动接受
+      自动审批
     </label>
   )
 }
@@ -210,9 +210,39 @@ export default function HomeScreen(): JSX.Element {
     [supportsVision]
   )
 
+  const onComposerDrop = useCallback(
+    (e: React.DragEvent<HTMLTextAreaElement>): void => {
+      const files = Array.from(e.dataTransfer?.files ?? [])
+      if (files.length === 0) return
+      const paths = files.map((f) => window.lc.getPathForFile(f)).filter((p) => p.length > 0)
+      if (paths.length === 0) return
+      e.preventDefault()
+      const el = textareaRef.current
+      const start = el?.selectionStart ?? draft.length
+      const end = el?.selectionEnd ?? draft.length
+      const before = draft.slice(0, start)
+      const lead = before.length > 0 && !/\s$/.test(before) ? ' ' : ''
+      const insert = lead + paths.join(' ') + ' '
+      const next = before + insert + draft.slice(end)
+      setDraft(next)
+      const caret = start + insert.length
+      requestAnimationFrame(() => {
+        const node = textareaRef.current
+        if (node) {
+          node.focus()
+          node.setSelectionRange(caret, caret)
+        }
+        autoGrow()
+      })
+    },
+    [draft, autoGrow]
+  )
+
   const openConversation = (sessionId: string): void => {
     switchSession(sessionId)
     setChatOpen(true)
+    
+    setArtifactOpen(false)
     // 同步该对话的工作区到 homePickedWorkspace，这样切换 IDE 时会使用正确的工作区
     const session = sessions.find((s) => s.id === sessionId)
     if (session?.cwd) {
@@ -433,6 +463,10 @@ export default function HomeScreen(): JSX.Element {
                       autoGrow()
                     }}
                     onPaste={(e) => void onComposerPaste(e)}
+                    onDragOver={(e) => {
+                      if (Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault()
+                    }}
+                    onDrop={onComposerDrop}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                         e.preventDefault()

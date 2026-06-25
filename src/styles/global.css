@@ -690,6 +690,18 @@ body.resizing-x .sidebar-dock {
   color: var(--text-dim);
   letter-spacing: 0.04em;
 }
+.subagent-run-model {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-bright);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
 .subagent-run-badge {
   color: var(--accent-bright);
   font-weight: 600;
@@ -5115,6 +5127,11 @@ kbd {
   font-size: 12px;
   line-height: 1.6;
 }
+.agents-md-hint-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
 .btn-link {
   background: transparent;
   border: none;
@@ -6558,6 +6575,19 @@ kbd {
   border: 1px solid var(--border-soft);
   color: var(--accent-bright);
   word-break: break-word;
+}
+.cm-md-file-link {
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.cm-md-file-link:hover {
+  text-decoration: underline;
+  border-color: var(--accent-bright);
+}
+.cm-md-file-link:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 1px;
 }
 .cm-md img.cm-md-img {
   display: block;

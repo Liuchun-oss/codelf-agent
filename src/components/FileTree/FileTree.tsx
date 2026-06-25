@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, Children, type MouseEvent, type KeyboardEvent, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, Children, type MouseEvent, type KeyboardEvent, type DragEvent, type ReactNode } from 'react'
 import type { FileTreeNode } from '@/types'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { useEditorStore } from '@/stores/editorStore'
@@ -277,6 +277,7 @@ function TreeNode({
     <>
       <div
         className={`tree-node${isSelected ? ' selected' : ''}${isDropTarget ? ' drop-target' : ''}`}
+        data-path={node.path}
         style={{ paddingLeft: depth * 12 + 4 }}
         draggable
         onClick={(e) => onRowClick(e, node)}
@@ -326,9 +327,45 @@ export default function FileTree(): JSX.Element {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
   const [clipboard, setClipboard] = useState<{ paths: string[]; mode: 'cut' | 'copy' } | null>(null)
+  const [hasSystemFiles, setHasSystemFiles] = useState(false)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
 
   const flat = useMemo(() => flattenVisible(tree, expandedFolders), [tree, expandedFolders])
+
+  const activeTabPath = useEditorStore((s) => s.activeTabPath)
+  const treeRef = useRef<HTMLDivElement>(null)
+
+  
+  
+  useEffect(() => {
+    if (!activeTabPath || !workspace) return
+    
+    setSelected(new Set([activeTabPath]))
+    setAnchor(activeTabPath)
+    
+    const root = workspace.path
+    const parents: string[] = []
+    let cur = dirname(activeTabPath)
+    while (cur && cur.length >= root.length && cur !== dirname(cur)) {
+      parents.push(cur)
+      if (cur === root) break
+      cur = dirname(cur)
+    }
+    for (const p of parents) useWorkspaceStore.getState().expandFolder(p)
+  }, [activeTabPath, workspace])
+
+  
+  useEffect(() => {
+    if (!activeTabPath) return
+    const id = requestAnimationFrame(() => {
+      const el = treeRef.current?.querySelector(
+        `[data-path="${CSS.escape(activeTabPath)}"]`
+      )
+      el?.scrollIntoView({ block: 'nearest' })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [activeTabPath, flat])
+
 
   
   const destDirOf = (node: FileTreeNode | null): string =>
@@ -388,12 +425,24 @@ export default function FileTree(): JSX.Element {
   }
 
   const doPaste = async (destDir: string): Promise<void> => {
-    if (!clipboard) return
-    const res =
-      clipboard.mode === 'cut'
-        ? await useWorkspaceStore.getState().moveItems(clipboard.paths, destDir)
-        : await useWorkspaceStore.getState().copyItems(clipboard.paths, destDir)
-    if (clipboard.mode === 'cut' && res.ok) setClipboard(null)
+    if (!destDir) return
+    
+    if (clipboard) {
+      const res =
+        clipboard.mode === 'cut'
+          ? await useWorkspaceStore.getState().moveItems(clipboard.paths, destDir)
+          : await useWorkspaceStore.getState().copyItems(clipboard.paths, destDir)
+      if (clipboard.mode === 'cut' && res.ok) setClipboard(null)
+      if (!res.ok) await showError(res.error ?? '粘贴失败')
+      return
+    }
+    
+    const files = await window.lc.clipboardReadFiles()
+    if (files.length === 0) {
+      await showError('剪贴板中没有可粘贴的文件')
+      return
+    }
+    const res = await useWorkspaceStore.getState().copyItems(files, destDir)
     if (!res.ok) await showError(res.error ?? '粘贴失败')
   }
 
@@ -463,6 +512,8 @@ export default function FileTree(): JSX.Element {
       selectSingle(node.path)
     }
     setMenu({ x: e.clientX, y: e.clientY, node, sel: [...sel] })
+    
+    void window.lc.clipboardReadFiles().then((files) => setHasSystemFiles(files.length > 0))
   }
 
   const buildItems = (node: FileTreeNode | null, sel: string[], rootPath: string): MenuItem[] => {
@@ -473,7 +524,7 @@ export default function FileTree(): JSX.Element {
         { separator: true },
         {
           label: '粘贴',
-          disabled: !clipboard,
+          disabled: !clipboard && !hasSystemFiles,
           onClick: () => void doPaste(rootPath)
         },
         { separator: true },
@@ -508,7 +559,7 @@ export default function FileTree(): JSX.Element {
       },
       {
         label: '粘贴',
-        disabled: !clipboard,
+        disabled: !clipboard && !hasSystemFiles,
         onClick: () => void doPaste(pasteDir)
       },
       { separator: true },
@@ -570,7 +621,7 @@ export default function FileTree(): JSX.Element {
         setClipboard({ paths: [...selected], mode: 'copy' })
         return
       }
-      if (e.key.toLowerCase() === 'v' && clipboard) {
+      if (e.key.toLowerCase() === 'v') {
         e.preventDefault()
         const target = anchor && selected.has(anchor) ? anchor : [...selected][0]
         const node = target ? findNode(tree, target) : null
@@ -640,6 +691,7 @@ export default function FileTree(): JSX.Element {
 
       <div
         className="filetree"
+        ref={treeRef}
         tabIndex={0}
         onKeyDown={onTreeKeyDown}
         onDragOver={(e) => {

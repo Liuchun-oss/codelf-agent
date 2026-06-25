@@ -56,8 +56,7 @@ export class PermissionEngine {
     const ruleVerdict = matchPermissionRules(this.rules, tool, args)
     if (ruleVerdict) return ruleVerdict
 
-    if (tool.destructive) return 'ask'
-
+    
     if (options?.permissionMode === 'acceptEdits') {
       return 'allow'
     }

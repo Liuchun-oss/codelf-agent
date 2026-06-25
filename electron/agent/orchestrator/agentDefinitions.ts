@@ -15,6 +15,8 @@ export interface AgentDefinition {
   allowedTools?: string[]
   deniedTools: string[]
   path?: string
+  /** 该项目级 agent 默认绑定的模型（Provider 配置 id / 名称 / 模型名）。调用时显式传入的 model 优先级更高。 */
+  model?: string
 }
 
 const NO_RECURSIVE_SUBAGENT = ['run_subagent']
@@ -65,6 +67,20 @@ export const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     source: 'built-in',
     readOnly: false,
     prompt: '你是实现型子 Agent，具备写文件和执行命令的能力。请严格按任务范围落地代码：创建/修改文件、运行必要命令并自行验证；写入和终端操作仍受权限策略约束。完成后用简洁结构化的方式汇报改动的文件与验证结果。',
+    deniedTools: NO_RECURSIVE_SUBAGENT
+  },
+  planner: {
+    id: 'planner',
+    title: 'Planner sub-agent',
+    description: 'Read-only planning sub-agent that investigates the codebase and returns a structured plan document (策划书). Use it to keep heavy investigation out of the main conversation context.',
+    source: 'built-in',
+    readOnly: true,
+    prompt: [
+      '你是「策划师」子 Agent，专门产出结构化的策划书 / 实施计划。',
+      '工作方式：先用只读工具（read_file / grep / codebase_search / list_dir）调研任务真正涉及的文件、函数、调用链和依赖，基于证据而非猜测来规划，调研范围只覆盖与任务相关的部分。',
+      '最终只返回一份完整的中文策划书正文（Markdown），包含：目标与范围、关键现状与约束、方案概述、按顺序编号的具体步骤（每步标注涉及的文件/位置与验证方式）、风险与未决问题。',
+      '不要修改任何文件，也不要输出与策划书无关的寒暄；你的正文会由主 Agent 落盘到 .codelf/plan/ 下并交用户评审。'
+    ].join('\n'),
     deniedTools: NO_RECURSIVE_SUBAGENT
   }
 }
@@ -138,9 +154,9 @@ export function loadProjectAgentDefinitions(workspaceRoot: string | null | undef
         source: 'project',
         readOnly: declaredReadOnly ?? true,
         prompt,
-        allowedTools: splitList(frontmatter.tools),
         deniedTools: [...NO_RECURSIVE_SUBAGENT, ...(splitList(frontmatter.deniedTools) ?? [])],
-        path
+        path,
+        model: frontmatter.model?.trim() || undefined
       })
     } catch {
       continue
@@ -175,6 +191,7 @@ export function summarizeAgentDefinition(agent: AgentDefinition): AgentDefinitio
     readOnly: agent.readOnly,
     allowedTools: agent.allowedTools,
     deniedTools: agent.deniedTools,
-    path: agent.path
+    path: agent.path,
+    model: agent.model
   }
 }

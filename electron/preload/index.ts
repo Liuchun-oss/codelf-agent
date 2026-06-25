@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 import type {
   AgentEvent,
   AiSendPayload,
@@ -150,6 +150,14 @@ const api = {
     ipcRenderer.invoke('dialog:saveFile', suggestedName, content),
   clipboardWriteText: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
   clipboardReadText: () => ipcRenderer.invoke('clipboard:readText') as Promise<string>,
+  clipboardReadFiles: () => ipcRenderer.invoke('clipboard:readFiles') as Promise<string[]>,
+  getPathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
+  },
 
   
   terminalCreate: (cwd: string, cols?: number, rows?: number) =>
