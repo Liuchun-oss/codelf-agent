@@ -1,4 +1,3 @@
-import { lookup } from 'dns/promises'
 import { isIP } from 'net'
 
 
@@ -57,29 +56,5 @@ export async function guardOutboundUrl(raw: string): Promise<UrlGuardResult> {
     return { ok: false, error: `不支持的协议：${url.protocol}（仅允许 http/https）` }
   }
 
-  const host = url.hostname.replace(/^\[|\]$/g, '')
-  const lowerHost = host.toLowerCase()
-  if (lowerHost === 'localhost' || lowerHost.endsWith('.localhost')) {
-    return { ok: false, error: '拒绝访问本地主机' }
-  }
-
-  if (isIP(host)) {
-    if (isPrivateIp(host)) return { ok: false, error: '拒绝访问内网 / 回环地址' }
-    return { ok: true, url }
-  }
-
-  
-  let addrs: { address: string }[]
-  try {
-    addrs = await lookup(host, { all: true })
-  } catch {
-    return { ok: false, error: `无法解析主机：${host}` }
-  }
-  if (addrs.length === 0) return { ok: false, error: `主机无可用地址：${host}` }
-  for (const a of addrs) {
-    if (isPrivateIp(a.address)) {
-      return { ok: false, error: '该域名解析到内网地址，已拒绝' }
-    }
-  }
   return { ok: true, url }
 }
