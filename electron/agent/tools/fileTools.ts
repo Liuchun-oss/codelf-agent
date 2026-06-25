@@ -64,11 +64,23 @@ export const readFileTool: Tool<ReadFileInput> = {
 
     const res = await readFileSafe(abs)
     if (!res.ok) return { content: res.error ?? '读取失败', isError: true }
+    if (res.kind === 'image') {
+      if (res.tooLarge) {
+        return { content: '图片过大，无法读取', isError: true }
+      }
+      if (!res.dataUrl) {
+        return { content: '图片读取失败', isError: true }
+      }
+      return {
+        content: `已读取图片 ${input.path}（${res.size ?? 0} 字节）`,
+        images: [{ dataUrl: res.dataUrl }]
+      }
+    }
     if (res.tooLarge) {
       return { content: '文件过大，请用 offset/limit 分段读取', isError: true }
     }
-    if (res.kind === 'binary' || res.kind === 'image') {
-      return { content: `无法以文本读取（${res.kind}）`, isError: true }
+    if (res.kind === 'binary') {
+      return { content: '无法以文本读取（binary）', isError: true }
     }
 
     const full = res.content ?? ''
