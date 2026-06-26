@@ -83,16 +83,16 @@ export default function AgentBehaviorSettingsSection(): JSX.Element {
         />
         <SettingsRow
           title="单轮最长执行（分钟）"
-          description="限制一次 Agent turn 的最长运行时间。"
+          description="限制一次 Agent turn 的最长运行时间；填 0 表示不限制时间，仅受工具步数约束。"
           control={
             <input
               type="number"
-              min={1}
+              min={0}
               max={120}
               disabled={saving}
               value={maxTurnMinutes}
               onChange={(e) => {
-                const minutes = clampInt(e.target.value, 1, 120, 20)
+                const minutes = clampInt(e.target.value, 0, 120, 20)
                 setSettings((s) => (s ? { ...s, maxTurnDurationMs: minutes * 60_000 } : s))
               }}
               onBlur={() => void save({ maxTurnDurationMs: settings.maxTurnDurationMs })}

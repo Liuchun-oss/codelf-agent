@@ -277,7 +277,7 @@ const api = {
   aiListVideoTasks: () => ipcRenderer.invoke('ai:listVideoTasks'),
   aiCancelVideoTask: (id: string) => ipcRenderer.invoke('ai:cancelVideoTask', id),
   aiDeleteVideoTask: (id: string) => ipcRenderer.invoke('ai:deleteVideoTask', id),
-  aiClearFinishedVideoTasks: () => ipcRenderer.invoke('ai:clearFinishedVideoTasks'),
+  aiClearFinishedVideoTasks: (sessionId?: string) => ipcRenderer.invoke('ai:clearFinishedVideoTasks', sessionId),
   onVideoTaskUpdate: (cb: (task: import('@shared/agentSettings').VideoTask) => void) => {
     const listener = (_e: IpcRendererEvent, task: import('@shared/agentSettings').VideoTask) => cb(task)
     ipcRenderer.on('video:taskUpdate', listener)

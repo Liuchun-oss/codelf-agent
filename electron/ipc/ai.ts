@@ -48,7 +48,7 @@ import {
 import { IMAGE_GEN_KEY_REF, generateImages } from '../agent/services/imageGenService'
 import { VIDEO_GEN_KEY_REF } from '../agent/services/videoGenService'
 import { AUDIO_GEN_KEY_REF, generateSpeech } from '../agent/services/audioGenService'
-import { listVideoTasks, cancelVideoTask, deleteVideoTask, clearFinishedVideoTasks } from '../services/videoTaskQueue'
+import { listVideoTasks, cancelVideoTask, deleteVideoTask, clearFinishedVideoTasks, deleteVideoTasksForSession } from '../services/videoTaskQueue'
 import { setSecret, hasSecret, deleteSecret } from './secrets'
 import {
   listProfiles,
@@ -158,6 +158,8 @@ export function registerAiIpc(): void {
       setSubagentEventSink(sessionId, null)
       clearSessionBackgroundTools(sessionId)
       deleteSessionFile(sessionId)
+      // 连带清理该会话发起的视频任务（停轮询+删除），避免删对话后留下无法从 UI 清理的孤儿任务。
+      deleteVideoTasksForSession(sessionId)
     }
     return true
   })
@@ -459,7 +461,8 @@ export function registerAiIpc(): void {
   ipcMain.handle('ai:listVideoTasks', async (): Promise<VideoTask[]> => listVideoTasks())
   ipcMain.handle('ai:cancelVideoTask', async (_e, id: string): Promise<VideoTask | null> => cancelVideoTask(id))
   ipcMain.handle('ai:deleteVideoTask', async (_e, id: string): Promise<void> => deleteVideoTask(id))
-  ipcMain.handle('ai:clearFinishedVideoTasks', async (): Promise<void> => clearFinishedVideoTasks())
+  ipcMain.handle('ai:clearFinishedVideoTasks', async (_e, sessionId?: string): Promise<void> => clearFinishedVideoTasks(sessionId))
+  ipcMain.handle('ai:deleteVideoTasksForSession', async (_e, sessionId: string): Promise<void> => deleteVideoTasksForSession(sessionId))
 
   const audioGenSummary = (): AudioGenSettingsSummary => {
     const settings = getAudioGenSettings()

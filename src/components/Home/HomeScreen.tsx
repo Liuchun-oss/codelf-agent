@@ -91,18 +91,23 @@ export default function HomeScreen(): JSX.Element {
 
   // 当前对话里是否存在可预览产物（决定右侧预览栏是否出现）。
   // 视频队列里有任务（哪怕只提交还在后台生成）也算可预览产物，否则
-  // 只生成视频时右上角不会出现「产物预览」入口。
-  const videoTaskCount = useVideoQueueStore((s) => s.tasks.length)
+  // 只生成视频时右上角不会出现「产物预览」入口。仅统计归属于当前对话的视频任务，
+  // 避免历史上其它对话提交过的视频导致无关对话也自动弹出右侧面板。
+  const videoTasks = useVideoQueueStore((s) => s.tasks)
   const loadVideoTasks = useVideoQueueStore((s) => s.load)
   const dismissedArtifacts = useUiStore((s) => s.dismissedArtifacts)
   useEffect(() => {
     void loadVideoTasks()
   }, [loadVideoTasks])
+  const sessionVideoTaskCount = useMemo(
+    () => videoTasks.filter((t) => t.sessionId === currentSessionId).length,
+    [videoTasks, currentSessionId]
+  )
   const hasArtifacts = useMemo(
     () =>
       deriveArtifacts(messages).some((a) => dismissedArtifacts[a.path] !== a.sig) ||
-      videoTaskCount > 0,
-    [messages, videoTaskCount, dismissedArtifacts]
+      sessionVideoTaskCount > 0,
+    [messages, sessionVideoTaskCount, dismissedArtifacts]
   )
 
   // 是否存在“有内容”的历史对话（判定口径与左侧 RecentConversations 一致）

@@ -64,6 +64,7 @@ export const generateVideoTool: Tool<GenerateVideoInput> = {
 
     const task = enqueueVideoTask({
       prompt: input.prompt,
+      sessionId: ctx.sessionId,
       resolution: input.resolution || settings.resolution,
       ratio: input.ratio || settings.ratio,
       duration: input.duration && input.duration > 0 ? input.duration : settings.duration,

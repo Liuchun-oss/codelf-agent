@@ -337,6 +337,9 @@ export type VideoTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'c
 // 后台视频生成任务（持久化到磁盘，跨重启可见）。
 export interface VideoTask {
   id: string
+  // 发起该任务的对话会话 ID；用于把任务归属到具体对话，避免在无关对话里显示。
+  // 旧数据可能没有此字段（视为不归属任何会话）。
+  sessionId?: string
   // 火山返回的任务 ID（cgt-xxx）；提交成功后填入。
   remoteTaskId?: string
   status: VideoTaskStatus
@@ -361,7 +364,7 @@ export interface VideoTask {
 
 export const DEFAULT_AGENT_BEHAVIOR: AgentBehaviorSettings = {
   maxToolSteps: 0,
-  maxTurnDurationMs: 20 * 60 * 1000,
+  maxTurnDurationMs: 0,
   acceptEditsAutoApplyDelayMs: 3000,
   deferredToolPolicy: 'explicit',
   deferredToolAutoThresholdChars: 18_000,
@@ -374,7 +377,7 @@ export const DEFAULT_AGENT_BEHAVIOR: AgentBehaviorSettings = {
 
 export const AGENT_BEHAVIOR_BOUNDS = {
   maxToolSteps: { min: 0, max: 200 },
-  maxTurnDurationMs: { min: 60_000, max: 120 * 60 * 1000 },
+  maxTurnDurationMs: { min: 0, max: 120 * 60 * 1000 },
   acceptEditsAutoApplyDelayMs: { min: 0, max: 60_000 },
   deferredToolAutoThresholdChars: { min: 1_000, max: 200_000 },
   knowledgeTopK: { min: 1, max: 20 },

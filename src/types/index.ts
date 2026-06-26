@@ -438,7 +438,7 @@ export interface LcApi {
   aiListVideoTasks: () => Promise<import('@shared/agentSettings').VideoTask[]>
   aiCancelVideoTask: (id: string) => Promise<import('@shared/agentSettings').VideoTask | null>
   aiDeleteVideoTask: (id: string) => Promise<void>
-  aiClearFinishedVideoTasks: () => Promise<void>
+  aiClearFinishedVideoTasks: (sessionId?: string) => Promise<void>
   onVideoTaskUpdate: (cb: (task: import('@shared/agentSettings').VideoTask) => void) => () => void
   onVideoTaskDeleted: (cb: (payload: { id: string }) => void) => () => void
   onVideoTaskCleared: (cb: () => void) => () => void

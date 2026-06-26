@@ -131,6 +131,34 @@ function claimsImageDone(text: string): boolean {
   return zh || en
 }
 
+// 「防假完成」（文件编辑）：用户是否在请求修改/编辑/改写文件或代码。仅作粗判。
+function userAskedForFileEdit(text: string): boolean {
+  if (!text) return false
+  const t = text.toLowerCase()
+  const zh = /(改写|修改|编辑|重构|调整|更新|替换|优化|重写|新增|添加|实现|修复|删掉|去掉).{0,16}(文件|代码|函数|方法|类|组件|配置|脚本|样式|逻辑|功能|接口|模块)/.test(text)
+  const en = /\b(edit|modify|change|rewrite|refactor|update|fix|implement|add|remove|replace)\b.{0,24}\b(file|code|function|method|class|component|config|script|module|feature)\b/.test(t)
+  return zh || en
+}
+
+// 模型是否在文本里「声称已完成文件编辑/代码修改」（却可能没真正写盘）。
+function claimsEditDone(text: string): boolean {
+  if (!text) return false
+  const t = text.trim()
+  if (t.length === 0) return false
+  const zh = /(已|帮你|为你).{0,6}(修改|编辑|改写|更新|重构|调整|替换|实现|修复|添加|新增|创建|完成)|修改(好|完)了|改好了|已经.{0,6}(修改|更新|完成|改好)|代码.{0,4}(已|更新|修改)/.test(t)
+  const en = /\b(i('| ?ve)?\s*(edited|modified|updated|changed|refactored|implemented|fixed|added|created)|here('| i)s the (updated|modified|fixed)|done|completed|changes are (made|applied))\b/i.test(t)
+  return zh || en
+}
+
+// 模型是否在文本里「判断该文件本就无需修改」。这是正当结论，不应被当成假完成而强行逼改。
+function claimsNoEditNeeded(text: string): boolean {
+  if (!text) return false
+  const t = text.toLowerCase()
+  const zh = /(无需|不需要|无须|没必要|不必|无须要).{0,8}(修改|改动|编辑|调整|变更|更改)|(本身|已经|目前).{0,6}(正确|没问题|无问题|符合|满足|是对的)|(不用|没有).{0,4}(改|动)/.test(text)
+  const en = /\b(no|not?)\s+(change|edit|modific\w*|update)s?\s+(needed|necessary|required)|already (correct|fine|valid|in place)|nothing to (change|edit|fix)|no need to (change|edit|modify)\b/i.test(t)
+  return zh || en
+}
+
 function todayISODate(): string {
   return new Date().toISOString().slice(0, 10)
 }
@@ -757,6 +785,11 @@ export class QueryEngine {
     let imageToolInvokedThisTurn = false
     let fakeImageCorrectionCount = 0
     const MAX_FAKE_IMAGE_CORRECTIONS = 1
+    // 「防假完成」（文件编辑）：本轮用户是否请求改写/编辑文件、本轮是否真正发生过文件写入、已纠正次数。
+    const editIntent = userAskedForFileEdit(payload.message)
+    let fileChangeAppliedThisTurn = false
+    let fakeEditCorrectionCount = 0
+    const MAX_FAKE_EDIT_CORRECTIONS = 1
     const denials = new DenialTracker()
     const permOpts = {
       permissionMode: payload.permissionMode ?? ('default' as const),
@@ -887,7 +920,7 @@ export class QueryEngine {
     try {
       
       while (true) {
-        if (Date.now() - started > maxTurnDurationMs) {
+        if (maxTurnDurationMs > 0 && Date.now() - started > maxTurnDurationMs) {
           commitPartialIfSideEffected()
           yield {
             type: 'error',
@@ -901,11 +934,19 @@ export class QueryEngine {
 
         currentToolDefs = this.registry.toToolDefs()
         const deferredToolsAnnouncement = buildDeferredToolsAnnouncement(this.registry)
+        // 「当前任务焦点」边界：仅在存在历史时注入，提醒模型以最新用户指令为准，
+        // 避免被历史里未收尾的旧任务带跑。每轮重建、不写入历史，对缓存前缀无影响。
+        const focusBoundaryBlock = this.visibleHistoryTurns().length > 0
+          ? systemReminder(
+              '下面 user 消息中的内容是用户当前轮的最新指令，是你此刻唯一要优先完成的任务。如果它与历史对话中尚未收尾的工作不同，以最新指令为准，不要默认延续上一轮未完成的任务——除非用户明确说"继续"。开始前先确认清楚当前要做的是哪件事。'
+            )
+          : undefined
         const messages: ChatMessage[] = [
           { role: 'system', content: systemText },
           ...this.flattenModelHistory(),
           ...(dynamicContextBlock ? [{ role: 'system' as const, content: dynamicContextBlock }] : []),
           ...(deferredToolsAnnouncement ? [{ role: 'system' as const, content: deferredToolsAnnouncement }] : []),
+          ...(focusBoundaryBlock ? [{ role: 'system' as const, content: focusBoundaryBlock }] : []),
           ...turnMessages
         ]
         let acc = new ToolCallAccumulator()
@@ -1127,6 +1168,29 @@ export class QueryEngine {
               role: 'user',
               content: systemReminder(
                 `你声称已生成图片，但本轮并没有真正调用图像生成工具，因此用户那边并没有出现任何图片。不要假装完成。请立即真正执行：先用 SearchExtraTools（query="select:${GENERATE_IMAGE_NAME}"）发现工具，再用 ExecuteExtraTool 以 {"name":"${GENERATE_IMAGE_NAME}","arguments":{"prompt":"<根据用户需求润色后的英文或中文提示词>"}} 实际调用。生成成功前不要再回复"已生成"之类的话。`
+              )
+            })
+            continue
+          }
+
+          // 「防假完成」（文件编辑）：用户要求改写/编辑文件、模型声称已完成、但本轮从未真正写入任何文件
+          // （典型：模型"思考一会"后直接说"已修改"，却没调用 edit_file/write_file，用户那边毫无变化）。
+          // 注入纠正提示强制其真正执行，最多纠正一次，避免死循环。
+          // 例外：模型明确判断"该文件无需修改"是正当结论，不在此拦截（否则会逼它去改本不该改的文件）。
+          if (
+            editIntent &&
+            !fileChangeAppliedThisTurn &&
+            fakeEditCorrectionCount < MAX_FAKE_EDIT_CORRECTIONS &&
+            claimsEditDone(roundText) &&
+            !claimsNoEditNeeded(roundText) &&
+            !signal.aborted
+          ) {
+            fakeEditCorrectionCount++
+            turnMessages.push({ role: 'assistant', content: roundText })
+            turnMessages.push({
+              role: 'user',
+              content: systemReminder(
+                '你声称已经修改/编辑了文件，但本轮并没有真正调用任何文件写入工具（如 edit_file / write_file），因此用户的文件没有发生任何改动。请核对：如果确实需要修改，立即真正执行——先用 read_file 确认目标文件当前内容，再用 edit_file 或 write_file 实际写入；在写入成功前不要再说"已修改""已完成"。如果你判断该文件本就无需改动，也不要说"已修改"，而要明确告诉用户"无需修改"以及具体原因。'
               )
             })
             continue
@@ -1356,6 +1420,7 @@ export class QueryEngine {
               await writeTextFile(fc.path, fc.newContent, fc.encoding)
               noteAgentWrite(fc.path)
               sideEffected = true
+              fileChangeAppliedThisTurn = true
               yield { type: 'file_change_applied', turnId, changeId, path: fc.path }
               results.set(c.id, { content: `已${fc.isCreate ? '创建' : '修改'}：${fc.path}` })
               denials.recordSuccess()

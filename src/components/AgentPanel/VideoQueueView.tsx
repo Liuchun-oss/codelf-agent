@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useVideoQueueStore } from '@/stores/videoQueueStore'
+import { useAgentStore } from '@/stores/agentStore'
 import type { VideoTask, VideoTaskStatus } from '@shared/agentSettings'
 
 const STATUS_LABEL: Record<VideoTaskStatus, string> = {
@@ -55,9 +56,12 @@ function TaskCard({ task }: { task: VideoTask }): JSX.Element {
 }
 
 export default function VideoQueueView(): JSX.Element {
-  const tasks = useVideoQueueStore((s) => s.tasks)
+  const allTasks = useVideoQueueStore((s) => s.tasks)
   const load = useVideoQueueStore((s) => s.load)
   const clearFinished = useVideoQueueStore((s) => s.clearFinished)
+  const currentSessionId = useAgentStore((s) => s.currentSessionId)
+  // 仅展示当前对话发起的视频任务（视频队列已与对话绑定）。
+  const tasks = allTasks.filter((t) => t.sessionId === currentSessionId)
   const hasFinished = tasks.some((t) => t.status === 'succeeded' || t.status === 'failed' || t.status === 'cancelled')
 
   useEffect(() => {
@@ -70,7 +74,7 @@ export default function VideoQueueView(): JSX.Element {
         <span className="video-queue-count">共 {tasks.length} 个任务</span>
         <span className="video-task-spacer" />
         {hasFinished && (
-          <button type="button" className="video-task-btn" onClick={() => void clearFinished()}>
+          <button type="button" className="video-task-btn" onClick={() => void clearFinished(currentSessionId)}>
             清除已完成
           </button>
         )}

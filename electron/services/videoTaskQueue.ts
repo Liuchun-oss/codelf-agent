@@ -145,6 +145,8 @@ export interface EnqueueParams {
   ratio: string
   duration: number
   generateAudio: boolean
+  // 发起该任务的对话会话 ID；用于把任务归属到具体对话。
+  sessionId?: string
   // agent 指定的输出位置（已解析为绝对路径，目录或完整文件路径）。
   outputPath?: string
 }
@@ -155,6 +157,7 @@ export function enqueueVideoTask(params: EnqueueParams): VideoTask {
   const now = Date.now()
   const task: VideoTask = {
     id: `vtask-${randomUUID()}`,
+    sessionId: params.sessionId,
     status: 'queued',
     prompt: params.prompt,
     resolution: params.resolution,
@@ -211,12 +214,34 @@ export function deleteVideoTask(id: string): void {
   sendToRenderer('video:taskDeleted', { id })
 }
 
-export function clearFinishedVideoTasks(): void {
+export function clearFinishedVideoTasks(sessionId?: string): void {
   ensureLoaded()
+  const finished = (t: VideoTask): boolean =>
+    t.status === 'succeeded' || t.status === 'failed' || t.status === 'cancelled'
+  // 仅清除指定会话的已完成任务；不传 sessionId 时退回旧行为（清全部已完成）。
+  const shouldClear = (t: VideoTask): boolean =>
+    finished(t) && (sessionId === undefined || t.sessionId === sessionId)
   for (const t of tasks) {
-    if (t.status === 'running' || t.status === 'queued') stopPolling(t.id)
+    if (shouldClear(t) && (t.status === 'running' || t.status === 'queued')) stopPolling(t.id)
   }
-  tasks = tasks.filter((t) => t.status === 'running' || t.status === 'queued')
+  tasks = tasks.filter((t) => !shouldClear(t))
+  persist()
+  sendToRenderer('video:taskCleared', {})
+}
+
+// 删除某个会话的全部视频任务（含进行中：先停轮询）。对话被删除时调用，避免孤儿任务。
+export function deleteVideoTasksForSession(sessionId: string): void {
+  ensureLoaded()
+  if (!sessionId) return
+  let changed = false
+  for (const t of tasks) {
+    if (t.sessionId === sessionId) {
+      stopPolling(t.id)
+      changed = true
+    }
+  }
+  if (!changed) return
+  tasks = tasks.filter((t) => t.sessionId !== sessionId)
   persist()
   sendToRenderer('video:taskCleared', {})
 }

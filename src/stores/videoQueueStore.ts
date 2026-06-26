@@ -9,7 +9,7 @@ interface VideoQueueState {
   remove: (id: string) => void
   cancel: (id: string) => Promise<void>
   del: (id: string) => Promise<void>
-  clearFinished: () => Promise<void>
+  clearFinished: (sessionId?: string) => Promise<void>
   // 仍在进行（queued/running）的任务数，用于角标。
   activeCount: () => number
 }
@@ -46,8 +46,8 @@ export const useVideoQueueStore = create<VideoQueueState>((set, get) => ({
     await window.lc.aiDeleteVideoTask(id)
     get().remove(id)
   },
-  clearFinished: async () => {
-    await window.lc.aiClearFinishedVideoTasks()
+  clearFinished: async (sessionId) => {
+    await window.lc.aiClearFinishedVideoTasks(sessionId)
     await get().load()
   },
   activeCount: () => get().tasks.filter((t) => t.status === 'queued' || t.status === 'running').length

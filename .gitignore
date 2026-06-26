@@ -36,3 +36,13 @@ website/
 
 # 嵌入模型体积大，不纳入 Git；打包走 resources/models，缺失时运行时自动下载
 resources/models/
+
+# 微信协议验证脚本的本地凭证（含敏感 token，切勿提交）
+scripts/weixin-probe/.probe-state.json
+
+/docs/微信通讯接入策划书.md
+/scripts/weixin-probe/README.md
+/scripts/weixin-probe/weixinApi.mjs
+/scripts/weixin-probe/probe.mjs
+/scripts/weixin-probe/package.json
+/scripts/weixin-probe

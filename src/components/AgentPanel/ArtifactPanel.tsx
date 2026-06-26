@@ -30,6 +30,7 @@ interface Props {
  */
 export default function ArtifactPanel({ onClose }: Props): JSX.Element | null {
   const messages = useAgentStore((s) => s.messages)
+  const currentSessionId = useAgentStore((s) => s.currentSessionId)
   const allArtifacts = useMemo<Artifact[]>(() => deriveArtifacts(messages), [messages])
   const dismissed = useUiStore((s) => s.dismissedArtifacts)
   const dismissArtifact = useUiStore((s) => s.dismissArtifact)
@@ -44,8 +45,13 @@ export default function ArtifactPanel({ onClose }: Props): JSX.Element | null {
   const setHomeBrowserUrl = useUiStore((s) => s.setHomeBrowserUrl)
   const activeTab = useUiStore((s) => s.homeArtifactActiveTab)
   const setActiveTab = useUiStore((s) => s.setHomeArtifactActiveTab)
-  const videoTasks = useVideoQueueStore((s) => s.tasks)
+  const allVideoTasks = useVideoQueueStore((s) => s.tasks)
   const loadVideoTasks = useVideoQueueStore((s) => s.load)
+  // 仅展示归属于当前对话的视频任务，避免在无关对话里弹出/回退到视频队列。
+  const videoTasks = useMemo(
+    () => allVideoTasks.filter((t) => t.sessionId === currentSessionId),
+    [allVideoTasks, currentSessionId]
+  )
   const hasVideoQueue = videoTasks.length > 0
   const videoActiveCount = videoTasks.filter((t) => t.status === 'queued' || t.status === 'running').length
 
