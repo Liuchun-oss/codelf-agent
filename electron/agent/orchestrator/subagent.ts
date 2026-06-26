@@ -590,7 +590,8 @@ export async function runReadOnlySubagent(
     workspacePath: options.workspaceRoot ?? undefined,
     model: profile.model,
     enabledTools: registry.all().map((t) => t.name),
-    permissionMode: 'default'
+    permissionMode: 'default',
+    isSubagent: true
   }
 
   let systemText: string

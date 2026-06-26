@@ -19,10 +19,54 @@ import {
 type OpenAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam
 type OpenAITool = OpenAI.Chat.Completions.ChatCompletionTool
 
+// 丢弃孤儿 tool 消息：只保留"其 toolCallId 出现在前面 assistant.toolCalls 中"的 tool 消息。
+// 同时把 assistant.toolCalls 里"后面没有对应 tool 结果"的调用剔除，避免反向不匹配。
+// 兼容旧持久化损坏的历史（assistant 丢了 toolCalls / tool 丢了 toolCallId）。
+function sanitizeToolMessages(messages: ChatMessage[]): ChatMessage[] {
+  // 第一遍：收集所有"前文已声明"的 tool_call id。
+  const declaredIds = new Set<string>()
+  for (const m of messages) {
+    if (m.role === 'assistant' && m.toolCalls?.length) {
+      for (const tc of m.toolCalls) declaredIds.add(tc.id)
+    }
+  }
+  // 收集实际存在的 tool 结果 id。
+  const resultIds = new Set<string>()
+  for (const m of messages) {
+    if (m.role === 'tool' && m.toolCallId) resultIds.add(m.toolCallId)
+  }
+  const out: ChatMessage[] = []
+  for (const m of messages) {
+    if (m.role === 'tool') {
+      // 无 id 或其 id 未被前文 assistant 声明 → 孤儿，丢弃。
+      if (!m.toolCallId || !declaredIds.has(m.toolCallId)) continue
+      out.push(m)
+      continue
+    }
+    if (m.role === 'assistant' && m.toolCalls?.length) {
+      // 只保留有对应 tool 结果的调用；全部无结果则降级为普通 assistant 文本。
+      const kept = m.toolCalls.filter((tc) => resultIds.has(tc.id))
+      if (kept.length === 0) {
+        const { toolCalls: _drop, ...rest } = m
+        void _drop
+        out.push({ ...rest })
+      } else {
+        out.push({ ...m, toolCalls: kept })
+      }
+      continue
+    }
+    out.push(m)
+  }
+  return out
+}
+
 function toOpenAIMessages(
   messages: ChatMessage[],
   opts?: { dropReasoningContent?: boolean }
 ): OpenAIMessage[] {
+  // 防御：丢弃"孤儿" tool 消息——即前面没有声明对应 tool_call id 的 assistant。
+  // 历史可能因旧版持久化丢失 toolCalls 而损坏，发给严格 Provider（DeepSeek）会整请求报错。
+  messages = sanitizeToolMessages(messages)
   const out: OpenAIMessage[] = []
   // OpenAI 要求同一批 tool 结果消息必须连续，中间不能插别的角色。
   // 因此 tool 消息携带的图片先缓存，等这批连续的 tool 消息结束后，

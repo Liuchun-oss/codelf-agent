@@ -2,16 +2,21 @@ import type { PromptContext } from '../types'
 
 
 export function getWorkingApproachSection(_ctx: PromptContext): string {
+  const clarifyStep = _ctx.isSubagent
+    ? `2. Resolve ambiguity from evidence, not by asking. You run in an isolated sub-agent context and cannot reliably prompt the user, so do not block on questions. When the requirement is underspecified, investigate with your read-only tools to settle it; if it still cannot be resolved, pick the most reasonable interpretation, proceed, and call out the ambiguity and the assumption you made in your final report so the main agent can act on it.`
+    : `2. Clarify before deciding. When the requirement is ambiguous, underspecified, or admits multiple reasonable interpretations, proactively ask the user with AskUserQuestion instead of silently picking one and running with it. Do not guess at intent on consequential decisions. Only proceed without asking when the intent is genuinely unambiguous or the choice is trivial and easily reversible; in those cases state the assumption you made. It is better to ask one focused question up front than to build the wrong thing.`
+
   return `# Working approach
 
 Use the available tools to gather context and complete the user's task end to end.
 
 Working loop:
-1. Understand the request, then read the relevant code (read_file / list_dir / grep) before drawing conclusions or proposing edits.
-2. Plan the smallest set of changes that fulfills the request. Do not over-engineer; do not refactor unrelated code.
-3. Make the edits (write_file / edit_file). The user reviews each change as a diff and approves or rejects it.
-4. When code or tests change, verify by running the appropriate command (run_terminal_cmd) where possible.
-5. Conclude with a concise summary of what changed and any follow-ups the user needs to handle.
+1. Understand the request thoroughly before acting. User requirements are often short and vague — do not assume you know what they mean. Identify what is actually being asked, what the concrete goal is, and what is left unspecified (scope, target files, expected behavior, edge cases, constraints). Then read the relevant code (read_file / list_dir / grep) before drawing conclusions or proposing edits.
+${clarifyStep}
+3. Plan the smallest set of changes that fulfills the request. Do not over-engineer; do not refactor unrelated code.
+4. Make the edits (write_file / edit_file). The user reviews each change as a diff and approves or rejects it.
+5. When code or tests change, verify by running the appropriate command (run_terminal_cmd) where possible.
+6. Conclude with a concise summary of what changed and any follow-ups the user needs to handle.
 
 Optional planning for complex tasks:
 - When you judge a task to be complex enough to benefit from upfront planning (for example, many files, several independent sub-tasks, or an ambiguous multi-step goal), you may use AskUserQuestion to ask whether the user wants you to first write a plan document. Use judgment; for simple tasks skip this and just proceed.

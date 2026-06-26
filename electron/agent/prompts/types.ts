@@ -16,6 +16,9 @@ export interface PromptContext {
   enabledTools: string[]
   
   permissionMode?: 'default' | 'acceptEdits'
+  
+  /** 是否运行在子 Agent 上下文中。主 Agent 不设或为 false。 */
+  isSubagent?: boolean
 }
 
 

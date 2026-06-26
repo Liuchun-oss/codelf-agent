@@ -6,7 +6,8 @@ import type {
   PermissionDecision,
   TokenUsage,
   UserQuestionResponse,
-  ContentReplacementRecord
+  ContentReplacementRecord,
+  PersistedChatMessage
 } from '@shared/agentTypes'
 import { APP_NAME } from '@shared/appConfig'
 import {
@@ -372,6 +373,22 @@ export class QueryEngine {
 
   exportDiscoveredDeferredTools(): string[] {
     return this.registry.discoveredDeferredToolNames()
+  }
+
+  // 导出可持久化的历史消息。供通道层跨重启续接保存。
+  // 必须保留 toolCalls/toolCallId：否则恢复后 assistant 的工具调用与 tool 结果脱钩，
+  // 历史不合规，严格的 Provider 会整请求报错（Messages with role 'tool' must follow tool_calls）。
+  exportHistoryMessages(): PersistedChatMessage[] {
+    return this.visibleHistoryTurns()
+      .flatMap((t) => t.messages)
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        ...(m.toolCalls?.length
+          ? { toolCalls: m.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })) }
+          : {}),
+        ...(m.toolCallId ? { toolCallId: m.toolCallId } : {})
+      }))
   }
 
   // MCP 配置变更后，把最新的 MCP 工具同步进本会话的 registry。

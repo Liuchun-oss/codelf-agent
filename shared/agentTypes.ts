@@ -427,6 +427,10 @@ export interface AgentOpResult {
 export interface PersistedChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  // 工具调用相关字段必须持久化，否则恢复后历史不合规（assistant 的 tool_calls 丢失、
+  // tool 消息变成孤儿），严格的 Provider（如 DeepSeek）会拒绝整个请求。
+  toolCalls?: { id: string; name: string; arguments: string }[]
+  toolCallId?: string
 }
 
 export interface ContentReplacementRecord {

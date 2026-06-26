@@ -161,6 +161,88 @@ export function buildCompactionMessages(oldMessages: ChatMessage[]): ChatMessage
   ]
 }
 
+// 把要摘要的旧消息按 token 预算切成多批，使每批（含摘要 system/user 包装的开销）
+// 都能安全塞进当前模型窗口。用于"历史远超窗口"（如跨模型从大窗口切到小窗口）时分批摘要。
+function chunkMessagesByTokenBudget(
+  messages: ChatMessage[],
+  perChunkBudget: number,
+  model: string,
+  kind: ProviderKind
+): ChatMessage[][] {
+  const chunks: ChatMessage[][] = []
+  let cur: ChatMessage[] = []
+  let curTokens = 0
+  for (const m of messages) {
+    const t = countChatMessagesTokens([{ role: m.role, content: m.content }], model, kind)
+    // 单条就超预算：自成一批（renderTranscript 内有每条 2000 字截断，能兜住）。
+    if (t >= perChunkBudget) {
+      if (cur.length) {
+        chunks.push(cur)
+        cur = []
+        curTokens = 0
+      }
+      chunks.push([m])
+      continue
+    }
+    if (cur.length && curTokens + t > perChunkBudget) {
+      chunks.push(cur)
+      cur = []
+      curTokens = 0
+    }
+    cur.push(m)
+    curTokens += t
+  }
+  if (cur.length) chunks.push(cur)
+  return chunks
+}
+
+// 分批摘要：历史装不下单次摘要请求时，按批摘要再合并（map-reduce）。
+// 让小窗口模型也能逐步把超大历史压下去，避免"摘要请求本身超窗口"导致整体失败。
+async function summarizeInBatches(opts: {
+  oldMessages: ChatMessage[]
+  model: string
+  kind: ProviderKind
+  contextWindow: number
+  systemTokens?: number
+  maxOutputTokens?: number
+  summarize: (messages: ChatMessage[]) => Promise<string>
+}): Promise<string> {
+  // 每批预算：有效窗口扣掉摘要 system 提示与输出预留，再留 40% 安全余量。
+  const effective = getEffectiveContextWindow({
+    contextWindow: opts.contextWindow,
+    maxOutputTokens: opts.maxOutputTokens
+  })
+  const perChunkBudget = Math.max(2_000, Math.floor(effective * 0.6) - (opts.systemTokens ?? 0))
+
+  const fullOnce = countChatMessagesTokens(
+    buildCompactionMessages(opts.oldMessages).map((m) => ({ role: m.role, content: m.content })),
+    opts.model,
+    opts.kind
+  )
+  // 单次摘要请求就能装下 → 走原路径，行为与改动前完全一致。
+  if (fullOnce <= perChunkBudget) {
+    return (await opts.summarize(buildCompactionMessages(opts.oldMessages))).trim()
+  }
+
+  // 否则分批摘要，再把分批摘要合并成最终摘要。
+  const chunks = chunkMessagesByTokenBudget(opts.oldMessages, perChunkBudget, opts.model, opts.kind)
+  const partials: string[] = []
+  for (let i = 0; i < chunks.length; i++) {
+    const s = (await opts.summarize(buildCompactionMessages(chunks[i]))).trim()
+    if (s) partials.push(`[Part ${i + 1}/${chunks.length}]\n${s}`)
+  }
+  if (partials.length === 0) return ''
+  if (partials.length === 1) return partials[0].replace(/^\[Part 1\/1\]\n/, '')
+
+  // reduce：把各批摘要当作"对话"再摘要一次，合成连贯总摘要。
+  const mergeInput: ChatMessage[] = [
+    { role: 'user', content: partials.join('\n\n') }
+  ]
+  const merged = (await opts.summarize(buildCompactionMessages(mergeInput))).trim()
+  // 合并摘要若失败，退而求其次直接拼接各批摘要（总比丢失全部历史好）。
+  return merged || partials.join('\n\n')
+}
+
 
 export async function maybeCompactTurns(opts: MaybeCompactOptions): Promise<MaybeCompactResult> {
   // 未显式指定 keepRecentTurns 时，按窗口 25% 预算反推保留量：单次压缩压得更狠，
@@ -213,7 +295,19 @@ export async function maybeCompactTurns(opts: MaybeCompactOptions): Promise<Mayb
   const oldMessages = old.flatMap((t) => t.messages)
   if (oldMessages.length === 0) return { turns: opts.turns, compacted: false }
 
-  const summary = (await opts.summarize(buildCompactionMessages(oldMessages))).trim()
+  // 分批摘要：历史装不下单次摘要请求时（如跨模型切到小窗口），按批摘要再合并，
+  // 避免"摘要请求本身超窗口"导致压缩失败、进而整轮报错。装得下时等价于原单次摘要。
+  const summary = (
+    await summarizeInBatches({
+      oldMessages,
+      model: opts.model,
+      kind: opts.kind,
+      contextWindow: opts.contextWindow,
+      systemTokens: opts.systemTokens,
+      maxOutputTokens: opts.maxOutputTokens,
+      summarize: opts.summarize
+    })
+  ).trim()
   if (!summary) return { turns: opts.turns, compacted: false }
 
   const reason: CompactMetadata['reason'] = crossesPredictiveThreshold ? 'predictive' : 'threshold'

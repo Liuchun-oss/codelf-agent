@@ -32,6 +32,25 @@ const DEFAULT_TIMEOUT_MS = 120_000
 
 let cache: PersistShape | null = null
 
+// 配置变更监听器（主进程注册，用于广播给渲染端刷新 UI）。
+// 解耦：profileStore 不直接依赖 electron BrowserWindow。
+const changeListeners = new Set<() => void>()
+
+export function onProfilesChanged(listener: () => void): () => void {
+  changeListeners.add(listener)
+  return () => changeListeners.delete(listener)
+}
+
+function emitProfilesChanged(): void {
+  for (const l of changeListeners) {
+    try {
+      l()
+    } catch {
+      // 监听器异常不影响存储
+    }
+  }
+}
+
 function profilesFile(): string {
   return join(app.getPath('userData'), 'profiles.json')
 }
@@ -69,6 +88,7 @@ function persist(state: PersistShape): void {
   try {
     writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf-8')
     renameSync(tmp, target)
+    emitProfilesChanged()
   } catch (e) {
     try {
       rmSync(tmp, { force: true })

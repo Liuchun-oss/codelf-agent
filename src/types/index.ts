@@ -395,6 +395,7 @@ export interface LcApi {
   aiRevertFileChange: (sessionId: string, changeId: string) => Promise<{ ok: boolean; reason?: string }>
   aiRedoFileChange: (sessionId: string, changeId: string) => Promise<{ ok: boolean; reason?: string }>
   onAiEvent: (cb: (event: AgentEvent) => void) => () => void
+  onProfilesChanged: (cb: () => void) => () => void
 
   
   aiListProfiles: () => Promise<ProviderProfileSummary[]>
@@ -411,6 +412,8 @@ export interface LcApi {
   aiSaveAgentSettings: (
     patch: Partial<import('@shared/agentSettings').AgentBehaviorSettings>
   ) => Promise<import('@shared/agentSettings').AgentBehaviorSettings>
+  aiGetPermissionMode: () => Promise<'default' | 'acceptEdits'>
+  aiSetPermissionMode: (mode: 'default' | 'acceptEdits') => Promise<void>
   aiReadAudit: (limit?: number) => Promise<AuditEntry[]>
   aiReadDebugEvents: (limit?: number) => Promise<DebugEventRecord[]>
   aiGetNetworkSettings: () => Promise<import('@shared/agentSettings').NetworkSettings>
@@ -436,6 +439,9 @@ export interface LcApi {
   ) => Promise<import('@shared/agentSettings').AudioGenSettingsSummary>
   aiTestAudioGen: () => Promise<import('@shared/agentSettings').AudioGenTestResult>
   aiListVideoTasks: () => Promise<import('@shared/agentSettings').VideoTask[]>
+  aiRefreshVideoTasks: (
+    sessionId?: string
+  ) => Promise<import('@shared/agentSettings').VideoTask[]>
   aiCancelVideoTask: (id: string) => Promise<import('@shared/agentSettings').VideoTask | null>
   aiDeleteVideoTask: (id: string) => Promise<void>
   aiClearFinishedVideoTasks: (sessionId?: string) => Promise<void>
@@ -524,6 +530,29 @@ export interface LcApi {
       pluginName: string,
       workspaceRoot?: string | null
     ) => Promise<import('@shared/pluginTypes').PluginUninstallResult>
+  }
+
+  
+  channels: {
+    getSettings: () => Promise<import('@shared/channelTypes').ChannelsSettings>
+    saveWeixinSettings: (
+      patch: Partial<import('@shared/channelTypes').WeixinChannelSettings>
+    ) => Promise<import('@shared/channelTypes').ChannelsSettings>
+    getStatus: (
+      channelId: string
+    ) => Promise<import('@shared/channelTypes').ChannelRuntimeStatus | null>
+    beginLogin: () => Promise<import('@shared/channelTypes').ChannelLoginQr>
+    pollLogin: (
+      sessionKey: string
+    ) => Promise<import('@shared/channelTypes').ChannelLoginState>
+    logout: () => Promise<{ ok: boolean }>
+    testNotify: () => Promise<{ ok: boolean }>
+    start: () => Promise<{ ok: boolean; error?: string }>
+    stop: () => Promise<{ ok: boolean }>
+    pickWorkspace: () => Promise<string | null>
+    onStatus: (
+      cb: (status: import('@shared/channelTypes').ChannelRuntimeStatus) => void
+    ) => () => void
   }
 
   

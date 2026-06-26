@@ -4,7 +4,9 @@ import type { VideoTask } from '@shared/agentSettings'
 interface VideoQueueState {
   tasks: VideoTask[]
   loaded: boolean
+  refreshing: boolean
   load: () => Promise<void>
+  refresh: (sessionId?: string) => Promise<void>
   upsert: (task: VideoTask) => void
   remove: (id: string) => void
   cancel: (id: string) => Promise<void>
@@ -19,6 +21,7 @@ let wired = false
 export const useVideoQueueStore = create<VideoQueueState>((set, get) => ({
   tasks: [],
   loaded: false,
+  refreshing: false,
   load: async () => {
     const tasks = await window.lc.aiListVideoTasks()
     set({ tasks, loaded: true })
@@ -27,6 +30,16 @@ export const useVideoQueueStore = create<VideoQueueState>((set, get) => ({
       window.lc.onVideoTaskUpdate((task) => get().upsert(task))
       window.lc.onVideoTaskDeleted(({ id }) => get().remove(id))
       window.lc.onVideoTaskCleared(() => void get().load())
+    }
+  },
+  refresh: async (sessionId) => {
+    if (get().refreshing) return
+    set({ refreshing: true })
+    try {
+      const tasks = await window.lc.aiRefreshVideoTasks(sessionId)
+      set({ tasks, loaded: true })
+    } finally {
+      set({ refreshing: false })
     }
   },
   upsert: (task) =>

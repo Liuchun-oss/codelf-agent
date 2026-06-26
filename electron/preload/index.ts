@@ -239,6 +239,13 @@ const api = {
     return () => ipcRenderer.removeListener('ai:event', listener)
   },
 
+  // Provider 配置变更通知（后台切换激活模型时刷新 UI）。
+  onProfilesChanged: (cb: () => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('ai:profilesChanged', listener)
+    return () => ipcRenderer.removeListener('ai:profilesChanged', listener)
+  },
+
   
   aiListProfiles: () => ipcRenderer.invoke('ai:listProfiles'),
   aiGetActiveProfile: () => ipcRenderer.invoke('ai:getActiveProfile'),
@@ -255,6 +262,9 @@ const api = {
   aiGetAgentSettings: () => ipcRenderer.invoke('ai:getAgentSettings'),
   aiSaveAgentSettings: (patch: Partial<AgentBehaviorSettings>) =>
     ipcRenderer.invoke('ai:saveAgentSettings', patch),
+  aiGetPermissionMode: () => ipcRenderer.invoke('ai:getPermissionMode'),
+  aiSetPermissionMode: (mode: 'default' | 'acceptEdits') =>
+    ipcRenderer.invoke('ai:setPermissionMode', mode),
   aiReadAudit: (limit?: number) => ipcRenderer.invoke('ai:readAudit', limit),
   aiReadDebugEvents: (limit?: number) => ipcRenderer.invoke('ai:readDebugEvents', limit),
   aiGetNetworkSettings: () => ipcRenderer.invoke('ai:getNetworkSettings'),
@@ -275,6 +285,7 @@ const api = {
     ipcRenderer.invoke('ai:saveAudioGenSettings', draft),
   aiTestAudioGen: () => ipcRenderer.invoke('ai:testAudioGen'),
   aiListVideoTasks: () => ipcRenderer.invoke('ai:listVideoTasks'),
+  aiRefreshVideoTasks: (sessionId?: string) => ipcRenderer.invoke('ai:refreshVideoTasks', sessionId),
   aiCancelVideoTask: (id: string) => ipcRenderer.invoke('ai:cancelVideoTask', id),
   aiDeleteVideoTask: (id: string) => ipcRenderer.invoke('ai:deleteVideoTask', id),
   aiClearFinishedVideoTasks: (sessionId?: string) => ipcRenderer.invoke('ai:clearFinishedVideoTasks', sessionId),
@@ -307,6 +318,38 @@ const api = {
   secretsIsAvailable: () => ipcRenderer.invoke('secrets:isAvailable'),
   secretsSet: (key: string, value: string) => ipcRenderer.invoke('secrets:set', key, value),
   secretsHas: (key: string) => ipcRenderer.invoke('secrets:has', key),
+
+  
+  channels: {
+    getSettings: () =>
+      ipcRenderer.invoke('channels:getSettings') as Promise<import('@shared/channelTypes').ChannelsSettings>,
+    saveWeixinSettings: (patch: Partial<import('@shared/channelTypes').WeixinChannelSettings>) =>
+      ipcRenderer.invoke('channels:saveWeixinSettings', patch) as Promise<
+        import('@shared/channelTypes').ChannelsSettings
+      >,
+    getStatus: (channelId: string) =>
+      ipcRenderer.invoke('channels:getStatus', channelId) as Promise<
+        import('@shared/channelTypes').ChannelRuntimeStatus | null
+      >,
+    beginLogin: () =>
+      ipcRenderer.invoke('channels:beginLogin') as Promise<import('@shared/channelTypes').ChannelLoginQr>,
+    pollLogin: (sessionKey: string) =>
+      ipcRenderer.invoke('channels:pollLogin', sessionKey) as Promise<
+        import('@shared/channelTypes').ChannelLoginState
+      >,
+    logout: () => ipcRenderer.invoke('channels:logout') as Promise<{ ok: boolean }>,
+    testNotify: () => ipcRenderer.invoke('channels:testNotify') as Promise<{ ok: boolean }>,
+    start: () =>
+      ipcRenderer.invoke('channels:start') as Promise<{ ok: boolean; error?: string }>,
+    stop: () => ipcRenderer.invoke('channels:stop') as Promise<{ ok: boolean }>,
+    pickWorkspace: () => ipcRenderer.invoke('channels:pickWorkspace') as Promise<string | null>,
+    onStatus: (cb: (status: import('@shared/channelTypes').ChannelRuntimeStatus) => void) => {
+      const listener = (_e: IpcRendererEvent, status: import('@shared/channelTypes').ChannelRuntimeStatus) =>
+        cb(status)
+      ipcRenderer.on('channels:status', listener)
+      return () => ipcRenderer.removeListener('channels:status', listener)
+    }
+  },
 
   
   mcp: {

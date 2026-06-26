@@ -16,6 +16,8 @@ import { registerEnvIpc } from '../ipc/env'
 import { buildAppMenu } from '../menu'
 import { registerWindowIpc } from '../ipc/window'
 import { registerAppIpc } from '../ipc/app'
+import { registerChannelsIpc } from '../ipc/channels'
+import { initChannels } from '../channels/index'
 import { initLogging } from '../logger'
 import { setLocalWriteTarget } from '../services/localWriteRegistry'
 import { resumeVideoTasksOnStartup } from '../services/videoTaskQueue'
@@ -246,9 +248,13 @@ app.whenReady().then(() => {
   registerEnvIpc()
   registerWindowIpc()
   registerAppIpc()
+  registerChannelsIpc()
 
   buildAppMenu()
   createWindow()
+
+  // 通讯通道（微信）：按配置自动启动长轮询（已启用且已登录时）。
+  void initChannels()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -266,6 +272,7 @@ app.on('before-quit', (e) => {
   e.preventDefault()
   isQuitting = true
   void cleanupRendererBoundResources().finally(() => {
+    void import('../channels/manager').then((m) => m.getChannelManager().stopAll()).catch(() => {})
     void import('../services/semantic/embedService').then((m) => m.shutdownEmbedWorker()).catch(() => {})
     void import('../services/knowledge/embedService').then((m) => m.shutdownKnowledgeEmbedWorker()).catch(() => {})
     void import('../services/knowledge/store').then((m) => m.closeStore()).catch(() => {})

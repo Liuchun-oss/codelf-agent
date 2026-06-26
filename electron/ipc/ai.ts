@@ -1,4 +1,4 @@
-import { ipcMain, type WebContents } from 'electron'
+import { ipcMain, BrowserWindow, type WebContents } from 'electron'
 import type {
   AiSendPayload,
   FileChangeDecision,
@@ -24,6 +24,8 @@ import type { AgentBehaviorSettings } from '@shared/agentSettings'
 import {
   getAgentBehaviorSettings,
   saveAgentBehaviorSettings,
+  getPermissionMode,
+  setPermissionMode,
   getNetworkSettings,
   saveNetworkSettings,
   getWebSearchSettings,
@@ -48,14 +50,15 @@ import {
 import { IMAGE_GEN_KEY_REF, generateImages } from '../agent/services/imageGenService'
 import { VIDEO_GEN_KEY_REF } from '../agent/services/videoGenService'
 import { AUDIO_GEN_KEY_REF, generateSpeech } from '../agent/services/audioGenService'
-import { listVideoTasks, cancelVideoTask, deleteVideoTask, clearFinishedVideoTasks, deleteVideoTasksForSession } from '../services/videoTaskQueue'
+import { listVideoTasks, cancelVideoTask, deleteVideoTask, clearFinishedVideoTasks, deleteVideoTasksForSession, refreshVideoTasksNow } from '../services/videoTaskQueue'
 import { setSecret, hasSecret, deleteSecret } from './secrets'
 import {
   listProfiles,
   getActiveProfileSummary,
   setActiveProfile,
   saveProfile,
-  deleteProfile
+  deleteProfile,
+  onProfilesChanged
 } from '../agent/providers/profileStore'
 import { testConnection, testImageGeneration } from '../agent/providers/testConnection'
 import { fimComplete } from '../agent/providers/fim'
@@ -102,6 +105,14 @@ function trackEventSinkSession(wc: WebContents, sessionId: string): void {
 
 
 export function registerAiIpc(): void {
+  // Provider 配置变更（含 Agent 工具 ModelConfig 在后台切换激活模型）时，
+  // 广播给所有渲染窗口，让输入框模型下拉等 UI 实时刷新，而非仅设置面板能看到。
+  onProfilesChanged(() => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('ai:profilesChanged')
+    }
+  })
+
   ipcMain.handle('ai:send', async (e, payload: AiSendPayload): Promise<AgentOpResult> => {
     if (!payload || typeof payload.turnId !== 'string' || typeof payload.message !== 'string') {
       return { ok: false, error: '无效的发送载荷' }
@@ -352,6 +363,15 @@ export function registerAiIpc(): void {
       saveAgentBehaviorSettings(patch ?? {})
   )
 
+  // 自动审批开关镜像：渲染端切换/启动时同步到主进程，供微信通道读取。
+  ipcMain.handle('ai:getPermissionMode', async (): Promise<'default' | 'acceptEdits'> =>
+    getPermissionMode()
+  )
+  ipcMain.handle(
+    'ai:setPermissionMode',
+    async (_e, mode: 'default' | 'acceptEdits'): Promise<void> => setPermissionMode(mode)
+  )
+
   
   ipcMain.handle('ai:readAudit', async (_e, limit?: number): Promise<AuditEntry[]> =>
     readRecentAudit(typeof limit === 'number' ? limit : 200)
@@ -459,6 +479,7 @@ export function registerAiIpc(): void {
   )
 
   ipcMain.handle('ai:listVideoTasks', async (): Promise<VideoTask[]> => listVideoTasks())
+  ipcMain.handle('ai:refreshVideoTasks', async (_e, sessionId?: string): Promise<VideoTask[]> => refreshVideoTasksNow(sessionId))
   ipcMain.handle('ai:cancelVideoTask', async (_e, id: string): Promise<VideoTask | null> => cancelVideoTask(id))
   ipcMain.handle('ai:deleteVideoTask', async (_e, id: string): Promise<void> => deleteVideoTask(id))
   ipcMain.handle('ai:clearFinishedVideoTasks', async (_e, sessionId?: string): Promise<void> => clearFinishedVideoTasks(sessionId))

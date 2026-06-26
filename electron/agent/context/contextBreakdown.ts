@@ -11,6 +11,10 @@ import { getUsingToolsSection } from '../prompts/sections/usingTools'
 import { getToneAndStyleSection } from '../prompts/sections/toneAndStyle'
 import { getLanguageSection, getEnvSection } from '../prompts/sections/language'
 import { getWorkingApproachSection } from '../prompts/sections/workingApproach'
+import { getProjectLayoutSection } from '../prompts/sections/projectLayout'
+import { getMemorySection } from '../prompts/sections/memory'
+import { getBehavioralGuidelinesSection } from '../prompts/sections/behavioralGuidelines'
+import { getMirrorsSection } from '../prompts/sections/mirrors'
 import { collectUserContext, renderUserContext } from '../prompts/context/userContext'
 import { collectSystemContext, renderSystemContext } from '../prompts/context/systemContext'
 import { countTokens } from './tokenCounter'
@@ -106,13 +110,20 @@ export async function buildContextBreakdown(
   ])
 
   
-  const coreSystemText = filterEmpty([getIntroSection(ctx), getSystemSection(ctx)]).join('\n\n')
+  const coreSystemText = filterEmpty([
+    getIntroSection(ctx),
+    getSystemSection(ctx),
+    getProjectLayoutSection(ctx),
+    getMemorySection(ctx)
+  ]).join('\n\n')
   const modeGuidanceText = filterEmpty([
     getWorkingApproachSection(ctx),
     getDoingTasksSection(),
     getActionsSection(),
     getUsingToolsSection(ctx),
-    getToneAndStyleSection()
+    getToneAndStyleSection(),
+    getBehavioralGuidelinesSection(),
+    getMirrorsSection(ctx)
   ]).join('\n\n')
 
   const envText = filterEmpty([getEnvSection(ctx), getLanguageSection(ctx)]).join('\n\n')

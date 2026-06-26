@@ -1375,8 +1375,12 @@ export const useAgentStore = create<AgentState>((set, get) => {
       if (get().initialized) return
       set({ initialized: true })
       window.lc.onAiEvent((event) => get().applyEvent(event))
+      // 后台（含微信 Agent 工具）切换激活模型时，刷新输入框模型下拉等 UI。
+      window.lc.onProfilesChanged?.(() => void get().refreshActiveProfile())
       syncEditorDirtyPaths()
       void get().refreshActiveProfile()
+      // 启动时把当前自动审批开关同步到主进程，保证微信通道读到的是最新值。
+      void window.lc.aiSetPermissionMode?.(get().permissionMode)
       const ws = useWorkspaceStore.getState().workspace?.path ?? null
       set({ currentWorkspaceId: ws })
       void get().loadAllSessions()
@@ -1724,6 +1728,8 @@ export const useAgentStore = create<AgentState>((set, get) => {
     setPermissionMode: (m) => {
       set({ permissionMode: m })
       saveAgentPreferences({ permissionMode: m })
+      // 镜像到主进程，供微信通道读取（无 UI 端，靠它决定是否自动放行）。
+      void window.lc.aiSetPermissionMode?.(m)
     },
 
     revert: async () => {

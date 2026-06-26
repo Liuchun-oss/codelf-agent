@@ -831,3 +831,65 @@
 :root[data-theme-mode='light'] .env-tool-row {
   border-top-color: var(--border-soft);
 }
+
+/* ===== 微信通道：二维码登录对话框 ===== */
+.weixin-qr-dialog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24px 24px 18px;
+}
+.weixin-qr-dialog h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.weixin-qr-hint {
+  margin: 0 0 18px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  max-width: 260px;
+}
+.weixin-qr-img {
+  width: 220px;
+  height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+.weixin-qr-img img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  image-rendering: pixelated;
+}
+.weixin-qr-placeholder {
+  color: #999;
+  font-size: 28px;
+  letter-spacing: 2px;
+}
+.weixin-qr-status {
+  margin: 16px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  min-height: 18px;
+}
+.weixin-qr-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 18px;
+  width: 100%;
+}
+.weixin-qr-actions .btn,
+.weixin-qr-actions .btn-secondary {
+  min-width: 96px;
+}

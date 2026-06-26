@@ -13,6 +13,7 @@ import AudioGenSettingsSection from './AudioGenSettingsSection'
 import McpSettingsSection from './McpSettingsSection'
 import SkillsSettingsSection from './SkillsSettingsSection'
 import PluginsSettingsSection from './PluginsSettingsSection'
+import ChannelsSettingsSection from './ChannelsSettingsSection'
 import MemorySettingsSection from './MemorySettingsSection'
 import KnowledgeSettingsSection from './KnowledgeSettingsSection'
 import AppearanceSettingsSection from './AppearanceSettingsSection'
@@ -20,7 +21,7 @@ import EnvSettingsSection from './EnvSettingsSection'
 import DebugPanelSection from './DebugPanelSection'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
 
-type SettingsSection = 'ai' | 'editor' | 'appearance' | 'agent' | 'network' | 'websearch' | 'imagegen' | 'videogen' | 'audiogen' | 'mcp' | 'skills' | 'plugins' | 'memory' | 'knowledge' | 'env' | 'diagnostics'
+type SettingsSection = 'ai' | 'editor' | 'appearance' | 'agent' | 'network' | 'websearch' | 'imagegen' | 'videogen' | 'audiogen' | 'mcp' | 'skills' | 'plugins' | 'channels' | 'memory' | 'knowledge' | 'env' | 'diagnostics'
 
 interface NavItem {
   id: SettingsSection
@@ -98,6 +99,12 @@ const ICON = {
       <path d="M10 3v4M14 3v4M6 7h12v4a6 6 0 0 1-12 0V7zM12 17v4" />
     </>
   ),
+  channels: (
+    <>
+      <path d="M4 5h16v10H7l-3 3V5z" />
+      <path d="M8 9h8M8 12h5" />
+    </>
+  ),
   memory: (
     <>
       <rect x="4" y="4" width="16" height="16" rx="2" />
@@ -133,6 +140,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'mcp', title: 'MCP 服务', icon: ICON.mcp },
   { id: 'skills', title: '技能', icon: ICON.skills },
   { id: 'plugins', title: '插件', icon: ICON.plugins },
+  { id: 'channels', title: '通讯通道', icon: ICON.channels },
   { id: 'memory', title: '记忆', icon: ICON.memory },
   { id: 'knowledge', title: '知识库', icon: ICON.knowledge },
   { id: 'env', title: '环境', icon: ICON.env },
@@ -273,6 +281,7 @@ export default function SettingsPanel(): JSX.Element | null {
             {activeSection === 'mcp' && <McpSettingsSection />}
             {activeSection === 'skills' && <SkillsSettingsSection />}
             {activeSection === 'plugins' && <PluginsSettingsSection />}
+            {activeSection === 'channels' && <ChannelsSettingsSection />}
             {activeSection === 'memory' && <MemorySettingsSection />}
             {activeSection === 'knowledge' && <KnowledgeSettingsSection />}
             {activeSection === 'env' && <EnvSettingsSection />}

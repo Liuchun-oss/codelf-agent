@@ -58,11 +58,14 @@ function TaskCard({ task }: { task: VideoTask }): JSX.Element {
 export default function VideoQueueView(): JSX.Element {
   const allTasks = useVideoQueueStore((s) => s.tasks)
   const load = useVideoQueueStore((s) => s.load)
+  const refresh = useVideoQueueStore((s) => s.refresh)
+  const refreshing = useVideoQueueStore((s) => s.refreshing)
   const clearFinished = useVideoQueueStore((s) => s.clearFinished)
   const currentSessionId = useAgentStore((s) => s.currentSessionId)
   // 仅展示当前对话发起的视频任务（视频队列已与对话绑定）。
   const tasks = allTasks.filter((t) => t.sessionId === currentSessionId)
   const hasFinished = tasks.some((t) => t.status === 'succeeded' || t.status === 'failed' || t.status === 'cancelled')
+  const hasActive = tasks.some((t) => t.status === 'queued' || t.status === 'running')
 
   useEffect(() => {
     void load()
@@ -73,6 +76,16 @@ export default function VideoQueueView(): JSX.Element {
       <div className="video-queue-toolbar">
         <span className="video-queue-count">共 {tasks.length} 个任务</span>
         <span className="video-task-spacer" />
+        {hasActive && (
+          <button
+            type="button"
+            className="video-task-btn"
+            disabled={refreshing}
+            onClick={() => void refresh(currentSessionId)}
+          >
+            {refreshing ? '刷新中…' : '刷新状态'}
+          </button>
+        )}
         {hasFinished && (
           <button type="button" className="video-task-btn" onClick={() => void clearFinished(currentSessionId)}>
             清除已完成

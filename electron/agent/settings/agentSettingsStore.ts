@@ -23,6 +23,8 @@ import type { SkillsSettings } from '@shared/skillTypes'
 import { DEFAULT_SKILLS_SETTINGS, normalizeSkillsSettings } from '@shared/skillTypes'
 import type { MemorySettings } from '@shared/memoryTypes'
 import { DEFAULT_MEMORY_SETTINGS, normalizeMemorySettings } from '@shared/memoryTypes'
+import type { ChannelsSettings } from '@shared/channelTypes'
+import { DEFAULT_CHANNELS_SETTINGS, normalizeChannelsSettings } from '@shared/channelTypes'
 
 
 interface SettingsFileShape {
@@ -35,6 +37,9 @@ interface SettingsFileShape {
   mcp?: unknown
   skills?: unknown
   memory?: Partial<MemorySettings>
+  channels?: Partial<ChannelsSettings>
+  // UI 端"自动审批"开关的镜像（渲染端 localStorage 是权威源，这里供主进程/微信通道读取）。
+  permissionMode?: 'default' | 'acceptEdits'
 }
 
 let cache: AgentBehaviorSettings | null = null
@@ -46,6 +51,7 @@ let audioGenCache: AudioGenSettings | null = null
 let mcpCache: McpSettings | null = null
 let skillsCache: SkillsSettings | null = null
 let memoryCache: MemorySettings | null = null
+let channelsCache: ChannelsSettings | null = null
 
 function settingsFile(): string {
   return join(app.getPath('userData'), 'settings.json')
@@ -115,6 +121,7 @@ export function resetAgentSettingsCacheForTests(): void {
   mcpCache = null
   skillsCache = null
   memoryCache = null
+  channelsCache = null
 }
 
 
@@ -297,4 +304,43 @@ export function saveMemorySettings(patch: Partial<MemorySettings>): MemorySettin
   writeFile({ ...file, memory: next })
   memoryCache = next
   return next
+}
+
+
+function loadChannelsFromDisk(): ChannelsSettings {
+  const next = normalizeChannelsSettings(readFile().channels ?? DEFAULT_CHANNELS_SETTINGS)
+  // 专属工作区未配置时，补一个默认路径（用户数据目录下的 weixin-workspace）。
+  if (!next.weixin.workspaceRoot) {
+    next.weixin.workspaceRoot = join(app.getPath('userData'), 'weixin-workspace')
+  }
+  return next
+}
+
+export function getChannelsSettings(): ChannelsSettings {
+  if (!channelsCache) channelsCache = loadChannelsFromDisk()
+  return channelsCache
+}
+
+// 覆盖式写入整份 channels 配置（深合并由调用方负责，这里按分区替换）。
+export function saveChannelsSettings(patch: Partial<ChannelsSettings>): ChannelsSettings {
+  const file = readFile()
+  const current = getChannelsSettings()
+  const next = normalizeChannelsSettings({
+    weixin: { ...current.weixin, ...(patch.weixin ?? {}) }
+  })
+  writeFile({ ...file, channels: next })
+  channelsCache = next
+  return next
+}
+
+// "自动审批"权限模式（UI localStorage 的镜像）。微信通道无 UI，靠它判断是否自动放行。
+// 默认 default（更安全：未显式开启则逐次确认）。
+export function getPermissionMode(): 'default' | 'acceptEdits' {
+  const v = readFile().permissionMode
+  return v === 'acceptEdits' ? 'acceptEdits' : 'default'
+}
+
+export function setPermissionMode(mode: 'default' | 'acceptEdits'): void {
+  const file = readFile()
+  writeFile({ ...file, permissionMode: mode === 'acceptEdits' ? 'acceptEdits' : 'default' })
 }

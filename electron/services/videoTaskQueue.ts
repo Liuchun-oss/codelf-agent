@@ -10,11 +10,12 @@ import {
   downloadAndSaveVideo,
   type VideoGenRequest
 } from '../agent/services/videoGenService'
+import { notifyWeixin } from '../channels/notify'
 
 // 视频生成是慢异步任务。这里维护一个持久化任务队列，提交后在后台并发轮询，
 // 状态变化通过 IPC 推给渲染进程的「视频队列」面板，不阻塞主对话。
 
-const POLL_INTERVAL_MS = 5000
+const POLL_INTERVAL_MS = 3 * 60 * 1000
 // 单个任务从开始轮询起的最大存活时间，避免卡死任务永久占用轮询。
 const MAX_TASK_LIFETIME_MS = 20 * 60 * 1000
 
@@ -102,6 +103,7 @@ async function pollOnce(id: string): Promise<void> {
   if (Date.now() - startedAt > MAX_TASK_LIFETIME_MS) {
     stopPolling(id)
     update(id, { status: 'failed', error: '视频生成超时（后台轮询超过最大时长）。' })
+    void notifyWeixin(`🎬 视频生成超时：${truncatePrompt(task.prompt)}`)
     return
   }
 
@@ -121,6 +123,7 @@ async function pollOnce(id: string): Promise<void> {
   if (res.state === 'failed') {
     stopPolling(id)
     update(id, { status: 'failed', error: res.error ?? '视频生成失败', progress: undefined })
+    void notifyWeixin(`🎬 视频生成失败：${truncatePrompt(task.prompt)}\n${res.error ?? ''}`)
     return
   }
   // succeeded：下载转存。
@@ -133,9 +136,17 @@ async function pollOnce(id: string): Promise<void> {
   stopPolling(id)
   if (!saved) {
     update(id, { status: 'failed', error: '视频已生成但本地保存失败。', progress: undefined })
+    void notifyWeixin(`🎬 视频已生成但本地保存失败：${truncatePrompt(task.prompt)}`)
     return
   }
   update(id, { status: 'succeeded', videoUrl: saved.url, filePath: saved.filePath, progress: undefined })
+  void notifyWeixin(`🎬 视频生成完成：${truncatePrompt(task.prompt)}\n已保存到 ${saved.filePath}`)
+}
+
+// 通知里展示的 prompt 摘要：过长截断。
+function truncatePrompt(p: string, max = 40): string {
+  if (!p) return '(无描述)'
+  return p.length <= max ? p : `${p.slice(0, max)}…`
 }
 
 export interface EnqueueParams {
@@ -190,6 +201,20 @@ export function enqueueVideoTask(params: EnqueueParams): VideoTask {
 export function listVideoTasks(): VideoTask[] {
   ensureLoaded()
   return [...tasks].sort((a, b) => b.createdAt - a.createdAt)
+}
+
+// 立即对进行中的任务执行一次轮询，不等待 POLL_INTERVAL_MS。
+// 用于「手动刷新状态」按钮：返回刷新后的全量任务列表。
+export async function refreshVideoTasksNow(sessionId?: string): Promise<VideoTask[]> {
+  ensureLoaded()
+  const active = tasks.filter(
+    (t) =>
+      (t.status === 'running' || t.status === 'queued') &&
+      !!t.remoteTaskId &&
+      (sessionId === undefined || t.sessionId === sessionId)
+  )
+  await Promise.all(active.map((t) => pollOnce(t.id)))
+  return listVideoTasks()
 }
 
 export function getVideoTask(id: string): VideoTask | null {
