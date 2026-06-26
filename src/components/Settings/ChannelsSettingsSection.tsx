@@ -20,12 +20,19 @@ export default function ChannelsSettingsSection(): JSX.Element {
   const [status, setStatus] = useState<ChannelRuntimeStatus | null>(null)
   const [saving, setSaving] = useState(false)
   const [showQr, setShowQr] = useState(false)
+  const [hasModel, setHasModel] = useState<boolean | null>(null)
 
   const load = useCallback(async (): Promise<void> => {
     const s = await window.lc.channels.getSettings()
     setSettings(s.weixin)
     const st = await window.lc.channels.getStatus('weixin')
     setStatus(st)
+    try {
+      const active = await window.lc.aiGetActiveProfile()
+      setHasModel(Boolean(active))
+    } catch {
+      setHasModel(null)
+    }
   }, [])
 
   useEffect(() => {
@@ -51,6 +58,17 @@ export default function ChannelsSettingsSection(): JSX.Element {
     if (dir) void save({ workspaceRoot: dir })
   }
 
+  const savePersona = (patch: Partial<WeixinChannelSettings['persona']>): void => {
+    if (!settings) return
+    void save({ persona: { ...settings.persona, ...patch } })
+  }
+
+  const resetPersona = (): void => {
+    void save({
+      persona: { activated: false, selfName: '', ownerName: '', addressing: '', style: '' }
+    })
+  }
+
   const logout = async (): Promise<void> => {
     await window.lc.channels.logout()
     void load()
@@ -70,6 +88,11 @@ export default function ChannelsSettingsSection(): JSX.Element {
 
   return (
     <div className="settings-section-page">
+      {hasModel === false && (
+        <div className="settings-inline-alert" style={{ color: '#f5a623' }}>
+          尚未配置 AI 模型。微信已可连接，但收到消息时只会回复「请先配置模型」，且无法完成首次人格激活。请先到「模型」设置里配置并激活一个 Provider。
+        </div>
+      )}
       <SettingsGroup label="微信">
         <SettingsRow
           title="连接状态"
@@ -220,12 +243,139 @@ export default function ChannelsSettingsSection(): JSX.Element {
         )}
       </SettingsGroup>
 
+      <SettingsGroup label="人格定义（出厂设置 · 仅微信）">
+        <SettingsRow
+          title="激活状态"
+          description={
+            settings.persona.activated
+              ? '已完成首次激活。以下设定会作为永久系统提示词注入每一轮对话。'
+              : '尚未激活。首次给微信发消息时，我会主动询问并请你定义身份；也可以在这里手动填写。'
+          }
+          control={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span
+                style={{
+                  width: 9,
+                  height: 9,
+                  borderRadius: '50%',
+                  background: settings.persona.activated ? '#30a46c' : '#8b8b8b',
+                  display: 'inline-block'
+                }}
+              />
+              {settings.persona.activated ? '已激活' : '未激活'}
+            </span>
+          }
+        />
+        <SettingsRow
+          title="我的名字"
+          description="AI 自称的名字。"
+          stacked
+          control={
+            <input
+              type="text"
+              style={{ width: '100%' }}
+              placeholder="如：小灵"
+              disabled={saving}
+              value={settings.persona.selfName}
+              onChange={(e) =>
+                setSettings((s) =>
+                  s ? { ...s, persona: { ...s.persona, selfName: e.target.value } } : s
+                )
+              }
+              onBlur={() => savePersona({ selfName: settings.persona.selfName })}
+            />
+          }
+        />
+        <SettingsRow
+          title="主人的名字"
+          description="对方（你）的名字。"
+          stacked
+          control={
+            <input
+              type="text"
+              style={{ width: '100%' }}
+              placeholder="如：阿杰"
+              disabled={saving}
+              value={settings.persona.ownerName}
+              onChange={(e) =>
+                setSettings((s) =>
+                  s ? { ...s, persona: { ...s.persona, ownerName: e.target.value } } : s
+                )
+              }
+              onBlur={() => savePersona({ ownerName: settings.persona.ownerName })}
+            />
+          }
+        />
+        <SettingsRow
+          title="对你的称呼"
+          description="希望 AI 怎么称呼你。"
+          stacked
+          control={
+            <input
+              type="text"
+              style={{ width: '100%' }}
+              placeholder="如：主人 / 老板"
+              disabled={saving}
+              value={settings.persona.addressing}
+              onChange={(e) =>
+                setSettings((s) =>
+                  s ? { ...s, persona: { ...s.persona, addressing: e.target.value } } : s
+                )
+              }
+              onBlur={() => savePersona({ addressing: settings.persona.addressing })}
+            />
+          }
+        />
+        <SettingsRow
+          title="身份 / 风格 / 语气 / 性格"
+          description="一段自由描述，定义 AI 的人设和说话方式。"
+          stacked
+          control={
+            <textarea
+              style={{ width: '100%', minHeight: 72, resize: 'vertical' }}
+              placeholder="如：温柔体贴的助理，说话简洁、偶尔俏皮，遇到不确定的事会先确认。"
+              disabled={saving}
+              value={settings.persona.style}
+              onChange={(e) =>
+                setSettings((s) =>
+                  s ? { ...s, persona: { ...s.persona, style: e.target.value } } : s
+                )
+              }
+              onBlur={() => savePersona({ style: settings.persona.style })}
+            />
+          }
+        />
+        <SettingsRow
+          title="激活开关"
+          description="开 = 上述设定立即生效；关 = 下次微信发消息时重新引导激活。"
+          control={
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <SettingsSwitch
+                disabled={saving}
+                checked={settings.persona.activated}
+                onChange={(v) =>
+                  savePersona(
+                    v
+                      ? { activated: true, activatedAt: Date.now() }
+                      : { activated: false }
+                  )
+                }
+              />
+              <button type="button" className="btn-secondary" disabled={saving} onClick={resetPersona}>
+                重置
+              </button>
+            </div>
+          }
+        />
+      </SettingsGroup>
+
       <SettingsGroup label="微信侧可用指令">
         <div className="settings-row-text" style={{ padding: '4px 0', lineHeight: 1.9 }}>
           <small>
             <code>/stop</code> 中止当前一轮 · <code>/new</code> 清空上下文重开会话 ·{' '}
             <code>/cwd &lt;路径&gt;</code> 临时切换工作区（无参或 reset 切回专属工作区） ·{' '}
-            <code>/remember</code> 把本会话稳定知识沉淀进项目记忆
+            <code>/remember</code> 把本会话稳定知识沉淀进项目记忆 ·{' '}
+            <code>/persona</code> 查看人格（<code>/persona reset</code> 重新激活）
           </small>
         </div>
       </SettingsGroup>

@@ -12,6 +12,7 @@ import { getMirrorsSection } from './sections/mirrors'
 import { getLanguageSection, getEnvSection } from './sections/language'
 import { getWorkingApproachSection } from './sections/workingApproach'
 import { getProjectLayoutSection } from './sections/projectLayout'
+import { getPersonaSection } from './sections/persona'
 import { collectUserContext, renderUserContext } from './context/userContext'
 import { collectSystemContext, renderSystemContext } from './context/systemContext'
 import { collectMemoryContext, renderMemoryContext } from './context/memoryContext'
@@ -87,6 +88,7 @@ export async function fetchSystemPromptPartsAsync(
   ])
 
   const dynamicSections: string[] = filterEmpty([
+    getPersonaSection(ctx),
     getLanguageSection(ctx),
     getMirrorsSection(ctx),
     getEnvSection(ctx),
@@ -116,7 +118,7 @@ export function fetchSystemPromptParts(ctx: PromptContext): SystemPromptParts {
     getToneAndStyleSection(),
     getBehavioralGuidelinesSection()
   ])
-  const dynamicSections: string[] = filterEmpty([getLanguageSection(ctx), getMirrorsSection(ctx), getEnvSection(ctx)])
+  const dynamicSections: string[] = filterEmpty([getPersonaSection(ctx), getLanguageSection(ctx), getMirrorsSection(ctx), getEnvSection(ctx)])
   return {
     systemPrompt: [...staticSections, PROMPT_DYNAMIC_BOUNDARY, ...dynamicSections]
   }

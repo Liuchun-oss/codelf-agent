@@ -64,6 +64,8 @@ export function registerChannelsIpc(): void {
       if (result.status === 'confirmed') {
         try {
           await manager.start('weixin')
+          // 首次连接主动开场：未激活人格时推一条开场白，直接请用户定义身份。
+          void manager.greetForActivation()
         } catch (e) {
           console.error('[channels] 登录后启动长轮询失败：', e)
         }

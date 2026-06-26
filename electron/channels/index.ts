@@ -26,6 +26,8 @@ export async function initChannels(): Promise<void> {
       await manager.start('weixin')
       // C9：启动后检查上次是否有被重启中断的会话，有则提示机主。
       await manager.recoverStaleSessions()
+      // 若人格尚未激活，主动推一条开场白请用户定义身份（已激活则跳过）。
+      void manager.greetForActivation()
     } catch (e) {
       console.error('[channels] 微信通道自动启动失败：', e)
     }

@@ -593,6 +593,18 @@ export interface AiSendPayload {
   permissionMode?: 'default' | 'acceptEdits'
 
   sessionCwd?: string | null
+
+  /**
+   * 微信 agent 人格上下文。仅微信通道的轮次会带上，
+   * 用于注入「人格定义」系统提示或触发首次激活引导。
+   */
+  persona?: {
+    activationMode?: boolean
+    selfName?: string
+    ownerName?: string
+    addressing?: string
+    style?: string
+  }
 }
 
 

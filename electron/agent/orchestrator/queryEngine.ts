@@ -608,7 +608,8 @@ export class QueryEngine {
       activeFilePath: payload.editorContext?.activeFilePath,
       model: profile.model,
       enabledTools: this.registry.availableTools().map((t) => t.name),
-      permissionMode: payload.permissionMode ?? 'default'
+      permissionMode: payload.permissionMode ?? 'default',
+      ...(payload.persona ? { persona: payload.persona } : {})
     }
 
     this.active = new AbortController()

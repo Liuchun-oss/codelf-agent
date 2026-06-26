@@ -9,6 +9,31 @@ export type ChannelConnectionStatus =
   | 'expired' // 凭证失效（errcode -14），需重新登录
   | 'error' // 运行出错
 
+// 微信 agent 的「人格定义（出厂设置）」。首次接入时引导用户定义，
+// 之后作为永久系统提示词注入到每一轮（仅微信会话生效，不影响桌面端 UI 的 Agent）。
+export interface WeixinPersona {
+  // 是否已完成首次激活。false 时下一条入站消息会触发引导式问答。
+  activated: boolean
+  // AI 自己的名字（「我叫什么」）。
+  selfName: string
+  // 主人的名字（「你叫什么」）。
+  ownerName: string
+  // 希望 AI 怎么称呼主人（如「主人」「老板」「阿杰」）。
+  addressing: string
+  // 身份定义 / 说话风格 / 语气 / 性格的自由描述。
+  style: string
+  // 激活完成的时间戳（ms），便于排查/展示。
+  activatedAt?: number
+}
+
+export const DEFAULT_WEIXIN_PERSONA: WeixinPersona = {
+  activated: false,
+  selfName: '',
+  ownerName: '',
+  addressing: '',
+  style: ''
+}
+
 export interface WeixinChannelSettings {
   // 是否启用微信通道。初始默认关（实验性，用户主动开）；
   // 首次扫码连接成功后自动置为 true（见策划书 7.6.3 步骤 7）。
@@ -19,13 +44,16 @@ export interface WeixinChannelSettings {
   mergeWindowEnabled: boolean
   // 用户是否已确认实验性功能风险（首次连接前必须勾选，见 11.5）。
   riskAcknowledged: boolean
+  // 微信 agent 人格定义（出厂设置）。
+  persona: WeixinPersona
 }
 
 export const DEFAULT_WEIXIN_CHANNEL_SETTINGS: WeixinChannelSettings = {
   enabled: false,
   workspaceRoot: '',
   mergeWindowEnabled: true,
-  riskAcknowledged: false
+  riskAcknowledged: false,
+  persona: { ...DEFAULT_WEIXIN_PERSONA }
 }
 
 export interface ChannelsSettings {
@@ -46,7 +74,24 @@ export function normalizeWeixinChannelSettings(
     workspaceRoot: typeof p.workspaceRoot === 'string' ? p.workspaceRoot.trim() : d.workspaceRoot,
     mergeWindowEnabled:
       typeof p.mergeWindowEnabled === 'boolean' ? p.mergeWindowEnabled : d.mergeWindowEnabled,
-    riskAcknowledged: typeof p.riskAcknowledged === 'boolean' ? p.riskAcknowledged : d.riskAcknowledged
+    riskAcknowledged: typeof p.riskAcknowledged === 'boolean' ? p.riskAcknowledged : d.riskAcknowledged,
+    persona: normalizeWeixinPersona(p.persona)
+  }
+}
+
+export function normalizeWeixinPersona(
+  partial: Partial<WeixinPersona> | undefined
+): WeixinPersona {
+  const d = DEFAULT_WEIXIN_PERSONA
+  const p = partial ?? {}
+  const str = (v: unknown, fallback: string): string => (typeof v === 'string' ? v.trim() : fallback)
+  return {
+    activated: typeof p.activated === 'boolean' ? p.activated : d.activated,
+    selfName: str(p.selfName, d.selfName),
+    ownerName: str(p.ownerName, d.ownerName),
+    addressing: str(p.addressing, d.addressing),
+    style: str(p.style, d.style),
+    ...(typeof p.activatedAt === 'number' ? { activatedAt: p.activatedAt } : {})
   }
 }
 

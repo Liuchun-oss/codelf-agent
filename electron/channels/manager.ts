@@ -10,7 +10,8 @@ import { getQueryEngine } from '../agent/orchestrator/queryEngine'
 import { loadSession, saveSession, deleteSessionFile } from '../agent/orchestrator/sessionPersistence'
 import { ensureProjectMemory } from '../agent/memory/store'
 import { promoteSessionMemory } from '../agent/memory/memoryPromotion'
-import { getChannelsSettings, getPermissionMode } from '../agent/settings/agentSettingsStore'
+import { getChannelsSettings, getPermissionMode, saveChannelsSettings } from '../agent/settings/agentSettingsStore'
+import { getActiveProfileId } from '../agent/providers/profileStore'
 import type { ChannelAdapter, ChannelContext, InboundMessage } from './types'
 import { SessionBridge } from './sessionBridge'
 import { markActive, clearActive, takeStaleActive } from './pendingState'
@@ -214,6 +215,42 @@ export class ChannelManager {
     }
   }
 
+  // 首次连接后主动开场：若微信 agent 尚未完成人格激活，由通道层直接推一条
+  // 固定开场白（不依赖模型，确保 100% 先开口）。已激活或缺能力则跳过。
+  // 区分有无模型给不同引导语。返回是否成功推送。
+  async greetForActivation(): Promise<boolean> {
+    const adapter = this.adapters.get('weixin')
+    if (!adapter || !adapter.hasCredential()) return false
+    const notifiable = adapter as ChannelAdapter & {
+      notify?: (t: string) => Promise<boolean>
+      canNotify?: () => boolean
+    }
+    if (typeof notifiable.notify !== 'function') return false
+    if (notifiable.canNotify && !notifiable.canNotify()) return false
+    // 已激活就不再打扰。
+    if (getChannelsSettings().weixin.persona.activated) return false
+    const hasModel = Boolean(getActiveProfileId())
+    const text = hasModel
+      ? [
+          '你好呀，初来乍到，这是我第一次和你连上。',
+          '我还是一张白纸，想请你帮我完成「出厂设置」，给我一个身份：',
+          '· 我叫什么名字？',
+          '· 你叫什么、希望我怎么称呼你？',
+          '· 你希望我是怎样的性格、用什么语气和你说话？',
+          '可以一次说完，也可以慢慢告诉我。准备好就回我一句吧～'
+        ].join('\n')
+      : [
+          '你好呀，我们第一次连上啦。',
+          '不过我现在还没有接入「大脑」（AI 模型），暂时没法和你正常对话。',
+          '请先到 Codelf 设置里配置并激活一个模型 Provider，之后再给我发消息，我就会请你为我定义身份、完成首次激活。'
+        ].join('\n')
+    try {
+      return await notifiable.notify(text)
+    } catch {
+      return false
+    }
+  }
+
   private async handleInbound(adapter: ChannelAdapter, msg: InboundMessage): Promise<void> {
     const session = this.getSession(msg)
     // 把会话数同步给适配器（供 UI 运行信息展示）。
@@ -389,11 +426,14 @@ export class ChannelManager {
       case '/remember':
         await this.handleRemember(adapter, session)
         break
+      case '/persona':
+        await this.handlePersona(adapter, session, arg)
+        break
       case '/diag':
         await this.handleDiag(adapter, session)
         break
       default:
-        this.reply(adapter, session, `未知命令：${cmd}。可用：/stop /new /cwd /remember /diag`)
+        this.reply(adapter, session, `未知命令：${cmd}。可用：/stop /new /cwd /remember /persona /diag`)
     }
   }
 
@@ -472,7 +512,41 @@ export class ChannelManager {
     )
   }
 
-  // C10：为一个待回复请求装上超时定时器；超时按"拒绝/取消"处理并提示。
+  // /persona：查看当前人格；/persona reset 重新进入首次激活引导。
+  private async handlePersona(
+    adapter: ChannelAdapter,
+    session: SessionState,
+    arg: string
+  ): Promise<void> {
+    const sub = arg.trim().toLowerCase()
+    if (sub === 'reset') {
+      saveChannelsSettings({
+        weixin: {
+          ...getChannelsSettings().weixin,
+          persona: { activated: false, selfName: '', ownerName: '', addressing: '', style: '' }
+        }
+      })
+      this.reply(adapter, session, '已重置人格设定。下一条消息我会重新进行出厂设置。')
+      return
+    }
+    const p = getChannelsSettings().weixin.persona
+    if (!p.activated) {
+      this.reply(adapter, session, '尚未完成出厂设置。给我发任意一条消息即可开始定义我的身份。')
+      return
+    }
+    const lines = [
+      '【当前人格设定】',
+      `我的名字：${p.selfName || '（未设）'}`,
+      `主人：${p.ownerName || '（未设）'}`,
+      `我对你的称呼：${p.addressing || '（未设）'}`,
+      `身份/风格：${p.style || '（未设）'}`,
+      '',
+      '想重新设定请发 /persona reset。'
+    ]
+    this.reply(adapter, session, lines.join('\n'))
+  }
+
+
   private armConfirmTimeout(adapter: ChannelAdapter, session: SessionState): void {
     if (session.confirmTimer) clearTimeout(session.confirmTimer)
     session.confirmTimer = setTimeout(() => {
@@ -558,6 +632,21 @@ export class ChannelManager {
   ): Promise<void> {
     session.busy = true
     markActive(session.conversationId)
+    // 人格：未激活 → 本轮进入「首次激活引导」模式；已激活 → 注入永久人格。
+    const persona = getChannelsSettings().weixin.persona
+    const activation = !persona.activated
+    // 首次激活依赖模型来主导问答。若还没配 Provider，引擎只会回「尚未配置模型」，
+    // 激活永远完不成。这里提前拦一下，给一句更明确的引导，避免空转进引擎。
+    if (activation && !getActiveProfileId()) {
+      this.reply(
+        adapter,
+        session,
+        '我还没有接入大脑（AI 模型）。请先在 Codelf 设置里配置并激活一个模型 Provider，配置完成后再给我发消息，我就会进行首次激活、请你定义我的身份。'
+      )
+      clearActive(session.conversationId)
+      session.busy = false
+      return
+    }
     // E15：工作区不存在则自动创建；并确保项目记忆文件存在（6.6）。
     if (session.currentWorkspace) {
       try {
@@ -576,12 +665,24 @@ export class ChannelManager {
       // 与 UI 端"自动审批"开关一致：acceptEdits 自动放行文件/普通命令，危险操作仍拦。
       permissionMode: getPermissionMode(),
       sessionCwd: session.currentWorkspace,
-      ...(session.pendingImages.length ? { images: session.pendingImages.slice() } : {})
+      ...(session.pendingImages.length ? { images: session.pendingImages.slice() } : {}),
+      persona: activation
+        ? { activationMode: true }
+        : {
+            selfName: persona.selfName,
+            ownerName: persona.ownerName,
+            addressing: persona.addressing,
+            style: persona.style
+          }
     }
     // 图片已并入本轮 payload，清空缓冲，避免下轮重复发送。
     session.pendingImages = []
 
-    const bridge = new SessionBridge({ send: (t) => this.reply(adapter, session, t) })
+    // 激活轮：不立即把文字发回，先累积，轮末剥离 codelf-persona 落盘块再发干净文本。
+    const activationBuf: string[] = []
+    const bridge = new SessionBridge({
+      send: (t) => (activation ? activationBuf.push(t) : this.reply(adapter, session, t))
+    })
     const engine = getQueryEngine(session.conversationId)
 
     // B：开始"正在输入"状态（best-effort，不阻塞）。
@@ -655,8 +756,15 @@ export class ChannelManager {
       }
       // B5：轮末把本轮生成的图片逐张发回微信（best-effort，失败仅日志）。
       await this.deliverImages(adapter, session, imageUrls)
+      // 激活轮：合并本轮文本，剥离 codelf-persona 落盘块，把干净文本发回微信。
+      if (activation) {
+        this.finishActivationTurn(adapter, session, activationBuf.join('\n\n'))
+      }
     } catch (err) {
       bridge.flush()
+      if (activation && activationBuf.length) {
+        this.finishActivationTurn(adapter, session, activationBuf.join('\n\n'))
+      }
       this.reply(adapter, session, `出错了：${err instanceof Error ? err.message : '未知错误'}`)
     } finally {
       // B：停止"正在输入"状态。
@@ -678,6 +786,51 @@ export class ChannelManager {
         }
       }
     }
+  }
+
+  // 激活轮收尾：从模型本轮全部文本里剥离 codelf-persona JSON 块。
+  // 解析成功 → 落盘人格、标记 activated，发回干净文本 + 完成提示；
+  // 没有块（信息还不全）→ 原样发回文本，下一条消息继续引导。
+  private finishActivationTurn(
+    adapter: ChannelAdapter,
+    session: SessionState,
+    fullText: string
+  ): void {
+    const re = /```codelf-persona\s*([\s\S]*?)```/i
+    const m = re.exec(fullText)
+    const cleaned = fullText.replace(re, '').replace(/\n{3,}/g, '\n\n').trim()
+    if (!m) {
+      if (cleaned) this.reply(adapter, session, cleaned)
+      return
+    }
+    let parsed: { selfName?: string; ownerName?: string; addressing?: string; style?: string } | null =
+      null
+    try {
+      parsed = JSON.parse(m[1].trim())
+    } catch {
+      parsed = null
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      if (cleaned) this.reply(adapter, session, cleaned)
+      this.reply(adapter, session, '（人格信息解析失败，我们再确认一次吧）')
+      return
+    }
+    const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+    saveChannelsSettings({
+      weixin: {
+        ...getChannelsSettings().weixin,
+        persona: {
+          activated: true,
+          selfName: str(parsed.selfName),
+          ownerName: str(parsed.ownerName),
+          addressing: str(parsed.addressing),
+          style: str(parsed.style),
+          activatedAt: Date.now()
+        }
+      }
+    })
+    if (cleaned) this.reply(adapter, session, cleaned)
+    this.reply(adapter, session, '出厂设置完成，我已经记住了自己的身份。以后就这样陪着你。')
   }
 
   // B5：从一段文本里抽取生成图片的 markdown 链接（codelf-artifact:// 协议）。
