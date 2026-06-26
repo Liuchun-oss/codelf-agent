@@ -5,6 +5,7 @@ import { useThemeStore } from '@/stores/themeStore'
 import AnimatedOverlay from '@/components/common/AnimatedOverlay'
 import AiSettingsSection from './AiSettingsSection'
 import AgentBehaviorSettingsSection from './AgentBehaviorSettingsSection'
+import SubagentsSettingsSection from './SubagentsSettingsSection'
 import NetworkSettingsSection from './NetworkSettingsSection'
 import WebSearchSettingsSection from './WebSearchSettingsSection'
 import ImageGenSettingsSection from './ImageGenSettingsSection'
@@ -21,7 +22,7 @@ import EnvSettingsSection from './EnvSettingsSection'
 import DebugPanelSection from './DebugPanelSection'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
 
-type SettingsSection = 'ai' | 'editor' | 'appearance' | 'agent' | 'network' | 'websearch' | 'imagegen' | 'videogen' | 'audiogen' | 'mcp' | 'skills' | 'plugins' | 'channels' | 'memory' | 'knowledge' | 'env' | 'diagnostics'
+type SettingsSection = 'ai' | 'editor' | 'appearance' | 'agent' | 'subagents' | 'network' | 'websearch' | 'imagegen' | 'videogen' | 'audiogen' | 'mcp' | 'skills' | 'plugins' | 'channels' | 'memory' | 'knowledge' | 'env' | 'diagnostics'
 
 interface NavItem {
   id: SettingsSection
@@ -47,6 +48,14 @@ const ICON = {
     <>
       <circle cx="12" cy="12" r="3" />
       <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" />
+    </>
+  ),
+  subagents: (
+    <>
+      <circle cx="7" cy="7" r="3" />
+      <circle cx="17" cy="7" r="3" />
+      <circle cx="12" cy="17" r="3" />
+      <path d="M9.5 9l1.5 5M14.5 9l-1.5 5M9 7h6" />
     </>
   ),
   network: (
@@ -132,6 +141,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'editor', title: '编辑器', icon: ICON.editor },
   { id: 'appearance', title: '外观', icon: ICON.appearance },
   { id: 'agent', title: 'Agent 行为', icon: ICON.agent },
+  { id: 'subagents', title: '子 Agent', icon: ICON.subagents },
   { id: 'network', title: '网络', icon: ICON.network },
   { id: 'websearch', title: '联网搜索', icon: ICON.websearch },
   { id: 'imagegen', title: '图像生成', icon: ICON.imagegen },
@@ -273,6 +283,7 @@ export default function SettingsPanel(): JSX.Element | null {
             {activeSection === 'editor' && <EditorSettingsSection />}
             {activeSection === 'appearance' && <AppearanceSettingsSection />}
             {activeSection === 'agent' && <AgentBehaviorSettingsSection />}
+            {activeSection === 'subagents' && <SubagentsSettingsSection />}
             {activeSection === 'network' && <NetworkSettingsSection />}
             {activeSection === 'websearch' && <WebSearchSettingsSection />}
             {activeSection === 'imagegen' && <ImageGenSettingsSection />}

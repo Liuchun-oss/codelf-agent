@@ -18,15 +18,26 @@
 }
 .settings-overlay {
   backdrop-filter: blur(6px);
+  align-items: center;
+  padding-top: 0;
 }
 
 .settings-shell {
   grid-template-columns: 208px minmax(0, 1fr);
+  min-height: 0;
 }
 .settings-sidebar {
   gap: 2px;
+  min-height: 0;
+  overflow: hidden;
   padding: 14px 10px;
   background: rgba(0, 0, 0, 0.16);
+}
+.settings-nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 .settings-sidebar-title {
   padding: 4px 10px 10px;
