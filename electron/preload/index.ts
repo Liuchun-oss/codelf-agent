@@ -351,6 +351,35 @@ const api = {
     }
   },
 
+  schedule: {
+    list: () =>
+      ipcRenderer.invoke('schedule:list') as Promise<import('@shared/scheduleTypes').ScheduledTask[]>,
+    create: (draft: import('@shared/scheduleTypes').ScheduledTaskDraft) =>
+      ipcRenderer.invoke('schedule:create', draft) as Promise<import('@shared/scheduleTypes').ScheduledTask>,
+    update: (id: string, patch: import('@shared/scheduleTypes').ScheduledTaskPatch) =>
+      ipcRenderer.invoke('schedule:update', id, patch) as Promise<import('@shared/scheduleTypes').ScheduledTask | null>,
+    remove: (id: string) => ipcRenderer.invoke('schedule:delete', id) as Promise<void>,
+    toggle: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke('schedule:toggle', id, enabled) as Promise<import('@shared/scheduleTypes').ScheduledTask | null>,
+    runNow: (id: string) => ipcRenderer.invoke('schedule:runNow', id) as Promise<{ ok: boolean }>,
+    pickWorkspace: () => ipcRenderer.invoke('schedule:pickWorkspace') as Promise<string | null>,
+    onTaskUpdate: (cb: (task: import('@shared/scheduleTypes').ScheduledTask) => void) => {
+      const listener = (_e: IpcRendererEvent, task: import('@shared/scheduleTypes').ScheduledTask) => cb(task)
+      ipcRenderer.on('schedule:taskUpdate', listener)
+      return () => ipcRenderer.removeListener('schedule:taskUpdate', listener)
+    },
+    onTaskDeleted: (cb: (payload: { id: string }) => void) => {
+      const listener = (_e: IpcRendererEvent, payload: { id: string }) => cb(payload)
+      ipcRenderer.on('schedule:taskDeleted', listener)
+      return () => ipcRenderer.removeListener('schedule:taskDeleted', listener)
+    },
+    onTaskOutput: (cb: (payload: { id: string; output: string }) => void) => {
+      const listener = (_e: IpcRendererEvent, payload: { id: string; output: string }) => cb(payload)
+      ipcRenderer.on('schedule:taskOutput', listener)
+      return () => ipcRenderer.removeListener('schedule:taskOutput', listener)
+    }
+  },
+
   
   mcp: {
     getSettings: () =>

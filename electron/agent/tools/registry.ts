@@ -60,6 +60,12 @@ import { openInAppBrowserTool } from './openInAppBrowserTool'
 import { generateImageTool, editImageTool } from './generateImageTool'
 import { generateVideoTool } from './generateVideoTool'
 import { getVideoTaskTool } from './getVideoTaskTool'
+import {
+  createScheduledTaskTool,
+  listScheduledTasksTool,
+  deleteScheduledTaskTool,
+  toggleScheduledTaskTool
+} from './scheduleTools'
 import { generateAudioTool } from './generateAudioTool'
 import {
   desktopLaunchAppTool,
@@ -394,6 +400,10 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...editImageTool, deferred: true })
   registry.register({ ...generateVideoTool, deferred: true })
   registry.register({ ...getVideoTaskTool, deferred: true })
+  registry.register({ ...createScheduledTaskTool, deferred: true })
+  registry.register({ ...listScheduledTasksTool, deferred: true })
+  registry.register({ ...deleteScheduledTaskTool, deferred: true })
+  registry.register({ ...toggleScheduledTaskTool, deferred: true })
   registry.register({ ...generateAudioTool, deferred: true })
   registry.register({ ...desktopLaunchAppTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopListWindowsTool, deferred: true, permissionGroup: 'desktop' })

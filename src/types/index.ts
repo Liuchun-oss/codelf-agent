@@ -468,6 +468,29 @@ export interface LcApi {
   secretsSet: (key: string, value: string) => Promise<{ ok: boolean; error?: string }>
   secretsHas: (key: string) => Promise<boolean>
 
+  schedule: {
+    list: () => Promise<import('@shared/scheduleTypes').ScheduledTask[]>
+    create: (
+      draft: import('@shared/scheduleTypes').ScheduledTaskDraft
+    ) => Promise<import('@shared/scheduleTypes').ScheduledTask>
+    update: (
+      id: string,
+      patch: import('@shared/scheduleTypes').ScheduledTaskPatch
+    ) => Promise<import('@shared/scheduleTypes').ScheduledTask | null>
+    remove: (id: string) => Promise<void>
+    toggle: (
+      id: string,
+      enabled: boolean
+    ) => Promise<import('@shared/scheduleTypes').ScheduledTask | null>
+    runNow: (id: string) => Promise<{ ok: boolean }>
+    pickWorkspace: () => Promise<string | null>
+    onTaskUpdate: (
+      cb: (task: import('@shared/scheduleTypes').ScheduledTask) => void
+    ) => () => void
+    onTaskDeleted: (cb: (payload: { id: string }) => void) => () => void
+    onTaskOutput: (cb: (payload: { id: string; output: string }) => void) => () => void
+  }
+
   
   mcp: {
     getSettings: () => Promise<import('@shared/mcpTypes').McpSettings>

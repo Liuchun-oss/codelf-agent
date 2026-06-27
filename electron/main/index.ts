@@ -17,10 +17,12 @@ import { buildAppMenu } from '../menu'
 import { registerWindowIpc } from '../ipc/window'
 import { registerAppIpc } from '../ipc/app'
 import { registerChannelsIpc } from '../ipc/channels'
+import { registerScheduleIpc } from '../ipc/schedule'
 import { initChannels } from '../channels/index'
 import { initLogging } from '../logger'
 import { setLocalWriteTarget } from '../services/localWriteRegistry'
 import { resumeVideoTasksOnStartup } from '../services/videoTaskQueue'
+import { resumeSchedulesOnStartup } from '../services/scheduleQueue'
 import { BROWSER_PREVIEW_SCHEME, readBrowserPreview } from '../services/browserPreviewImage'
 import { ARTIFACT_FILE_SCHEME, readArtifactFile } from '../services/artifactFileServer'
 import { cleanupRendererBoundResources } from '../services/appLifecycle'
@@ -149,6 +151,8 @@ function createWindow(): void {
     mainWindow?.show()
     // 恢复上次未完成的视频生成任务，继续后台轮询。
     resumeVideoTasksOnStartup()
+    // 恢复定时任务调度：清残留 running、补跑错过的任务、重算下次执行并启动循环。
+    resumeSchedulesOnStartup()
   })
 
   
@@ -249,6 +253,7 @@ app.whenReady().then(() => {
   registerWindowIpc()
   registerAppIpc()
   registerChannelsIpc()
+  registerScheduleIpc()
 
   buildAppMenu()
   createWindow()

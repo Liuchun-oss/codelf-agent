@@ -15,6 +15,7 @@ import McpSettingsSection from './McpSettingsSection'
 import SkillsSettingsSection from './SkillsSettingsSection'
 import PluginsSettingsSection from './PluginsSettingsSection'
 import ChannelsSettingsSection from './ChannelsSettingsSection'
+import ScheduleSettingsSection from './ScheduleSettingsSection'
 import MemorySettingsSection from './MemorySettingsSection'
 import KnowledgeSettingsSection from './KnowledgeSettingsSection'
 import AppearanceSettingsSection from './AppearanceSettingsSection'
@@ -22,7 +23,7 @@ import EnvSettingsSection from './EnvSettingsSection'
 import DebugPanelSection from './DebugPanelSection'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
 
-type SettingsSection = 'ai' | 'editor' | 'appearance' | 'agent' | 'subagents' | 'network' | 'websearch' | 'imagegen' | 'videogen' | 'audiogen' | 'mcp' | 'skills' | 'plugins' | 'channels' | 'memory' | 'knowledge' | 'env' | 'diagnostics'
+type SettingsSection = 'ai' | 'editor' | 'appearance' | 'agent' | 'subagents' | 'network' | 'websearch' | 'imagegen' | 'videogen' | 'audiogen' | 'mcp' | 'skills' | 'plugins' | 'channels' | 'schedule' | 'memory' | 'knowledge' | 'env' | 'diagnostics'
 
 interface NavItem {
   id: SettingsSection
@@ -114,6 +115,12 @@ const ICON = {
       <path d="M8 9h8M8 12h5" />
     </>
   ),
+  schedule: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
   memory: (
     <>
       <rect x="4" y="4" width="16" height="16" rx="2" />
@@ -151,6 +158,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'skills', title: '技能', icon: ICON.skills },
   { id: 'plugins', title: '插件', icon: ICON.plugins },
   { id: 'channels', title: '通讯通道', icon: ICON.channels },
+  { id: 'schedule', title: '定时任务', icon: ICON.schedule },
   { id: 'memory', title: '记忆', icon: ICON.memory },
   { id: 'knowledge', title: '知识库', icon: ICON.knowledge },
   { id: 'env', title: '环境', icon: ICON.env },
@@ -293,6 +301,7 @@ export default function SettingsPanel(): JSX.Element | null {
             {activeSection === 'skills' && <SkillsSettingsSection />}
             {activeSection === 'plugins' && <PluginsSettingsSection />}
             {activeSection === 'channels' && <ChannelsSettingsSection />}
+            {activeSection === 'schedule' && <ScheduleSettingsSection />}
             {activeSection === 'memory' && <MemorySettingsSection />}
             {activeSection === 'knowledge' && <KnowledgeSettingsSection />}
             {activeSection === 'env' && <EnvSettingsSection />}
