@@ -14,6 +14,8 @@ export interface SnipHistoryRequest {
 export interface ToolContext {
   
   workspaceRoot: string | null
+  /** 记忆读写专用根（worktree 隔离时 = 基础路径）。不设则记忆相关工具回退用 workspaceRoot。 */
+  memoryWorkspaceRoot?: string | null
   
   sessionId?: string
   

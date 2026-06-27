@@ -28,6 +28,7 @@ export type AgentErrorCode =
   | 'unknown'
 
 import type { ContextUsageBreakdown } from './contextUsage'
+import type { RoomContext } from './roomTypes'
 
 export interface TokenUsage {
   
@@ -595,6 +596,19 @@ export interface AiSendPayload {
   sessionCwd?: string | null
 
   /**
+   * 指定本轮使用的 Provider profile id。群聊岗位用它实现「每岗位不同模型」（seat.modelProfileId）；
+   * 不设则回退到全局激活 profile（getActiveProfileId）。桌面/微信不设 → 行为不变。
+   */
+  profileId?: string
+
+  /**
+   * 记忆读写专用工作区根。仅群聊岗位开启 worktree 隔离时与 sessionCwd 不同：
+   * sessionCwd 指向 worktree 副本（隔离文件写），而记忆应绑定岗位的基础 seats/ 路径
+   * （长期人格不随临时副本漂移，见策划书 §9.2 决策）。不设则记忆回退用 sessionCwd。
+   */
+  memoryWorkspaceRoot?: string | null
+
+  /**
    * 微信 agent 人格上下文。仅微信通道的轮次会带上，
    * 用于注入「人格定义」系统提示或触发首次激活引导。
    */
@@ -605,6 +619,13 @@ export interface AiSendPayload {
     addressing?: string
     style?: string
   }
+
+  /**
+   * 群聊岗位上下文。仅群聊编排器调度岗位发言时带上，驱动「岗位身份段 + 群上下文段」
+   * （见策划书 §5.4）。纯增量、向后兼容；桌面/微信会话不带 → 行为零变化。
+   * 与 persona 互斥：岗位会话用 roomContext，微信会话用 persona。
+   */
+  roomContext?: RoomContext
 }
 
 

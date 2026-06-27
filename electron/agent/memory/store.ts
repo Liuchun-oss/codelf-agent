@@ -5,6 +5,7 @@ import { countTokens, truncateToTokenBudget } from '../context/tokenCounter'
 import type { ProviderKind } from '@shared/agentTypes'
 import {
   projectMemoryPath,
+  projectMemoryDir,
   globalMemoryPath,
   notesPath,
   sessionMemoryDir,
@@ -198,6 +199,24 @@ export async function readNotes(sessionId: string): Promise<string | undefined> 
   return readTextSafe(notesPath(sessionId))
 }
 
+/** 读取全局 MEMORY.md 内容（不存在返回 undefined，不创建）。 */
+export async function readGlobalMemoryContent(): Promise<string | undefined> {
+  return readTextSafe(globalMemoryPath())
+}
+
+/** 覆盖写入全局 MEMORY.md（§13.5 通用教训升全局用）。best-effort。 */
+export async function writeGlobalMemoryContent(content: string): Promise<{ ok: boolean; reason?: string }> {
+  const path = globalMemoryPath()
+  if (!path) return { ok: false, reason: 'no-userdata' }
+  try {
+    await writeTextFile(path, content)
+    noteAgentWrite(path)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : 'write-failed' }
+  }
+}
+
 /**
  * 向会话草稿纸追加一条记录（主代理唯一写出口）。
  * 文件不存在时先写入模板再追加。返回追加后的字节友好结果。
@@ -346,4 +365,28 @@ export async function searchMemory(params: {
   }
   hits.sort((a, b) => b.score - a.score)
   return hits.slice(0, limit)
+}
+
+/**
+ * 清理某会话 + 其工作区项目记忆的全部落盘数据。用于群聊岗位随群解散时回收：
+ * 删除 memory/sessions/<sid>/（notes + checkpoint）与 memory/projects/<pid>/（MEMORY.md）。
+ * best-effort：单个删除失败不影响其余，返回是否全部成功。
+ */
+export async function purgeSessionAndProjectMemory(params: {
+  sessionId?: string | null
+  workspaceRoot?: string | null
+}): Promise<boolean> {
+  const targets = [
+    params.sessionId ? sessionMemoryDir(params.sessionId) : null,
+    params.workspaceRoot ? projectMemoryDir(params.workspaceRoot) : null
+  ].filter((p): p is string => !!p)
+  let allOk = true
+  for (const dir of targets) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true })
+    } catch {
+      allOk = false
+    }
+  }
+  return allOk
 }

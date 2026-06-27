@@ -1,5 +1,7 @@
 
 
+import type { RoomContext } from '@shared/roomTypes'
+
 export interface PromptContext {
   appName: string
   os: string
@@ -10,6 +12,8 @@ export interface PromptContext {
   
   responseLanguage: string
   workspacePath?: string
+  /** 记忆读写专用工作区根（worktree 隔离时 = 基础路径，与 workspacePath 解耦）。不设则用 workspacePath。 */
+  memoryWorkspacePath?: string
   activeFilePath?: string
   model?: string
   
@@ -34,6 +38,13 @@ export interface PromptContext {
     addressing?: string
     style?: string
   }
+
+  /**
+   * 群聊岗位上下文。仅群聊岗位会话的轮次会带上，驱动「岗位身份段 + 群上下文段」
+   * （getRoomSeatSection）。桌面/微信会话不带 → 群聊提示词只作用于岗位，不污染其它入口。
+   * 与 persona 互斥：岗位会话用 roomContext，微信会话用 persona。
+   */
+  roomContext?: RoomContext
 }
 
 

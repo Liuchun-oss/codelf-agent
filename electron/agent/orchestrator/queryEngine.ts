@@ -564,7 +564,18 @@ export class QueryEngine {
         ? payload.sessionCwd
         : (payload.editorContext?.workspaceRoot ?? null))
 
-    const profileId = getActiveProfileId()
+    // 记忆读写根：worktree 隔离时与文件 cwd 解耦（记忆绑定基础路径，不随临时副本漂移）。
+    // 不显式提供则回退到文件 cwd，桌面/微信会话行为零变化。
+    const effectiveMemoryRoot =
+      payload.memoryWorkspaceRoot !== undefined
+        ? payload.memoryWorkspaceRoot
+        : effectiveWorkspaceRoot
+
+    // profile 优先级：payload 显式指定（群聊岗位按 seat.modelProfileId）> 全局激活 profile。
+    // payload.profileId 指向的 profile 不存在时，回退到激活 profile（不硬失败）。
+    const profileId =
+      (payload.profileId && getProfileRaw(payload.profileId) ? payload.profileId : null) ??
+      getActiveProfileId()
     const profile = profileId ? getProfileRaw(profileId) : null
     if (!profile) {
       yield {
@@ -605,11 +616,13 @@ export class QueryEngine {
       shell: currentShellName(),
       responseLanguage: DEFAULT_RESPONSE_LANGUAGE,
       workspacePath: effectiveWorkspaceRoot ?? undefined,
+      ...(effectiveMemoryRoot != null ? { memoryWorkspacePath: effectiveMemoryRoot } : {}),
       activeFilePath: payload.editorContext?.activeFilePath,
       model: profile.model,
       enabledTools: this.registry.availableTools().map((t) => t.name),
       permissionMode: payload.permissionMode ?? 'default',
-      ...(payload.persona ? { persona: payload.persona } : {})
+      ...(payload.persona ? { persona: payload.persona } : {}),
+      ...(payload.roomContext ? { roomContext: payload.roomContext } : {})
     }
 
     this.active = new AbortController()
@@ -661,6 +674,7 @@ export class QueryEngine {
     }
     const toolCtx: ToolContext = {
       workspaceRoot: effectiveWorkspaceRoot,
+      memoryWorkspaceRoot: effectiveMemoryRoot,
       sessionId: payload.sessionId || 'default',
       signal,
       permissionMode: payload.permissionMode ?? 'default',

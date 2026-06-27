@@ -11,6 +11,7 @@ import SettingsPanel from '@/components/Settings/SettingsPanel'
 import Toasts from '@/components/common/Toasts'
 import TitleBar from '@/components/TitleBar/TitleBar'
 import HomeScreen from '@/components/Home/HomeScreen'
+import RoomPanel from '@/components/RoomPanel/RoomPanel'
 import { useUiStore } from '@/stores/uiStore'
 import { useThemeStore, applyTheme, onThemeChange } from '@/stores/themeStore'
 import { refreshEditorTheme } from '@/highlight'
@@ -226,6 +227,7 @@ export default function App(): JSX.Element {
     <div className={`app${window.lc.usesCustomTitleBar ? ' app--frameless' : ''}`}>
       {window.lc.usesCustomTitleBar && <TitleBar />}
       {appView === 'home' && <HomeScreen />}
+      {appView === 'room' && <RoomPanel />}
       {ideMounted && (
         <div className={`ide-host${appView === 'workspace' ? '' : ' ide-host--hidden'}`}>
           <IdeWorkbench />

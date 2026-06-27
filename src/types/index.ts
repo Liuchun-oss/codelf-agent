@@ -491,6 +491,57 @@ export interface LcApi {
     onTaskOutput: (cb: (payload: { id: string; output: string }) => void) => () => void
   }
 
+  room: {
+    list: () => Promise<import('@shared/roomTypes').Room[]>
+    get: (roomId: string) => Promise<import('@shared/roomTypes').Room | null>
+    transcript: (roomId: string) => Promise<import('@shared/roomTypes').Utterance[]>
+    create: (draft: import('@shared/roomTypes').RoomDraft) => Promise<import('@shared/roomTypes').Room>
+    update: (
+      roomId: string,
+      patch: Partial<Pick<import('@shared/roomTypes').Room, 'title' | 'maxRounds' | 'speakingPolicy' | 'weixinBinding' | 'interrupted'>>
+    ) => Promise<import('@shared/roomTypes').Room | null>
+    send: (roomId: string, text: string, mention?: string) => Promise<{ ok: boolean; error?: string }>
+    stop: (roomId: string) => Promise<boolean>
+    delete: (roomId: string) => Promise<boolean>
+    status: (roomId: string) => Promise<Array<{ seatId: string; state: string; tokensUsed: number; paused: boolean }>>
+    pauseSeat: (roomId: string, seatId: string) => Promise<boolean>
+    resumeSeat: (roomId: string, seatId: string) => Promise<boolean>
+    kickSeat: (roomId: string, seatId: string) => Promise<boolean>
+    privateChat: (roomId: string, seatId: string, text: string) => Promise<{ ok: boolean; error?: string }>
+    addSeat: (roomId: string, draft: import('@shared/roomTypes').SeatDraft) => Promise<import('@shared/roomTypes').Room | null>
+    editSeat: (roomId: string, seatId: string, patch: Partial<Omit<import('@shared/roomTypes').Seat, 'id'>>) => Promise<import('@shared/roomTypes').Room | null>
+    reviewCycle: (roomId: string, period?: string) => Promise<string>
+    kpiLatest: (roomId: string) => Promise<import('@shared/roomTypes').SeatKpiRecord[]>
+    kpiHistory: (roomId: string, seatId: string) => Promise<import('@shared/roomTypes').SeatKpiRecord[]>
+    kpiCalibrate: (roomId: string, seatId: string, patch: { kpi?: number; comment?: string }) => Promise<boolean>
+    registerWeekly: (roomId: string) => Promise<{ ok: boolean; taskName?: string }>
+    registerRoomTask: (
+      roomId: string,
+      topic: string,
+      schedule: import('@shared/scheduleTypes').ScheduleKind,
+      delivery?: 'ui' | 'weixin'
+    ) => Promise<{ ok: boolean; taskName?: string }>
+    seatMemory: (roomId: string, seatId: string) => Promise<string>
+    seatMemorySave: (roomId: string, seatId: string, content: string) => Promise<boolean>
+    resolveQuestion: (
+      roomId: string,
+      seatId: string,
+      requestId: string,
+      answer: string,
+      cancelled?: boolean
+    ) => Promise<boolean>
+    resolvePermission: (
+      roomId: string,
+      seatId: string,
+      requestId: string,
+      allow: boolean
+    ) => Promise<boolean>
+    onEvent: (cb: (event: import('@shared/roomTypes').RoomEvent) => void) => () => void
+    onSystem: (cb: (payload: { roomId: string; text: string }) => void) => () => void
+    onRunning: (cb: (payload: { roomId: string; running: boolean }) => void) => () => void
+    onUtterance: (cb: (payload: { roomId: string; utterance: import('@shared/roomTypes').Utterance }) => void) => () => void
+  }
+
   
   mcp: {
     getSettings: () => Promise<import('@shared/mcpTypes').McpSettings>

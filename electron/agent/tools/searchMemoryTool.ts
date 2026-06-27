@@ -32,7 +32,7 @@ export const searchMemoryTool: Tool<SearchMemoryInput> = {
     }
     const hits = await searchMemory({
       query: input.query,
-      workspaceRoot: ctx.workspaceRoot,
+      workspaceRoot: ctx.memoryWorkspaceRoot ?? ctx.workspaceRoot,
       sessionId: ctx.sessionId,
       scope: input.scope,
       limit: input.limit

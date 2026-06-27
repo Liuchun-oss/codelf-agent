@@ -7,7 +7,8 @@ import type {
   ScheduledTask,
   ScheduledTaskDraft,
   ScheduledTaskPatch,
-  ScheduleKind
+  ScheduleKind,
+  DeliveryMode
 } from '@shared/scheduleTypes'
 import { MIN_EVERY_MS, HARD_TIMEOUT_MS, MAX_CONSECUTIVE_ERRORS, WEBHOOK_TIMEOUT_MS } from '@shared/scheduleTypes'
 import { sendToRenderer } from './localWriteRegistry'
@@ -180,6 +181,23 @@ async function executeTask(id: string): Promise<void> {
     update(id, { lastStatus: 'skipped' })
     return
   }
+
+  // 团队周报特例（§12.6）：prompt 带 @@room-review:<roomId> 标记的任务，
+  // 不跑 agent，直接调编排器结算回合，产出战报走正常投递通道。懒加载断循环依赖。
+  const reviewMatch = task.prompt.match(/^@@room-review:(\S+)/)
+  if (reviewMatch) {
+    await executeRoomReview(id, reviewMatch[1])
+    return
+  }
+
+  // 定时群会议（§阶段4）：prompt 带 @@room-task:<roomId>\n<议题> 的任务，到点把议题投进群，
+  // 由主管分派团队开工（而非在空白会话单跑），产出走群内 + 微信遥控通道。
+  const roomTaskMatch = task.prompt.match(/^@@room-task:(\S+)\n?([\s\S]*)$/)
+  if (roomTaskMatch) {
+    await executeRoomTask(id, roomTaskMatch[1], roomTaskMatch[2].trim())
+    return
+  }
+
   update(id, { running: true, lastStatus: 'running' })
 
   const sessionId = `cron:${task.id}`
@@ -320,6 +338,93 @@ async function executeTask(id: string): Promise<void> {
 export function listScheduledTasks(): ScheduledTask[] {
   ensureLoaded()
   return [...tasks].sort((a, b) => b.createdAt - a.createdAt)
+}
+
+// 团队周报（§12.6）：跑编排器结算回合，产出战报走正常投递（weixin/ui）。
+async function executeRoomReview(id: string, roomId: string): Promise<void> {
+  update(id, { running: true, lastStatus: 'running' })
+  let report = ''
+  let err: unknown = null
+  try {
+    const { roomOrchestrator } = await import('./roomOrchestrator')
+    report = await roomOrchestrator.runReviewCycle(roomId)
+  } catch (e) {
+    err = e
+  }
+  const current = tasks.find((t) => t.id === id)
+  if (!current) { armTimer(); return }
+  if (err) {
+    const n = (current.consecutiveErrors ?? 0) + 1
+    const disable = n >= MAX_CONSECUTIVE_ERRORS
+    update(id, { running: false, lastStatus: 'error', lastRunAt: Date.now(), lastError: String(err), consecutiveErrors: n, ...(disable ? { enabled: false, nextRunAt: undefined } : {}) })
+  } else {
+    let deliveryStatus: 'delivered' | 'failed' | 'skipped' = 'skipped'
+    if (current.delivery === 'weixin') deliveryStatus = (await notifyWeixin(report)) ? 'delivered' : 'failed'
+    else if (current.delivery === 'ui') { sendToRenderer('schedule:taskOutput', { id, output: report }); deliveryStatus = 'delivered' }
+    update(id, { running: false, lastStatus: 'ok', lastRunAt: Date.now(), lastOutput: report.slice(0, 4000), lastDeliveryStatus: deliveryStatus, consecutiveErrors: 0, lastError: undefined })
+  }
+  const after = tasks.find((t) => t.id === id)
+  if (after && (after.schedule.kind === 'at' || after.deleteAfterRun)) deleteTask(id)
+  else armTimer()
+}
+
+// 为某群注册「团队周报」定时任务（每周一上午 9 点，cron）。已存在同名则跳过。
+export function registerWeeklyReport(roomId: string, roomTitle: string, delivery: DeliveryMode = 'ui'): ScheduledTask {
+  ensureLoaded()
+  const marker = `@@room-review:${roomId}`
+  const existing = tasks.find((t) => t.prompt.startsWith(marker))
+  if (existing) return existing
+  return createScheduledTask({
+    name: `${roomTitle} · 团队周报`,
+    description: '每周自动对全体岗位考核结算并出战报（§12.6）',
+    schedule: { kind: 'cron', expr: '0 9 * * 1' },
+    prompt: marker,
+    delivery,
+    allowWrite: false
+  })
+}
+
+// 定时群会议（§阶段4）：到点把议题投进群，由主管分派团队开工。
+async function executeRoomTask(id: string, roomId: string, topic: string): Promise<void> {
+  update(id, { running: true, lastStatus: 'running' })
+  let err: unknown = null
+  try {
+    const { roomOrchestrator } = await import('./roomOrchestrator')
+    await roomOrchestrator.postUserMessage(roomId, topic || '请团队按既定职责推进本次例会议题。')
+  } catch (e) {
+    err = e
+  }
+  const current = tasks.find((t) => t.id === id)
+  if (!current) { armTimer(); return }
+  if (err) {
+    const n = (current.consecutiveErrors ?? 0) + 1
+    const disable = n >= MAX_CONSECUTIVE_ERRORS
+    update(id, { running: false, lastStatus: 'error', lastRunAt: Date.now(), lastError: String(err), consecutiveErrors: n, ...(disable ? { enabled: false, nextRunAt: undefined } : {}) })
+  } else {
+    update(id, { running: false, lastStatus: 'ok', lastRunAt: Date.now(), lastOutput: `已向群「${roomId}」投放议题：${topic.slice(0, 200)}`, consecutiveErrors: 0, lastError: undefined })
+  }
+  const after = tasks.find((t) => t.id === id)
+  if (after && (after.schedule.kind === 'at' || after.deleteAfterRun)) deleteTask(id)
+  else armTimer()
+}
+
+// 为某群注册「定时群会议/任务」：到点把 topic 投进群让团队开工（§阶段4）。
+export function registerRoomTask(
+  roomId: string,
+  roomTitle: string,
+  topic: string,
+  schedule: ScheduleKind,
+  delivery: DeliveryMode = 'ui'
+): ScheduledTask {
+  ensureLoaded()
+  return createScheduledTask({
+    name: `${roomTitle} · 定时会议`,
+    description: '到点把议题投进群，由主管分派团队开工（阶段4 定时群会议）',
+    schedule,
+    prompt: `@@room-task:${roomId}\n${topic}`,
+    delivery,
+    allowWrite: false
+  })
 }
 
 function normalizeSchedule(schedule: ScheduleKind): ScheduleKind {

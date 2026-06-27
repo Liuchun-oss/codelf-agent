@@ -18,11 +18,13 @@ import { registerWindowIpc } from '../ipc/window'
 import { registerAppIpc } from '../ipc/app'
 import { registerChannelsIpc } from '../ipc/channels'
 import { registerScheduleIpc } from '../ipc/schedule'
+import { registerRoomIpc } from '../ipc/room'
 import { initChannels } from '../channels/index'
 import { initLogging } from '../logger'
 import { setLocalWriteTarget } from '../services/localWriteRegistry'
 import { resumeVideoTasksOnStartup } from '../services/videoTaskQueue'
 import { resumeSchedulesOnStartup } from '../services/scheduleQueue'
+import { resumeRoomsOnStartup } from '../services/roomStore'
 import { BROWSER_PREVIEW_SCHEME, readBrowserPreview } from '../services/browserPreviewImage'
 import { ARTIFACT_FILE_SCHEME, readArtifactFile } from '../services/artifactFileServer'
 import { cleanupRendererBoundResources } from '../services/appLifecycle'
@@ -78,7 +80,7 @@ function loadWindowState(): WindowState {
     const s = JSON.parse(raw) as WindowState
     if (typeof s.width === 'number' && typeof s.height === 'number') return s
   } catch {
-    
+    /* 读取窗口状态失败则用默认尺寸 */
   }
   return { width: 1400, height: 900 }
 }
@@ -90,7 +92,7 @@ function saveWindowState(win: BrowserWindow): void {
     const state: WindowState = { ...bounds, maximized }
     writeFileSync(windowStateFile(), JSON.stringify(state))
   } catch {
-    
+    /* 保存窗口状态失败不致命 */
   }
 }
 
@@ -153,6 +155,8 @@ function createWindow(): void {
     resumeVideoTasksOnStartup()
     // 恢复定时任务调度：清残留 running、补跑错过的任务、重算下次执行并启动循环。
     resumeSchedulesOnStartup()
+    // 加载群聊定义（懒加载引擎；半途崩溃的循环不自动续跑，§6.8）。
+    resumeRoomsOnStartup()
   })
 
   
@@ -254,6 +258,7 @@ app.whenReady().then(() => {
   registerAppIpc()
   registerChannelsIpc()
   registerScheduleIpc()
+  registerRoomIpc()
 
   buildAppMenu()
   createWindow()
@@ -277,6 +282,7 @@ app.on('before-quit', (e) => {
   e.preventDefault()
   isQuitting = true
   void cleanupRendererBoundResources().finally(() => {
+    void import('../services/roomStore').then((m) => m.flushCursorPersist()).catch(() => {})
     void import('../channels/manager').then((m) => m.getChannelManager().stopAll()).catch(() => {})
     void import('../services/semantic/embedService').then((m) => m.shutdownEmbedWorker()).catch(() => {})
     void import('../services/knowledge/embedService').then((m) => m.shutdownKnowledgeEmbedWorker()).catch(() => {})

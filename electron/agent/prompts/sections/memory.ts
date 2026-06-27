@@ -2,8 +2,13 @@ import type { PromptContext } from '../types'
 
 /**
  * 记忆系统使用指南。放在静态段，长期引导 Agent 主动记笔记。
+ *
+ * 群聊岗位例外：岗位会话的 sessionId 形如 `room:<id>:seat:<id>`（带冒号），不被 notesPath 的
+ * isSafeId 接受 → append_note 对岗位必然返回 invalid-session。岗位的经验/错题改由 KPI 复盘
+ * 写进其工作区 MEMORY.md 并在每回合开场注入。因此群聊回合输出「岗位记忆」版，不教 append_note。
  */
-export function getMemorySection(_ctx: PromptContext): string {
+export function getMemorySection(ctx: PromptContext): string {
+  if (ctx.roomContext) return roomSeatMemory()
   return `# Memory system
 
 You have access to a long-term memory system via the \`append_note\` tool.
@@ -40,4 +45,20 @@ Start with \`## [turn N] title\`, then write concise takeaways focusing on insig
 \`\`\`
 
 This tool is your only write path to long-term memory. Use it generously — checkpoint compression will structure it later.`
+}
+
+// 群聊岗位的记忆说明：append_note 已对岗位修复可用（与桌面 agent 同机制）；叠加 KPI 复盘沉淀到 MEMORY.md。
+function roomSeatMemory(): string {
+  return [
+    '# 你的记忆系统',
+    '',
+    '你拥有跨回合的长期记忆，由两条独立途径维护：',
+    '',
+    '1. **你主动记笔记**（`append_note`）：随手记录发现、踩过的坑（错误+解法）、本群约定、用户偏好、待办。系统会在上下文压缩时把它结构化成会话 checkpoint，并在后续自动续回，让你不丢前文。主动使用，无需用户指示。',
+    '2. **系统沉淀经验**：阶段性 KPI 复盘后，你的长板/短板/「错题」会被写进你工作区的 MEMORY.md，并在每次轮到你时注入到开头的「长期记忆」里。',
+    '',
+    '看到「长期记忆」里的经验/错题就照着做：避免重犯同类错误，延续被认可的做法。',
+    '',
+    '记笔记格式：用 `## [turn N] 标题` 起头，正文简洁聚焦要点。不要存大段代码或可从文件检索的内容。'
+  ].join('\n')
 }

@@ -300,6 +300,20 @@ export default function HomeScreen(): JSX.Element {
               <button
                 type="button"
                 className="home-sidebar-action"
+                title="群聊"
+                onClick={() => useUiStore.getState().setAppView('room')}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M17 8a5 5 0 1 0-9.9 1.1" />
+                  <path d="M21 15a4 4 0 0 0-3-3.9" />
+                  <path d="M3 20a6 6 0 0 1 12 0" />
+                  <circle cx="9" cy="9" r="4" />
+                </svg>
+                群聊
+              </button>
+              <button
+                type="button"
+                className="home-sidebar-action"
                 title="设置"
                 onClick={() => useUiStore.getState().setShowSettings(true)}
               >

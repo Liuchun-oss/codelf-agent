@@ -380,6 +380,69 @@ const api = {
     }
   },
 
+  room: {
+    list: () => ipcRenderer.invoke('room:list') as Promise<import('@shared/roomTypes').Room[]>,
+    get: (roomId: string) => ipcRenderer.invoke('room:get', roomId) as Promise<import('@shared/roomTypes').Room | null>,
+    transcript: (roomId: string) =>
+      ipcRenderer.invoke('room:transcript', roomId) as Promise<import('@shared/roomTypes').Utterance[]>,
+    create: (draft: import('@shared/roomTypes').RoomDraft) =>
+      ipcRenderer.invoke('room:create', draft) as Promise<import('@shared/roomTypes').Room>,
+    update: (roomId: string, patch: Partial<Pick<import('@shared/roomTypes').Room, 'title' | 'maxRounds' | 'speakingPolicy' | 'weixinBinding' | 'interrupted'>>) =>
+      ipcRenderer.invoke('room:update', roomId, patch) as Promise<import('@shared/roomTypes').Room | null>,
+    send: (roomId: string, text: string, mention?: string) =>
+      ipcRenderer.invoke('room:send', roomId, text, mention) as Promise<{ ok: boolean; error?: string }>,
+    stop: (roomId: string) => ipcRenderer.invoke('room:stop', roomId) as Promise<boolean>,
+    delete: (roomId: string) => ipcRenderer.invoke('room:delete', roomId) as Promise<boolean>,
+    status: (roomId: string) =>
+      ipcRenderer.invoke('room:status', roomId) as Promise<Array<{ seatId: string; state: string; tokensUsed: number; paused: boolean }>>,
+    pauseSeat: (roomId: string, seatId: string) => ipcRenderer.invoke('room:pauseSeat', roomId, seatId) as Promise<boolean>,
+    resumeSeat: (roomId: string, seatId: string) => ipcRenderer.invoke('room:resumeSeat', roomId, seatId) as Promise<boolean>,
+    kickSeat: (roomId: string, seatId: string) => ipcRenderer.invoke('room:kickSeat', roomId, seatId) as Promise<boolean>,
+    privateChat: (roomId: string, seatId: string, text: string) =>
+      ipcRenderer.invoke('room:privateChat', roomId, seatId, text) as Promise<{ ok: boolean; error?: string }>,
+    addSeat: (roomId: string, draft: import('@shared/roomTypes').SeatDraft) =>
+      ipcRenderer.invoke('room:addSeat', roomId, draft) as Promise<import('@shared/roomTypes').Room | null>,
+    editSeat: (roomId: string, seatId: string, patch: Partial<Omit<import('@shared/roomTypes').Seat, 'id'>>) =>
+      ipcRenderer.invoke('room:editSeat', roomId, seatId, patch) as Promise<import('@shared/roomTypes').Room | null>,
+    reviewCycle: (roomId: string, period?: string) => ipcRenderer.invoke('room:reviewCycle', roomId, period) as Promise<string>,
+    kpiLatest: (roomId: string) => ipcRenderer.invoke('room:kpiLatest', roomId) as Promise<unknown[]>,
+    kpiHistory: (roomId: string, seatId: string) => ipcRenderer.invoke('room:kpiHistory', roomId, seatId) as Promise<unknown[]>,
+    kpiCalibrate: (roomId: string, seatId: string, patch: { kpi?: number; comment?: string }) =>
+      ipcRenderer.invoke('room:kpiCalibrate', roomId, seatId, patch) as Promise<boolean>,
+    registerWeekly: (roomId: string) =>
+      ipcRenderer.invoke('room:registerWeekly', roomId) as Promise<{ ok: boolean; taskName?: string }>,
+    registerRoomTask: (roomId: string, topic: string, schedule: import('@shared/scheduleTypes').ScheduleKind, delivery?: 'ui' | 'weixin') =>
+      ipcRenderer.invoke('room:registerRoomTask', roomId, topic, schedule, delivery) as Promise<{ ok: boolean; taskName?: string }>,
+    seatMemory: (roomId: string, seatId: string) =>
+      ipcRenderer.invoke('room:seatMemory', roomId, seatId) as Promise<string>,
+    seatMemorySave: (roomId: string, seatId: string, content: string) =>
+      ipcRenderer.invoke('room:seatMemorySave', roomId, seatId, content) as Promise<boolean>,
+    resolveQuestion: (roomId: string, seatId: string, requestId: string, answer: string, cancelled?: boolean) =>
+      ipcRenderer.invoke('room:resolveQuestion', roomId, seatId, requestId, answer, cancelled) as Promise<boolean>,
+    resolvePermission: (roomId: string, seatId: string, requestId: string, allow: boolean) =>
+      ipcRenderer.invoke('room:resolvePermission', roomId, seatId, requestId, allow) as Promise<boolean>,
+    onEvent: (cb: (event: import('@shared/roomTypes').RoomEvent) => void) => {
+      const listener = (_e: IpcRendererEvent, event: import('@shared/roomTypes').RoomEvent) => cb(event)
+      ipcRenderer.on('room:event', listener)
+      return () => ipcRenderer.removeListener('room:event', listener)
+    },
+    onSystem: (cb: (payload: { roomId: string; text: string }) => void) => {
+      const listener = (_e: IpcRendererEvent, payload: { roomId: string; text: string }) => cb(payload)
+      ipcRenderer.on('room:system', listener)
+      return () => ipcRenderer.removeListener('room:system', listener)
+    },
+    onRunning: (cb: (payload: { roomId: string; running: boolean }) => void) => {
+      const listener = (_e: IpcRendererEvent, payload: { roomId: string; running: boolean }) => cb(payload)
+      ipcRenderer.on('room:running', listener)
+      return () => ipcRenderer.removeListener('room:running', listener)
+    },
+    onUtterance: (cb: (payload: { roomId: string; utterance: import('@shared/roomTypes').Utterance }) => void) => {
+      const listener = (_e: IpcRendererEvent, payload: { roomId: string; utterance: import('@shared/roomTypes').Utterance }) => cb(payload)
+      ipcRenderer.on('room:utterance', listener)
+      return () => ipcRenderer.removeListener('room:utterance', listener)
+    }
+  },
+
   
   mcp: {
     getSettings: () =>

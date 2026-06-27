@@ -263,6 +263,17 @@ export class ChannelManager {
       return
     }
 
+    // 优先级 1.5：若有群聊正等机主（微信）回应交互项，这条消息作为该群的回答路由进编排器
+    //（§8.4 host-relay：微信里只跟主管对话，群岗位的提问/审批由主管转你、你回的话回填给岗位）。
+    {
+      const { roomOrchestrator } = await import('../services/roomOrchestrator')
+      const awaitingRoom = roomOrchestrator.roomAwaitingWeixin()
+      if (awaitingRoom && !session.busy) {
+        void roomOrchestrator.postUserMessageFromWeixin(awaitingRoom, text)
+        return
+      }
+    }
+
     // 优先级 2：存在待回复的权限/提问/文件改动 → 解析为应答（阶段2）。
     // 注意：确认应答阶段只用文字，不处理媒体（避免误下载）。
     if (session.pendingPermission) {
@@ -429,12 +440,36 @@ export class ChannelManager {
       case '/persona':
         await this.handlePersona(adapter, session, arg)
         break
+      case '/room':
+        await this.handleRoom(adapter, session, arg)
+        break
       case '/diag':
         await this.handleDiag(adapter, session)
         break
       default:
-        this.reply(adapter, session, `未知命令：${cmd}。可用：/stop /new /cwd /remember /persona /diag`)
+        this.reply(adapter, session, `未知命令：${cmd}。可用：/stop /new /cwd /remember /persona /room /diag`)
     }
+  }
+
+  // /room <任务>：把任务转交给绑定了微信的群聊编排器（§8.4 微信遥控）。
+  // 不带参数时汇报当前群状态。回应经编排器推回微信，不在此 await。
+  private async handleRoom(adapter: ChannelAdapter, session: SessionState, arg: string): Promise<void> {
+    const { roomOrchestrator } = await import('../services/roomOrchestrator')
+    const roomId = roomOrchestrator.findWeixinBoundRoom()
+    if (!roomId) {
+      this.reply(adapter, session, '还没有群聊绑定到微信。请先在桌面端建群并在群设置里绑定本微信会话。')
+      return
+    }
+    if (!arg.trim()) {
+      const statuses = roomOrchestrator.getSeatStatuses(roomId)
+      const summary = statuses.length
+        ? statuses.map((s) => `${s.seatId}:${s.state}`).join('，')
+        : '群已就绪，暂无运行中的岗位。'
+      this.reply(adapter, session, `当前群状态：${summary}`)
+      return
+    }
+    this.reply(adapter, session, '已把任务转交给团队，开工后我会把关键节点同步给你。')
+    void roomOrchestrator.postUserMessageFromWeixin(roomId, arg.trim())
   }
 
   // #2：/cwd 由通道层管理 currentWorkspace，不写引擎 override。
@@ -468,7 +503,7 @@ export class ChannelManager {
     const st = adapter.getStatus()
     const lines: string[] = ['【微信通道自检】']
     lines.push(`连接状态：${st.status}${st.message ? `（${st.message}）` : ''}`)
-    lines.push(`账号：${st.accountId ?? '未知'}　活跃会话数：${st.sessionCount ?? 0}`)
+    lines.push(`账号：${st.accountId ?? '未知'} 活跃会话数：${st.sessionCount ?? 0}`)
     lines.push(
       `本会话：busy=${session.busy} 工作区=${session.currentWorkspace ?? '无（纯对话）'} 待发图=${session.pendingImages.length}`
     )

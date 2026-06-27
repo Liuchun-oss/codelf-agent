@@ -21,7 +21,7 @@ export async function collectMemoryContext(ctx: PromptContext): Promise<MemoryCo
   const settings = getMemorySettings()
   if (!settings.enabled || !settings.injectOnNewSession) return {}
 
-  const snap = await readMemorySnapshot(ctx.workspacePath)
+  const snap = await readMemorySnapshot(ctx.memoryWorkspacePath ?? ctx.workspacePath)
   const out: MemoryContextSnapshot = {}
 
   const kind = providerKindFromCtx(ctx)

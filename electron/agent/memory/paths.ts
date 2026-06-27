@@ -35,6 +35,15 @@ function isSafeId(id: string): boolean {
   return /^[A-Za-z0-9_-]{1,128}$/.test(id)
 }
 
+/**
+ * 会话 id 落盘归一化：把所有非 [A-Za-z0-9_-] 字符（含冒号）替换为 `_`，与 transcript
+ * 持久化的 ChannelManager.persistId 同规则。否则像 `room:<id>:seat:<id>`、`wx:dm:<uid>`
+ * 这类带冒号的 sessionId 会被 isSafeId 判非法，导致 notes/checkpoint 静默失败。
+ */
+function sanitizeSessionId(sessionId: string): string {
+  return sessionId.replace(/[^A-Za-z0-9_-]/g, '_')
+}
+
 /** 项目记忆文件路径。workspaceRoot 为空或环境不可用时返回 null。 */
 export function projectMemoryPath(workspaceRoot: string | null | undefined): string | null {
   const root = memoryRoot()
@@ -44,17 +53,28 @@ export function projectMemoryPath(workspaceRoot: string | null | undefined): str
   return join(root, 'projects', pid, 'MEMORY.md')
 }
 
+/** 项目记忆目录路径（projects/<pid>/）。用于整目录清理。 */
+export function projectMemoryDir(workspaceRoot: string | null | undefined): string | null {
+  const root = memoryRoot()
+  if (!root || !workspaceRoot) return null
+  const pid = resolveProjectId(workspaceRoot)
+  if (!isSafeId(pid)) return null
+  return join(root, 'projects', pid)
+}
+
 /** 全局记忆文件路径。 */
 export function globalMemoryPath(): string | null {
   const root = memoryRoot()
   return root ? join(root, 'global', 'MEMORY.md') : null
 }
 
-/** 会话目录路径。sid 非法时返回 null。 */
+/** 会话目录路径。归一化 sid（冒号等→_）后再校验，sid 为空时返回 null。 */
 export function sessionMemoryDir(sessionId: string): string | null {
   const root = memoryRoot()
-  if (!root || !isSafeId(sessionId)) return null
-  return join(root, 'sessions', sessionId)
+  if (!root || !sessionId) return null
+  const safe = sanitizeSessionId(sessionId)
+  if (!isSafeId(safe)) return null
+  return join(root, 'sessions', safe)
 }
 
 /** 会话草稿纸 notes.md 路径。 */

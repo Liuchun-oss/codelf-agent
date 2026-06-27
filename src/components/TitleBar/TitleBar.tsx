@@ -170,10 +170,10 @@ export default function TitleBar(): JSX.Element {
           <button
             type="button"
             role="tab"
-            aria-selected={appView === 'home'}
-            className={`titlebar-view-btn${appView === 'home' ? ' active' : ''}`}
+            aria-selected={appView !== 'workspace'}
+            className={`titlebar-view-btn${appView !== 'workspace' ? ' active' : ''}`}
             title="对话视图"
-            onClick={() => useUiStore.getState().setAppView('home')}
+            onClick={() => useUiStore.getState().setAppView(useUiStore.getState().lastChatView)}
           >
             对话
           </button>

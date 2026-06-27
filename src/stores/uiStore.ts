@@ -66,7 +66,7 @@ function saveSizes(s: LayoutSizes): void {
 
 export type SidebarView = 'explorer' | 'search' | 'scm' | 'knowledge'
 
-export type AppView = 'home' | 'workspace'
+export type AppView = 'home' | 'workspace' | 'room'
 
 const PREFS_KEY = appStorageKey('ui-prefs')
 
@@ -90,6 +90,8 @@ interface UiState {
 
   appView: AppView
   setAppView: (view: AppView) => void
+  /** 进 IDE 前所处的“对话类”视图（home / room），点顶部「对话」标签时恢复它 */
+  lastChatView: Extract<AppView, 'home' | 'room'>
   /** 首页是否处于全宽聊天视图（提升到 store：去 IDE 再回首页不丢聊天现场） */
   homeChatOpen: boolean
   setHomeChatOpen: (v: boolean) => void
@@ -160,7 +162,9 @@ export const useUiStore = create<UiState>((set, get) => {
 
   return {
     appView: 'home',
-    setAppView: (view) => set({ appView: view }),
+    lastChatView: 'home',
+    setAppView: (view) =>
+      set((s) => (view === 'home' || view === 'room' ? { appView: view, lastChatView: view } : { appView: view })),
     homeChatOpen: false,
     setHomeChatOpen: (v) => set({ homeChatOpen: v }),
     homeSidebarOpen: true,
