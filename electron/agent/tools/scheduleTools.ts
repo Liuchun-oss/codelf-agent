@@ -54,7 +54,13 @@ const createSchema = z.object({
   allowWrite: z
     .boolean()
     .optional()
-    .describe('false (default) = read-only. true = auto-approve file/command actions.')
+    .describe('false (default) = read-only. true = auto-approve file/command actions.'),
+  carryLastOutput: z
+    .boolean()
+    .optional()
+    .describe(
+      'false (default). true = on each run, include the previous run output as context (lightweight memory for incremental tasks like "only summarize new changes"). Does not keep full history.'
+    )
 })
 
 type CreateInput = z.infer<typeof createSchema>
@@ -102,7 +108,8 @@ export const createScheduledTaskTool: Tool<CreateInput> = {
       workspaceRoot: input.workspaceRoot ?? null,
       delivery: (input.delivery as DeliveryMode) ?? 'weixin',
       webhookUrl: input.delivery === 'webhook' ? input.webhookUrl : undefined,
-      allowWrite: input.allowWrite ?? false
+      allowWrite: input.allowWrite ?? false,
+      carryLastOutput: input.carryLastOutput ?? false
     }
     const task = createScheduledTask(draft)
     // 非法 cron 表达式 / 已过去的 at 时间会产出 enabled 但 nextRunAt 为空的死任务：

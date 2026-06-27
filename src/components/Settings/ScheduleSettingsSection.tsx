@@ -25,6 +25,7 @@ interface FormState {
   delivery: DeliveryMode
   webhookUrl: string
   allowWrite: boolean
+  carryLastOutput: boolean
 }
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
@@ -54,7 +55,8 @@ function emptyForm(): FormState {
     workspaceRoot: currentWorkspaceRoot(),
     delivery: 'weixin',
     webhookUrl: '',
-    allowWrite: false
+    allowWrite: false,
+    carryLastOutput: false
   }
 }
 
@@ -94,6 +96,7 @@ function taskToForm(t: ScheduledTask): FormState {
   base.delivery = t.delivery
   base.webhookUrl = t.webhookUrl ?? ''
   base.allowWrite = t.allowWrite
+  base.carryLastOutput = t.carryLastOutput ?? false
   if (t.schedule.kind === 'at') {
     base.scheduleType = 'at'
     base.atLocal = msToLocalInput(t.schedule.at)
@@ -206,7 +209,8 @@ export default function ScheduleSettingsSection(): JSX.Element {
       workspaceRoot: form.workspaceRoot,
       delivery: form.delivery,
       webhookUrl: form.delivery === 'webhook' ? form.webhookUrl.trim() : undefined,
-      allowWrite: form.allowWrite
+      allowWrite: form.allowWrite,
+      carryLastOutput: form.carryLastOutput
     }
     setSaving(true)
     try {
@@ -482,6 +486,16 @@ export default function ScheduleSettingsSection(): JSX.Element {
             <SettingsSwitch
               checked={form.allowWrite}
               onChange={(v) => patch({ allowWrite: v })}
+            />
+          }
+        />
+        <SettingsRow
+          title="记住上次结果"
+          description="开启后，下次执行会把上次的输出作为上下文带上（适合增量汇总类任务，如「只看新增的改动」）。不保留完整对话历史，不会膨胀。提醒类任务无需开启。"
+          control={
+            <SettingsSwitch
+              checked={form.carryLastOutput}
+              onChange={(v) => patch({ carryLastOutput: v })}
             />
           }
         />

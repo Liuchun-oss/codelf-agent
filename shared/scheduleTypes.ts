@@ -32,6 +32,9 @@ export interface ScheduledTask {
   // allowWrite=false → permissionMode:'default' + 自动拒绝所有写/命令交互（只读）。
   // allowWrite=true  → permissionMode:'acceptEdits' 自动放行（危险操作仍被引擎硬拦）。
   allowWrite: boolean
+  // 开启后，下次触发会把「上次执行的输出」作为上下文塞进 prompt，实现轻量记忆
+  // （不保留完整会话历史，故不会上下文膨胀）。适合增量类任务。默认关。
+  carryLastOutput?: boolean
   createdAt: number
   updatedAt: number
 
@@ -57,6 +60,7 @@ export interface ScheduledTaskDraft {
   delivery?: DeliveryMode
   webhookUrl?: string
   allowWrite?: boolean
+  carryLastOutput?: boolean
   deleteAfterRun?: boolean
 }
 

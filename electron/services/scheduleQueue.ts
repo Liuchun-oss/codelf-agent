@@ -189,13 +189,18 @@ async function executeTask(id: string): Promise<void> {
   // 无人值守身份说明：定时任务在空白会话里跑，模型不知道自己是「到点触发的任务」，
   // 容易把 prompt 当普通新对话来反问、给选项、要求用户澄清。这里明确告知它：
   // 没人能回答，必须一轮内直接产出最终要交付的内容。
+  // 轻量记忆：开启 carryLastOutput 时，把上次输出作为上下文塞进去（不存完整历史，不膨胀）。
+  const memoryBlock =
+    task.carryLastOutput && task.lastOutput
+      ? `\n\n【上次执行的结果（供你参考，做增量对比用）】\n${task.lastOutput}\n`
+      : ''
   const wrappedPrompt = [
     '【系统：这是一个无人值守的定时任务，到点自动触发，当前没有真人能与你交互。】',
     '要求：',
     '1. 直接完成下面的任务并输出最终结果，这段结果会被原样推送给用户。',
     '2. 绝不要反问、不要给选项、不要请用户确认或澄清——没有人会回答你。',
     '3. 如果任务只是提醒类（如提醒喝水/提交周报），就直接输出那句提醒本身，不要解释你打算怎么做。',
-    '',
+    memoryBlock,
     `任务内容：${task.prompt}`
   ].join('\n')
 
@@ -341,6 +346,7 @@ export function createScheduledTask(draft: ScheduledTaskDraft): ScheduledTask {
     delivery: draft.delivery ?? 'weixin',
     webhookUrl: draft.webhookUrl,
     allowWrite: draft.allowWrite ?? false,
+    carryLastOutput: draft.carryLastOutput ?? false,
     createdAt: now,
     updatedAt: now,
     nextRunAt: enabled ? computeNextRun(schedule, now) : undefined,
