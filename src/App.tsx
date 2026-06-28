@@ -76,15 +76,44 @@ export default function App(): JSX.Element {
   
   useEffect(() => {
     const off = window.lc.onCloseRequest(() => {
-      void useEditorStore
-        .getState()
-        .confirmCloseAll()
-        .then((ok) => {
-          if (ok) {
-            useWorkspaceStore.getState().saveCurrentSession()
-            window.lc.confirmClose()
-          }
+      void (async (): Promise<void> => {
+        // 1) 先处理未保存文件（取消则中止关闭）。
+        const ok = await useEditorStore.getState().confirmCloseAll()
+        if (!ok) return
+        useWorkspaceStore.getState().saveCurrentSession()
+
+        // 2) 微信通道已连接时，关闭会导致收不到消息。提示「最小化到托盘 / 继续退出 / 取消」。
+        let weixinConnected = false
+        try {
+          const status = await window.lc.channels.getStatus('weixin')
+          weixinConnected = status?.status === 'connected'
+        } catch {
+          weixinConnected = false
+        }
+
+        if (!weixinConnected) {
+          window.lc.confirmClose()
+          return
+        }
+
+        const choice = await useDialogStore.getState().choose({
+          title: '微信已连接',
+          message:
+            '微信已连接，退出后 Codelf 将无法收到微信消息。是否最小化到托盘继续后台运行？',
+          buttons: [
+            { key: 'tray', label: '最小化到托盘', primary: true },
+            { key: 'quit', label: '继续退出', danger: true },
+            { key: 'cancel', label: '取消' }
+          ]
         })
+
+        if (choice === 'tray') {
+          window.lc.minimizeToTray()
+        } else if (choice === 'quit') {
+          window.lc.confirmClose()
+        }
+        // cancel / null：什么都不做，窗口保持打开。
+      })()
     })
     return off
   }, [])

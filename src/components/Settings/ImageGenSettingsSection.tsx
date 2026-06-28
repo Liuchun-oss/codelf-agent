@@ -76,7 +76,7 @@ export default function ImageGenSettingsSection(): JSX.Element {
         />
         <SettingsRow
           title="AI 水印"
-          description="火山方舟 Seedream 默认给图片加 AI 生成水印；关闭则请求 watermark=false（OpenAI 等不支持该字段的端点会忽略它）。"
+          description="仅对火山方舟（Ark）端点生效：开启则给图片加 AI 生成水印，关闭则请求 watermark=false。非火山端点会自动忽略此项，不会发送该字段。"
           control={
             <SettingsSwitch
               id="imagegen-watermark"

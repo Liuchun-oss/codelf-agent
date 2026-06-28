@@ -3,7 +3,7 @@ import { getSecret } from '../../ipc/secrets'
 import { guardOutboundUrl } from '../tools/ssrfGuard'
 import { getFetchOptions } from '../providers/network'
 import { saveGeneratedVideo, type SavedGeneratedVideo, type SaveVideoTarget } from '../../services/generatedVideoStore'
-import { userAgent, ARTIFACT_FILE_SCHEME } from '@shared/appConfig'
+import { userAgent, ARTIFACT_FILE_SCHEME, isVolcEndpoint } from '@shared/appConfig'
 import { readFile } from 'fs/promises'
 import { isAbsolute, resolve as resolvePath } from 'path'
 
@@ -188,8 +188,11 @@ export async function generateVideo(
     resolution: req.resolution || settings.resolution,
     duration: req.duration && req.duration > 0 ? req.duration : settings.duration,
     ratio: req.ratio || settings.ratio,
-    watermark: settings.watermark,
     generate_audio: req.generateAudio ?? settings.generateAudio
+  }
+  // watermark 为火山方舟私有参数；非火山端点严格校验会拒绝该字段，仅对火山端点透传。
+  if (isVolcEndpoint(settings.baseUrl)) {
+    body.watermark = settings.watermark
   }
 
   const headers = {
@@ -317,8 +320,11 @@ export async function submitVideoTask(req: VideoGenRequest): Promise<SubmitResul
     resolution: req.resolution || settings.resolution,
     duration: req.duration && req.duration > 0 ? req.duration : settings.duration,
     ratio: req.ratio || settings.ratio,
-    watermark: settings.watermark,
     generate_audio: req.generateAudio ?? settings.generateAudio
+  }
+  // watermark 为火山方舟私有参数；非火山端点严格校验会拒绝该字段，仅对火山端点透传。
+  if (isVolcEndpoint(settings.baseUrl)) {
+    body.watermark = settings.watermark
   }
   try {
     const resp = await fetch(createGuard.url.toString(), {

@@ -3,7 +3,7 @@ import { getSecret } from '../../ipc/secrets'
 import { guardOutboundUrl } from '../tools/ssrfGuard'
 import { getFetchOptions } from '../providers/network'
 import { saveGeneratedImage, type SavedGeneratedImage, type SaveImageTarget } from '../../services/generatedImageStore'
-import { userAgent, ARTIFACT_FILE_SCHEME } from '@shared/appConfig'
+import { userAgent, ARTIFACT_FILE_SCHEME, isVolcEndpoint } from '@shared/appConfig'
 import { readFile } from 'fs/promises'
 import { isAbsolute, resolve as resolvePath, basename } from 'path'
 
@@ -265,8 +265,11 @@ export async function generateImages(
     model: settings.model,
     prompt: req.prompt,
     size: normalizeRequestSize(req.size || settings.size),
-    response_format: 'b64_json',
-    watermark: settings.watermark
+    response_format: 'b64_json'
+  }
+  // watermark 是火山方舟私有参数；非火山端点开启严格校验时会拒绝该字段，故只对火山端点透传。
+  if (isVolcEndpoint(settings.baseUrl)) {
+    body.watermark = settings.watermark
   }
 
   // 参考图（图生图 / 多图参考 / 融合）：把本地引用解析为 data URL，http(s) 原样透传。
@@ -584,7 +587,10 @@ async function editImagesViaMultipart(
     form.append('prompt', req.prompt)
     form.append('n', String(req.n && req.n > 0 ? Math.min(req.n, 4) : 1))
     form.append('size', req.size || settings.size)
-    form.append('watermark', String(settings.watermark))
+    // watermark 为火山方舟私有参数，仅对火山端点透传，避免其它端点严格校验拒绝。
+    if (isVolcEndpoint(settings.baseUrl)) {
+      form.append('watermark', String(settings.watermark))
+    }
     for (const img of resolvedImages) {
       const blob = new Blob([new Uint8Array(img.buffer)], { type: 'image/png' })
       // 单图用标准字段名 image；多图才用 image[]（部分网关只认 image）。

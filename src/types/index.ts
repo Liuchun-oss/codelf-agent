@@ -646,6 +646,7 @@ export interface LcApi {
   
   onCloseRequest: (cb: () => void) => () => void
   confirmClose: () => void
+  minimizeToTray: () => void
 
   
   onMenuCommand: (cb: (id: string) => void) => () => void

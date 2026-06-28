@@ -6,7 +6,7 @@
   "author": "巫枫",
   "license": "MIT",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/dev.mjs",
     "start": "electron-vite preview",
     "sync-brand": "node scripts/sync-brand.mjs",
     "build": "npm run sync-brand && electron-vite build",

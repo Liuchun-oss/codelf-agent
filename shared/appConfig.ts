@@ -76,3 +76,18 @@ export function tmpName(suffix: string): string {
 export function userAgent(feature: string): string {
   return `${APP_NAME}/1.0 (+${feature})`
 }
+
+/**
+ * 判断给定端点是否为火山方舟（Volcengine Ark）。
+ * 仅火山端点支持 `watermark` 字段；其它端点（OpenAI 等）开启严格参数校验时，
+ * 多传 watermark 会被拒绝（HTTP 400 "property watermark should not exist"）。
+ */
+export function isVolcEndpoint(baseUrl: string | null | undefined): boolean {
+  if (!baseUrl) return false
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase()
+    return host.includes('volces.com') || host.includes('volcengine') || host.includes('ark.cn-')
+  } catch {
+    return /volces\.com|volcengine|ark\.cn-/i.test(baseUrl)
+  }
+}

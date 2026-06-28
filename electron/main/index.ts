@@ -16,6 +16,7 @@ import { registerEnvIpc } from '../ipc/env'
 import { buildAppMenu } from '../menu'
 import { registerWindowIpc } from '../ipc/window'
 import { registerAppIpc } from '../ipc/app'
+import { ensureTray, destroyTray } from './tray'
 import { registerChannelsIpc } from '../ipc/channels'
 import { registerScheduleIpc } from '../ipc/schedule'
 import { registerRoomIpc } from '../ipc/room'
@@ -242,6 +243,20 @@ app.whenReady().then(() => {
     mainWindow?.close()
   })
 
+  // 微信连接时用户选择「最小化到托盘」：隐藏窗口（不退出），保证后台继续收消息。
+  ipcMain.on('app:minimizeToTray', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    ensureTray({
+      getWindow: () => mainWindow,
+      iconPath: resolveAppIconPath(),
+      quit: () => {
+        allowClose = true
+        mainWindow?.close()
+      }
+    })
+    mainWindow.hide()
+  })
+
   registerFileIpc()
   registerTerminalIpc()
   registerInlineRunIpc()
@@ -281,6 +296,7 @@ app.on('before-quit', (e) => {
   if (isQuitting) return
   e.preventDefault()
   isQuitting = true
+  destroyTray()
   void cleanupRendererBoundResources().finally(() => {
     void import('../services/roomStore').then((m) => m.flushCursorPersist()).catch(() => {})
     void import('../channels/manager').then((m) => m.getChannelManager().stopAll()).catch(() => {})

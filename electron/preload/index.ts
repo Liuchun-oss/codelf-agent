@@ -560,6 +560,7 @@ const api = {
     return () => ipcRenderer.removeListener('app:queryClose', listener)
   },
   confirmClose: () => ipcRenderer.send('app:confirmClose'),
+  minimizeToTray: () => ipcRenderer.send('app:minimizeToTray'),
 
   
   onMenuCommand: (cb: (id: string) => void) => {
