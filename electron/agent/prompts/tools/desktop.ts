@@ -8,6 +8,7 @@ export const DESKTOP_MOUSE_NAME = 'DesktopMouse'
 export const DESKTOP_MOUSE_MOVE_NAME = 'DesktopMouseMove'
 export const DESKTOP_DRAG_NAME = 'DesktopDrag'
 export const DESKTOP_SCROLL_NAME = 'DesktopScroll'
+export const DESKTOP_KEY_NAME = 'DesktopKey'
 export const DESKTOP_SCREENSHOT_NAME = 'DesktopScreenshot'
 export const DESKTOP_WAIT_FOR_NAME = 'DesktopWaitFor'
 export const DESKTOP_HANDOFF_NAME = 'DesktopHandoff'
@@ -47,9 +48,10 @@ Use this to understand a window's structure and find elements to click or fill, 
 
 Usage:
 - "windowId" comes from DesktopGetWindow.
-- Returns a list of controls; each line has a stable ref like [ref=n12], its role, name, and whether it is actionable/editable. When available, @(x,y) gives the control's client-area center coordinate.
-- Pass the bare ref (e.g. "n12") to DesktopClick or DesktopType. Pass the @(x,y) coordinate to DesktopMouse/DesktopDrag for free-form clicking or dragging.
-- This is read-only.`
+- When available, the result starts with high-signal context lines you should read first: "Focused:" (the currently focused control), "Selected text:" (highlighted text), and "Document text:" (the focused editor/field's content). Check these before scanning the control list — they often answer "where is the cursor / what is selected / what's in the box".
+- Then a list of controls; each line has a stable ref like [ref=n12] or a semantic [ref=a:chat_input_field], its role, name, and flags. Leading indentation reflects the nesting depth in the UI tree (a child is indented under its container), so you can tell which controls belong to which panel/group. Flags: "actionable" (clickable), "editable" (accepts text), "disabled" (greyed out — clicking usually has no effect, satisfy its precondition first, e.g. type content before a disabled Send button enables). When available, @(x,y) gives the control's client-area center coordinate.
+- Pass the bare ref (e.g. "n12" or "a:chat_input_field") to DesktopClick or DesktopType. Refs starting with "a:" are stable platform AutomationIds and remain valid even if the layout shifts; plain "n" refs are positional and can drift, so re-snapshot if the tree changed. Pass the @(x,y) coordinate to DesktopMouse/DesktopDrag for free-form clicking or dragging.
+- This is read-only and a point-in-time snapshot, NOT a live view. Treat it as expensive: snapshot once, batch several actions, then snapshot again only to verify or after the layout/focus/modality likely changed.`
 
 export const DESKTOP_CLICK_DESCRIPTION = `Click a control inside a window.
 
@@ -71,6 +73,7 @@ Use this for free-form clicking when DesktopSnapshot has no usable control ref: 
 
 Coordinates:
 - "x"/"y" are pixels relative to the TARGET WINDOW's client area (top-left = 0,0), not the whole screen.
+- By default you can pass the pixel coordinates you read directly off the most recent DesktopScreenshot of this window — even if that screenshot was downscaled. The tool auto-maps them back using the screenshot's scale. Set "coordinateSpace":"client" if you already have true client-area pixels (e.g. from DesktopSnapshot @(x,y)).
 - Tip: DesktopSnapshot exposes control bounds you can aim at; or use DesktopScreenshot to eyeball a position.
 
 Behavior:
@@ -91,6 +94,7 @@ Use for: dragging a slider, selecting a text/region range, moving a file/icon, r
 
 Usage:
 - "fromX"/"fromY" is the start, "toX"/"toY" the end — all client-area-relative pixels (see DesktopMouse).
+- Like DesktopMouse, by default you may pass coordinates read off the latest (possibly downscaled) DesktopScreenshot; set "coordinateSpace":"client" to pass true client pixels.
 - "button": "left" (default), "right", "middle".
 - "steps" (optional, default 20): number of intermediate move events; increase for apps that need smooth motion to recognize the drag.
 - "mode": "virtual" (default) or "real". If a virtual drag does not register, retry with "real".`
@@ -98,10 +102,21 @@ Usage:
 export const DESKTOP_SCROLL_DESCRIPTION = `Scroll the mouse wheel over a coordinate inside a window.
 
 Usage:
-- "x"/"y" are client-area-relative pixels (the point to scroll over).
+- "x"/"y" are client-area-relative pixels (the point to scroll over); image-space coordinates from the latest DesktopScreenshot are accepted by default (set "coordinateSpace":"client" to override).
 - "deltaY": vertical ticks, positive scrolls DOWN, negative scrolls UP.
 - "deltaX" (optional): horizontal ticks, positive scrolls RIGHT.
 - "mode": "virtual" (default) or "real".`
+
+export const DESKTOP_KEY_DESCRIPTION = `Send a keyboard key or key combination to the focused window (global keystroke, not tied to a control).
+
+Use this for shortcuts and special keys that DesktopType cannot express: copy/paste, save, undo, navigation, function keys, Enter/Tab/Esc, arrow keys, etc.
+
+Usage:
+- "combo" is a "+"-joined chord, case-insensitive. Modifiers: ctrl, alt, shift, win/cmd. Examples: "ctrl+c", "ctrl+v", "ctrl+s", "alt+tab", "enter", "esc", "tab", "f5", "ctrl+shift+esc", "up".
+- Special key names: enter/return, esc/escape, tab, space, backspace, delete, home, end, pageup, pagedown, up, down, left, right, f1..f12.
+- The target window is brought to front first. On macOS the "win" modifier maps to Command.
+- "windowId" selects the target window; "mode" mirrors the mouse tools.
+- To type literal text into a field, use DesktopType instead.`
 
 export const DESKTOP_SCREENSHOT_DESCRIPTION = `Take a screenshot of a specific window and embed it for inline preview.
 
@@ -109,6 +124,7 @@ The image is also sent to the model ONLY when the active model has image input (
 
 Usage:
 - "windowId" comes from DesktopGetWindow.
+- "maxDimension" (optional) caps the screenshot's longest side in pixels and downscales to it, lowering vision-token cost (e.g. 1280). Coordinates you read off the downscaled image can be passed straight to DesktopMouse/DesktopDrag/DesktopScroll — they auto-map back to true client pixels.
 - macOS requires Screen Recording permission.
 - This is read-only.`
 

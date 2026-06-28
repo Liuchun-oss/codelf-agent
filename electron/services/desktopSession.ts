@@ -15,6 +15,9 @@ export interface DesktopWindowRef {
   processName: string
   processId: number
   createdAt: number
+  // 最近一次截图的缩放系数（imageWidth / clientWidth）。用于把模型在缩放截图上
+  // 读到的「图片像素坐标」换算回「客户区像素坐标」。未截图时为 undefined。
+  lastScreenshotScale?: number
 }
 
 export interface DesktopSession {
@@ -88,6 +91,12 @@ export function registerWindow(
 
 export function getWindow(sessionId: string, windowId: string): DesktopWindowRef | undefined {
   return sessions.get(sessionId)?.windows.get(windowId)
+}
+
+// 记录某窗口最近一次截图的缩放系数，供坐标工具把图片坐标换算回客户区坐标。
+export function setWindowScreenshotScale(sessionId: string, windowId: string, scale: number): void {
+  const win = sessions.get(sessionId)?.windows.get(windowId)
+  if (win && Number.isFinite(scale) && scale > 0) win.lastScreenshotScale = scale
 }
 
 export function trackLaunchedPid(sessionId: string, pid: number): void {

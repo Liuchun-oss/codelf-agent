@@ -78,6 +78,7 @@ import {
   desktopMouseMoveTool,
   desktopDragTool,
   desktopScrollTool,
+  desktopKeyTool,
   desktopScreenshotTool,
   desktopWaitForTool,
   desktopHandoffTool,
@@ -415,6 +416,7 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...desktopMouseMoveTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopDragTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopScrollTool, deferred: true, permissionGroup: 'desktop' })
+  registry.register({ ...desktopKeyTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopScreenshotTool, deferred: true, supportsBackgroundExecution: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopWaitForTool, deferred: true, supportsBackgroundExecution: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopHandoffTool, deferred: true, permissionGroup: 'desktop' })

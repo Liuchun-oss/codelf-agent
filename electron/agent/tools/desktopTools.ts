@@ -5,10 +5,12 @@ import {
   getDesktopSession,
   getWindow,
   registerWindow,
+  setWindowScreenshotScale,
   trackLaunchedPid
 } from '../../services/desktopSession'
 import { getDesktopDriver, DesktopDriverError, type WindowInfo } from '../../services/desktopDriver'
 import { storeBrowserPreview, browserPreviewUrl } from '../../services/browserPreviewImage'
+import { BROWSER_OPEN_NAME } from '../prompts/tools/browser'
 import {
   DESKTOP_LAUNCH_APP_NAME,
   DESKTOP_LAUNCH_APP_DESCRIPTION,
@@ -30,6 +32,8 @@ import {
   DESKTOP_DRAG_DESCRIPTION,
   DESKTOP_SCROLL_NAME,
   DESKTOP_SCROLL_DESCRIPTION,
+  DESKTOP_KEY_NAME,
+  DESKTOP_KEY_DESCRIPTION,
   DESKTOP_SCREENSHOT_NAME,
   DESKTOP_SCREENSHOT_DESCRIPTION,
   DESKTOP_WAIT_FOR_NAME,
@@ -43,6 +47,38 @@ import {
 const MAX_SNAPSHOT_NODES = 200
 const MAX_SCREENSHOT_BYTES = 5_000_000
 const DEFAULT_WAIT_MS = 15_000
+// 单条上下文字段（选中文本/文档正文）回灌给模型时的字符上限，避免长文档撑爆上下文。
+const MAX_CONTEXT_FIELD_CHARS = 2000
+
+// 截断过长的上下文字段并标注省略量。
+function truncateField(text: string): string {
+  const t = text.replace(/\r\n/g, '\n')
+  if (t.length <= MAX_CONTEXT_FIELD_CHARS) return t
+  return `${t.slice(0, MAX_CONTEXT_FIELD_CHARS)}…（已截断，共 ${t.length} 字）`
+}
+// 截图发给模型前的默认最长边上限（像素），压低视觉 token 成本。
+const DEFAULT_SCREENSHOT_MAX_DIM = 1280
+
+// 坐标空间：'image' 表示坐标取自最近一次（可能被缩小的）截图像素，需按缩放系数还原；
+// 'client' 表示已是窗口客户区真实像素，直接使用。
+const coordinateSpaceSchema = z
+  .enum(['image', 'client'])
+  .optional()
+  .describe('Coordinate space of x/y: "image" (default, pixels off the latest DesktopScreenshot, auto-rescaled) or "client" (true client-area pixels)')
+
+// 把输入坐标按坐标空间换算成客户区真实像素。
+function toClientCoord(
+  sessionId: string,
+  windowId: string,
+  value: number,
+  space: 'image' | 'client' | undefined
+): number {
+  if (space === 'client') return value
+  const scale = getWindow(sessionId, windowId)?.lastScreenshotScale
+  // 未截图或缩放系数无效时按 1:1 处理（等价于客户区坐标）。
+  if (!scale || !Number.isFinite(scale) || scale <= 0) return value
+  return value / scale
+}
 
 // 统一把驱动错误转为工具结果（含权限引导文案）。
 function driverError(e: unknown): ToolResult {
@@ -71,6 +107,37 @@ function requireWindow(sessionId: string, windowId: string) {
 
 function describeWindow(w: WindowInfo): string {
   return `${w.processName} (pid ${w.processId}) — "${w.title}" [handle ${w.nativeHandle}]`
+}
+
+// 已知基于 Chromium/Electron 或强 Raw Input 的进程：虚拟消息注入（PostMessage）对它们
+// 普遍无效，需要走真实输入或浏览器工具。进程名为不含扩展名的小写匹配。
+const CHROMIUM_PROCESS_HINTS = [
+  'chrome', 'msedge', 'brave', 'opera', 'vivaldi', 'chromium',
+  'electron', 'code', 'slack', 'discord', 'spotify', 'whatsapp',
+  'notion', 'figma', 'postman', 'obsidian', 'feishu', 'lark',
+  'dingtalk', 'wxwork', 'qqnt'
+]
+
+type WindowKind = 'browser' | 'electron' | 'native'
+
+function classifyWindow(w: WindowInfo): WindowKind {
+  const name = w.processName.toLowerCase().replace(/\.exe$/, '')
+  const isBrowser = ['chrome', 'msedge', 'brave', 'opera', 'vivaldi', 'chromium'].some((h) => name === h || name.includes(h))
+  if (isBrowser) return 'browser'
+  if (CHROMIUM_PROCESS_HINTS.some((h) => name === h || name.includes(h))) return 'electron'
+  return 'native'
+}
+
+// 针对 Chromium/Electron 系窗口，给模型的分流建议文案（advisory，不改变行为）。
+function routingAdvisory(w: WindowInfo): string {
+  const kind = classifyWindow(w)
+  if (kind === 'browser') {
+    return `\n\n提示：该窗口是 Chromium 系浏览器（${w.processName}）。虚拟消息注入对其通常无效。若目标是网页内容，请改用 ${BROWSER_OPEN_NAME} 等 Browser* 工具自动化网页；若确需直接操作此窗口，对鼠标/按键工具显式传 mode:"real"。`
+  }
+  if (kind === 'electron') {
+    return `\n\n提示：该窗口疑似 Electron/Chromium 应用（${w.processName}），多走 Raw Input。虚拟点击可能无效——优先用 DesktopSnapshot 的无障碍控件 ref（DesktopClick/DesktopType），坐标级操作请显式传 mode:"real"。`
+  }
+  return ''
 }
 
 // [LAUNCH]
@@ -170,7 +237,7 @@ export const desktopGetWindowTool: Tool<GetWindowInput> = {
       const ref = registerWindow(session.id, win)
       if (!ref) return { content: '会话已关闭，无法登记窗口', isError: true }
       return {
-        content: `windowId: ${ref.windowId}\nsessionId: ${session.id}\n${describeWindow(win)}`
+        content: `windowId: ${ref.windowId}\nsessionId: ${session.id}\n${describeWindow(win)}${routingAdvisory(win)}`
       }
     } catch (e) {
       return driverError(e)
@@ -195,17 +262,31 @@ export const desktopSnapshotTool: Tool<z.infer<typeof windowActionSchema>> = {
     try {
       const driver = await getDesktopDriver()
       const snap = await driver.snapshot(win.nativeHandle, MAX_SNAPSHOT_NODES)
-      if (snap.nodes.length === 0) return { content: '(未发现可交互控件)' }
       const lines = snap.nodes.map((n) => {
-        const flags = [n.actionable ? 'actionable' : '', n.editable ? 'editable' : '']
+        const flags = [
+          n.actionable ? 'actionable' : '',
+          n.editable ? 'editable' : '',
+          n.enabled === false ? 'disabled' : ''
+        ]
           .filter(Boolean)
           .join(',')
         const name = n.name ? ` "${n.name}"` : ''
         const at = n.center ? ` @(${n.center.x},${n.center.y})` : ''
-        return `${n.role}${name}${flags ? ` (${flags})` : ''}${at} [ref=${n.ref}]`
+        // 按嵌套深度缩进，呈现父子结构（depth 缺省时不缩进）。上限 12 级防止过宽。
+        const indent = '  '.repeat(Math.min(n.depth ?? 0, 12))
+        return `${indent}${n.role}${name}${flags ? ` (${flags})` : ''}${at} [ref=${n.ref}]`
       })
+      // 高频上下文优先展示，便于模型快速判断当前焦点/选区/正文，无需在节点列表里翻找。
+      const ctx: string[] = []
+      if (snap.focusedElement) ctx.push(`Focused: ${snap.focusedElement}`)
+      if (snap.selectedText) ctx.push(`Selected text: ${truncateField(snap.selectedText)}`)
+      if (snap.documentText) ctx.push(`Document text: ${truncateField(snap.documentText)}`)
+      const ctxBlock = ctx.length ? `${ctx.join('\n')}\n\n` : ''
+      if (snap.nodes.length === 0) {
+        return { content: ctxBlock ? `${ctxBlock}(未发现可交互控件)` : '(未发现可交互控件)' }
+      }
       return {
-        content: `UI components (use the bare ref like "n12" with DesktopClick/DesktopType; @(x,y) is the client-area center you can pass to DesktopMouse/DesktopDrag):\n${lines.join('\n')}`,
+        content: `${ctxBlock}UI components (use the bare ref like "n12" with DesktopClick/DesktopType; @(x,y) is the client-area center you can pass to DesktopMouse/DesktopDrag):\n${lines.join('\n')}`,
         truncated: snap.truncated
       }
     } catch (e) {
@@ -279,8 +360,9 @@ const buttonSchema = z.enum(['left', 'right', 'middle']).optional().describe('Mo
 const mouseSchema = z.object({
   sessionId: z.string().min(1).describe('Desktop session id'),
   windowId: z.string().min(1).describe('Window id from DesktopGetWindow'),
-  x: z.number().describe('X in window client-area pixels (top-left = 0)'),
-  y: z.number().describe('Y in window client-area pixels (top-left = 0)'),
+  x: z.number().describe('X pixels (image-space by default; see coordinateSpace)'),
+  y: z.number().describe('Y pixels (image-space by default; see coordinateSpace)'),
+  coordinateSpace: coordinateSpaceSchema,
   button: buttonSchema,
   doubleClick: z.boolean().optional().describe('Perform a double click'),
   mode: pointerModeSchema
@@ -298,16 +380,22 @@ export const desktopMouseTool: Tool<MouseInput> = {
     if (error) return error
     try {
       const driver = await getDesktopDriver()
+      const x = toClientCoord(input.sessionId, input.windowId, input.x, input.coordinateSpace)
+      const y = toClientCoord(input.sessionId, input.windowId, input.y, input.coordinateSpace)
       const res = await driver.mouseClick(win.nativeHandle, {
-        x: input.x,
-        y: input.y,
+        x,
+        y,
         button: input.button,
         doubleClick: input.doubleClick,
         mode: input.mode
       })
       if (!res.ok) return { content: res.message ?? '点击失败', isError: true }
       const how = (input.mode ?? 'auto') === 'real' ? '真实光标' : '虚拟消息'
-      return { content: `Clicked at (${input.x}, ${input.y}) with ${input.button ?? 'left'} button [${how}].` }
+      const retryHint =
+        (input.mode ?? 'auto') !== 'real' && classifyWindow(win) !== 'native'
+          ? ` 若无效，该窗口（${win.processName}）疑似 Chromium/Electron，请重试并传 mode:"real"。`
+          : ''
+      return { content: `Clicked at client (${Math.round(x)}, ${Math.round(y)}) with ${input.button ?? 'left'} button [${how}].${retryHint}` }
     } catch (e) {
       return driverError(e)
     }
@@ -317,8 +405,9 @@ export const desktopMouseTool: Tool<MouseInput> = {
 const mouseMoveSchema = z.object({
   sessionId: z.string().min(1).describe('Desktop session id'),
   windowId: z.string().min(1).describe('Window id from DesktopGetWindow'),
-  x: z.number().describe('X in window client-area pixels'),
-  y: z.number().describe('Y in window client-area pixels'),
+  x: z.number().describe('X pixels (image-space by default; see coordinateSpace)'),
+  y: z.number().describe('Y pixels (image-space by default; see coordinateSpace)'),
+  coordinateSpace: coordinateSpaceSchema,
   mode: pointerModeSchema
 })
 type MouseMoveInput = z.infer<typeof mouseMoveSchema>
@@ -334,9 +423,11 @@ export const desktopMouseMoveTool: Tool<MouseMoveInput> = {
     if (error) return error
     try {
       const driver = await getDesktopDriver()
-      const res = await driver.mouseMove(win.nativeHandle, { x: input.x, y: input.y, mode: input.mode })
+      const x = toClientCoord(input.sessionId, input.windowId, input.x, input.coordinateSpace)
+      const y = toClientCoord(input.sessionId, input.windowId, input.y, input.coordinateSpace)
+      const res = await driver.mouseMove(win.nativeHandle, { x, y, mode: input.mode })
       if (!res.ok) return { content: res.message ?? '移动失败', isError: true }
-      return { content: `Moved pointer to (${input.x}, ${input.y}).` }
+      return { content: `Moved pointer to client (${Math.round(x)}, ${Math.round(y)}).` }
     } catch (e) {
       return driverError(e)
     }
@@ -346,10 +437,11 @@ export const desktopMouseMoveTool: Tool<MouseMoveInput> = {
 const dragSchema = z.object({
   sessionId: z.string().min(1).describe('Desktop session id'),
   windowId: z.string().min(1).describe('Window id from DesktopGetWindow'),
-  fromX: z.number().describe('Start X in window client-area pixels'),
-  fromY: z.number().describe('Start Y in window client-area pixels'),
-  toX: z.number().describe('End X in window client-area pixels'),
-  toY: z.number().describe('End Y in window client-area pixels'),
+  fromX: z.number().describe('Start X pixels (image-space by default)'),
+  fromY: z.number().describe('Start Y pixels (image-space by default)'),
+  toX: z.number().describe('End X pixels (image-space by default)'),
+  toY: z.number().describe('End Y pixels (image-space by default)'),
+  coordinateSpace: coordinateSpaceSchema,
   button: buttonSchema,
   steps: z.number().int().min(2).max(200).optional().describe('Intermediate move steps (default 20)'),
   mode: pointerModeSchema
@@ -367,18 +459,23 @@ export const desktopDragTool: Tool<DragInput> = {
     if (error) return error
     try {
       const driver = await getDesktopDriver()
+      const sp = input.coordinateSpace
+      const fromX = toClientCoord(input.sessionId, input.windowId, input.fromX, sp)
+      const fromY = toClientCoord(input.sessionId, input.windowId, input.fromY, sp)
+      const toX = toClientCoord(input.sessionId, input.windowId, input.toX, sp)
+      const toY = toClientCoord(input.sessionId, input.windowId, input.toY, sp)
       const res = await driver.mouseDrag(win.nativeHandle, {
-        fromX: input.fromX,
-        fromY: input.fromY,
-        toX: input.toX,
-        toY: input.toY,
+        fromX,
+        fromY,
+        toX,
+        toY,
         button: input.button,
         steps: input.steps,
         mode: input.mode
       })
       if (!res.ok) return { content: res.message ?? '拖拽失败', isError: true }
       return {
-        content: `Dragged from (${input.fromX}, ${input.fromY}) to (${input.toX}, ${input.toY}) with ${input.button ?? 'left'} button.`
+        content: `Dragged from client (${Math.round(fromX)}, ${Math.round(fromY)}) to (${Math.round(toX)}, ${Math.round(toY)}) with ${input.button ?? 'left'} button.`
       }
     } catch (e) {
       return driverError(e)
@@ -390,8 +487,9 @@ const scrollSchema = z
   .object({
     sessionId: z.string().min(1).describe('Desktop session id'),
     windowId: z.string().min(1).describe('Window id from DesktopGetWindow'),
-    x: z.number().describe('X in window client-area pixels to scroll over'),
-    y: z.number().describe('Y in window client-area pixels to scroll over'),
+    x: z.number().describe('X pixels to scroll over (image-space by default)'),
+    y: z.number().describe('Y pixels to scroll over (image-space by default)'),
+    coordinateSpace: coordinateSpaceSchema,
     deltaY: z.number().optional().describe('Vertical ticks; positive scrolls down'),
     deltaX: z.number().optional().describe('Horizontal ticks; positive scrolls right'),
     mode: pointerModeSchema
@@ -412,25 +510,68 @@ export const desktopScrollTool: Tool<ScrollInput> = {
     if (error) return error
     try {
       const driver = await getDesktopDriver()
+      const x = toClientCoord(input.sessionId, input.windowId, input.x, input.coordinateSpace)
+      const y = toClientCoord(input.sessionId, input.windowId, input.y, input.coordinateSpace)
       const res = await driver.mouseScroll(win.nativeHandle, {
-        x: input.x,
-        y: input.y,
+        x,
+        y,
         deltaY: input.deltaY,
         deltaX: input.deltaX,
         mode: input.mode
       })
       if (!res.ok) return { content: res.message ?? '滚动失败', isError: true }
-      return { content: `Scrolled at (${input.x}, ${input.y}) deltaY=${input.deltaY ?? 0} deltaX=${input.deltaX ?? 0}.` }
+      return { content: `Scrolled at client (${Math.round(x)}, ${Math.round(y)}) deltaY=${input.deltaY ?? 0} deltaX=${input.deltaX ?? 0}.` }
+    } catch (e) {
+      return driverError(e)
+    }
+  }
+}
+// [KEY]
+const keySchema = z.object({
+  sessionId: z.string().min(1).describe('Desktop session id'),
+  windowId: z.string().min(1).describe('Window id from DesktopGetWindow'),
+  combo: z.string().min(1).describe('Key chord, e.g. "ctrl+c", "alt+tab", "enter", "f5"'),
+  mode: pointerModeSchema
+})
+type KeyInput = z.infer<typeof keySchema>
+
+export const desktopKeyTool: Tool<KeyInput> = {
+  name: DESKTOP_KEY_NAME,
+  description: DESKTOP_KEY_DESCRIPTION,
+  schema: keySchema,
+  readOnly: false,
+  concurrencySafe: false,
+  async execute(input): Promise<ToolResult> {
+    const { win, error } = requireWindow(input.sessionId, input.windowId)
+    if (error) return error
+    try {
+      const driver = await getDesktopDriver()
+      const res = await driver.pressKeys(win.nativeHandle, { combo: input.combo, mode: input.mode })
+      if (!res.ok) return { content: res.message ?? '按键失败', isError: true }
+      return { content: `Pressed ${input.combo}.` }
     } catch (e) {
       return driverError(e)
     }
   }
 }
 // [SCREENSHOT]
-export const desktopScreenshotTool: Tool<z.infer<typeof windowActionSchema>> = {
+const screenshotSchema = z.object({
+  sessionId: z.string().min(1).describe('Desktop session id'),
+  windowId: z.string().min(1).describe('Window id from DesktopGetWindow'),
+  maxDimension: z
+    .number()
+    .int()
+    .min(320)
+    .max(4096)
+    .optional()
+    .describe('Cap the screenshot longest side in pixels (default 1280) to lower vision-token cost')
+})
+type ScreenshotInput = z.infer<typeof screenshotSchema>
+
+export const desktopScreenshotTool: Tool<ScreenshotInput> = {
   name: DESKTOP_SCREENSHOT_NAME,
   description: DESKTOP_SCREENSHOT_DESCRIPTION,
-  schema: windowActionSchema,
+  schema: screenshotSchema,
   readOnly: true,
   concurrencySafe: false,
   async execute(input, ctx): Promise<ToolResult> {
@@ -438,13 +579,16 @@ export const desktopScreenshotTool: Tool<z.infer<typeof windowActionSchema>> = {
     if (error) return error
     try {
       const driver = await getDesktopDriver()
-      const shot = await driver.screenshot(win.nativeHandle)
+      const maxDimension = input.maxDimension ?? DEFAULT_SCREENSHOT_MAX_DIM
+      const shot = await driver.screenshot(win.nativeHandle, { maxDimension })
       if (shot.buffer.length > MAX_SCREENSHOT_BYTES) {
         return {
-          content: '截图过大，无法内嵌显示。请缩小窗口后重试。',
+          content: '截图过大，无法内嵌显示。请缩小窗口或调低 maxDimension 后重试。',
           isError: true
         }
       }
+      // 记录缩放系数，使坐标工具可接受「图片像素坐标」并自动还原为客户区坐标。
+      setWindowScreenshotScale(input.sessionId, input.windowId, shot.scale)
       const previewId = await storeBrowserPreview(shot.buffer, shot.mime)
       const dataUrl = `data:${shot.mime};base64,${shot.buffer.toString('base64')}`
       if (ctx.emitEvent && ctx.turnId && ctx.toolCallId) {
@@ -456,8 +600,12 @@ export const desktopScreenshotTool: Tool<z.infer<typeof windowActionSchema>> = {
           message: 'Window screenshot captured.'
         })
       }
+      const scaledNote =
+        shot.scale < 0.999
+          ? `\n\n（图片为 ${shot.imageWidth}×${shot.imageHeight}，已从客户区 ${shot.clientWidth}×${shot.clientHeight} 缩小；点击坐标可直接读图，工具会自动还原。）`
+          : ''
       return {
-        content: `Screenshot of "${win.title}":\n\n![screenshot](${browserPreviewUrl(previewId)})`,
+        content: `Screenshot of "${win.title}" (${shot.imageWidth}×${shot.imageHeight}px):\n\n![screenshot](${browserPreviewUrl(previewId)})${scaledNote}`,
         // 仅当模型开启视觉时由编排层附带；否则自动丢弃，仅保留文本。
         images: [{ dataUrl }]
       }
@@ -496,7 +644,7 @@ export const desktopWaitForTool: Tool<WaitForInput> = {
       if (!win) return { content: '等待窗口超时。', isError: true }
       const ref = registerWindow(session.id, win)
       return {
-        content: `Window appeared.\nwindowId: ${ref?.windowId}\nsessionId: ${session.id}\n${describeWindow(win)}`
+        content: `Window appeared.\nwindowId: ${ref?.windowId}\nsessionId: ${session.id}\n${describeWindow(win)}${routingAdvisory(win)}`
       }
     } catch (e) {
       return driverError(e)
@@ -596,6 +744,7 @@ export const desktopTools = [
   desktopMouseMoveTool,
   desktopDragTool,
   desktopScrollTool,
+  desktopKeyTool,
   desktopScreenshotTool,
   desktopWaitForTool,
   desktopHandoffTool,

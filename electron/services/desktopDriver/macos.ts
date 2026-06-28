@@ -8,12 +8,14 @@ import {
   DesktopDriverError,
   type DesktopDriver,
   type DriverActionResult,
+  type KeyComboOptions,
   type LaunchResult,
   type MouseButton,
   type MouseClickOptions,
   type MouseDragOptions,
   type MouseMoveOptions,
   type MouseScrollOptions,
+  type ScreenshotOptions,
   type ScreenshotResult,
   type SnapshotResult,
   type UiNode,
@@ -175,6 +177,10 @@ export class MacosDesktopDriver implements DesktopDriver {
       '      try',
       '        set n to name of e',
       '      end try',
+      '      set en to "1"',
+      '      try',
+      '        if (enabled of e) is false then set en to "0"',
+      '      end try',
       '      set cxv to ""',
       '      set cyv to ""',
       '      try',
@@ -183,7 +189,7 @@ export class MacosDesktopDriver implements DesktopDriver {
       '        set cxv to (ex + (ew div 2) - wx)',
       '        set cyv to (ey + (eh div 2) - wy)',
       '      end try',
-      '      set output to output & counter & "\\t" & r & "\\t" & n & "\\t" & cxv & "\\t" & cyv & "\\n"',
+      '      set output to output & counter & "\\t" & r & "\\t" & en & "\\t" & n & "\\t" & cxv & "\\t" & cyv & "\\n"',
       '      set emitted to emitted + 1',
       '    end try',
       '  end repeat',
@@ -194,13 +200,15 @@ export class MacosDesktopDriver implements DesktopDriver {
     const lines = out.split('\n').filter((l) => l.includes('\t'))
     const truncated = lines.length >= maxNodes
     const nodes: UiNode[] = lines.map((line) => {
-      // 坐标固定为最后两列；名称可能含制表符，故从两端取、中间归为 name。
+      // 列顺序：idx, role, enabled(1/0), name(可能含制表符), cx, cy。
+      // 坐标固定为最后两列，role/enabled 为前置两列，中间归为 name。
       const parts = line.split('\t')
       const idx = parts[0]
       const role = parts[1] ?? ''
-      const cy = parts.length >= 5 ? parts[parts.length - 1] : ''
-      const cx = parts.length >= 5 ? parts[parts.length - 2] : ''
-      const name = (parts.length >= 5 ? parts.slice(2, parts.length - 2) : parts.slice(2)).join('\t').trim()
+      const en = parts[2] ?? '1'
+      const cy = parts.length >= 6 ? parts[parts.length - 1] : ''
+      const cx = parts.length >= 6 ? parts[parts.length - 2] : ''
+      const name = (parts.length >= 6 ? parts.slice(3, parts.length - 2) : parts.slice(3)).join('\t').trim()
       const lowered = role.toLowerCase()
       const actionable = /button|menuitem|checkbox|radio|link|tab/.test(lowered)
       const editable = /textfield|textarea|combobox|searchfield/.test(lowered)
@@ -209,14 +217,53 @@ export class MacosDesktopDriver implements DesktopDriver {
         role: role || 'unknown',
         name,
         actionable,
-        editable
+        editable,
+        enabled: en.trim() !== '0'
       }
       const px = Number.parseInt((cx ?? '').trim(), 10)
       const py = Number.parseInt((cy ?? '').trim(), 10)
       if (Number.isFinite(px) && Number.isFinite(py)) node.center = { x: px, y: py }
       return node
     })
-    return { nodes, truncated }
+    const context = await this.readFocusContext(pid).catch(() => ({}))
+    return { nodes, truncated, ...context }
+  }
+
+  // 抽取高频上下文：焦点元素描述、选中文本、焦点元素正文（AXValue）。失败则返回空对象。
+  private async readFocusContext(
+    pid: number
+  ): Promise<{ focusedElement?: string; selectedText?: string; documentText?: string }> {
+    const script = [
+      'tell application "System Events"',
+      `  set p to first application process whose unix id is ${pid}`,
+      '  set fr to ""',
+      '  set fv to ""',
+      '  set fs to ""',
+      '  try',
+      '    set fe to value of attribute "AXFocusedUIElement" of p',
+      '    try',
+      '      set fr to (role of fe as string)',
+      '      try',
+      '        set fnm to (description of fe as string)',
+      '      end try',
+      '    end try',
+      '    try',
+      '      set fv to (value of fe as string)',
+      '    end try',
+      '    try',
+      '      set fs to (value of attribute "AXSelectedText" of fe as string)',
+      '    end try',
+      '  end try',
+      '  return fr & "\\t" & fs & "\\t" & fv',
+      'end tell'
+    ].join('\n')
+    const out = await osascript(script, 15_000)
+    const [role, sel, val] = out.split('\t')
+    return {
+      focusedElement: role?.trim() ? role.trim() : undefined,
+      selectedText: sel?.trim() ? sel.trim() : undefined,
+      documentText: val?.trim() ? val.trim() : undefined
+    }
   }
 
   // [CLICK_TYPE]
@@ -427,9 +474,52 @@ export class MacosDesktopDriver implements DesktopDriver {
     return { ok: true, message: out }
   }
 
+  // [KEYS]
+  // 用 System Events 发送组合键。修饰键映射到 using {...down}；
+  // 特殊键用 key code（macOS 虚拟键码），普通单字符用 keystroke。
+  private static MAC_KEYCODES: Record<string, number> = {
+    enter: 36, return: 36, tab: 48, space: 49, esc: 53, escape: 53,
+    backspace: 51, delete: 51, del: 117, home: 115, end: 119,
+    pageup: 116, pagedown: 121, up: 126, down: 125, left: 123, right: 124,
+    f1: 122, f2: 120, f3: 99, f4: 118, f5: 96, f6: 97, f7: 98, f8: 100,
+    f9: 101, f10: 109, f11: 103, f12: 111
+  }
+
+  async pressKeys(nativeHandle: string, options: KeyComboOptions): Promise<DriverActionResult> {
+    const { pid } = this.parseHandle(nativeHandle)
+    const parts = options.combo.split('+').map((p) => p.trim().toLowerCase()).filter(Boolean)
+    const mods: string[] = []
+    let key = ''
+    for (const p of parts) {
+      if (p === 'ctrl' || p === 'control') mods.push('control down')
+      else if (p === 'alt' || p === 'option') mods.push('option down')
+      else if (p === 'shift') mods.push('shift down')
+      else if (p === 'cmd' || p === 'command' || p === 'win' || p === 'super' || p === 'meta') mods.push('command down')
+      else key = p
+    }
+    if (!key) return { ok: false, message: `无法解析组合键：${options.combo}` }
+    const using = mods.length ? ` using {${mods.join(', ')}}` : ''
+    const keycode = MacosDesktopDriver.MAC_KEYCODES[key]
+    const action = keycode !== undefined ? `key code ${keycode}${using}` : `keystroke ${JSON.stringify(key)}${using}`
+    const script = [
+      'tell application "System Events"',
+      `  set p to first application process whose unix id is ${pid}`,
+      '  set frontmost of p to true',
+      '  delay 0.06',
+      `  ${action}`,
+      'end tell',
+      'return "ok"'
+    ].join('\n')
+    const out = await osascript(script)
+    return { ok: true, message: out }
+  }
+
   // [SCREENSHOT]
   // 经 AX 取窗口位置与尺寸，再用 screencapture -R 截取该矩形区域。
-  async screenshot(nativeHandle: string): Promise<ScreenshotResult> {
+  // 可选 maxDimension：用 sips 等比缩小，压低视觉 token 成本。
+  // 注意 Retina 屏幕：AX 尺寸是「点」，截图是「像素」，两者可能差一个像素密度系数，
+  // 故 scale 以「图片像素宽 / 客户区点宽」实测计算，工具层据此把图片坐标换算回客户区坐标。
+  async screenshot(nativeHandle: string, options?: ScreenshotOptions): Promise<ScreenshotResult> {
     const { pid, title } = this.parseHandle(nativeHandle)
     const boundsScript = [
       'tell application "System Events"',
@@ -453,11 +543,38 @@ export class MacosDesktopDriver implements DesktopDriver {
       if (e instanceof DesktopDriverError) throw e
       throw new DesktopDriverError('截图失败', AX_PERMISSION_GUIDANCE)
     })
+    const maxDim = options?.maxDimension && options.maxDimension > 0 ? Math.round(options.maxDimension) : 0
+    if (maxDim > 0) {
+      // sips -Z 把最长边限制到 maxDim（仅缩小，不放大）。
+      await runProcess('sips', ['-Z', String(maxDim), outPath], undefined, 15_000).catch(() => {})
+    }
+    const dims = await this.readPngDimensions(outPath)
     try {
       const buffer = await readFile(outPath)
-      return { buffer, mime: 'image/png' }
+      const scale = w > 0 ? dims.width / w : 1
+      return {
+        buffer,
+        mime: 'image/png',
+        imageWidth: dims.width,
+        imageHeight: dims.height,
+        clientWidth: w,
+        clientHeight: h,
+        scale
+      }
     } finally {
       await unlink(outPath).catch(() => {})
+    }
+  }
+
+  // 用 sips 读取 PNG 像素尺寸。
+  private async readPngDimensions(path: string): Promise<{ width: number; height: number }> {
+    try {
+      const out = await runProcess('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', path], undefined, 10_000)
+      const width = Number.parseInt(/pixelWidth:\s*(\d+)/.exec(out)?.[1] ?? '0', 10)
+      const height = Number.parseInt(/pixelHeight:\s*(\d+)/.exec(out)?.[1] ?? '0', 10)
+      return { width: width || 0, height: height || 0 }
+    } catch {
+      return { width: 0, height: 0 }
     }
   }
 
