@@ -21,9 +21,34 @@ import {
   type WindowInfo
 } from './index'
 
+// 让本辅助进程声明 per-monitor DPI 感知，必须在加载 WinForms / 调用任何窗口坐标 API 之前执行，
+// 否则在非 100% 缩放（如 150%）下，GetClientRect/ClientToScreen/PrintWindow 会按「被系统虚拟化」的
+// 逻辑像素工作，导致截图尺寸、scale 换算与鼠标注入坐标整体差一个缩放因子（点击偏移）。
+// 多级回退：PerMonitorV2(-4) → PerMonitor(-3)（Win10 1703+）→ SetProcessDpiAwareness(2)（Win8.1+）
+// → SetProcessDPIAware()（Vista+）。
+const PS_DPI_AWARE = [
+  'Add-Type @"',
+  'using System;',
+  'using System.Runtime.InteropServices;',
+  'public static class DpiCtl {',
+  '  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);',
+  '  [DllImport("shcore.dll")] public static extern int SetProcessDpiAwareness(int value);',
+  '  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();',
+  '  public static void Apply() {',
+  '    try { if (SetProcessDpiAwarenessContext(new IntPtr(-4))) return; } catch {}',
+  '    try { if (SetProcessDpiAwarenessContext(new IntPtr(-3))) return; } catch {}',
+  '    try { SetProcessDpiAwareness(2); return; } catch {}',
+  '    try { SetProcessDPIAware(); } catch {}',
+  '  }',
+  '}',
+  '"@',
+  'try { [DpiCtl]::Apply() } catch {}'
+].join('\n')
+
 const PS_PREAMBLE = [
   '$ErrorActionPreference = "Stop"',
   '$ProgressPreference = "SilentlyContinue"',
+  PS_DPI_AWARE,
   'Add-Type -AssemblyName UIAutomationClient',
   'Add-Type -AssemblyName UIAutomationTypes',
   'Add-Type -AssemblyName System.Windows.Forms',
