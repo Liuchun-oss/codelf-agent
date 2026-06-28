@@ -239,6 +239,33 @@ export function builtinSkillsRoots(): string[] {
   return [...new Set(roots)]
 }
 
+// 随应用分发的「内置插件」根目录（如 resources/plugins）。
+// 每个插件保留完整结构（skills/ + references/ + templates/ 等），故内部相对引用可用。
+function builtinPluginsRoots(): string[] {
+  const roots: string[] = []
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+  if (resourcesPath) roots.push(join(resourcesPath, 'plugins'))
+  roots.push(join(__dirname, '..', '..', 'resources', 'plugins'))
+  roots.push(resolve(process.cwd(), 'resources', 'plugins'))
+  return [...new Set(roots)]
+}
+
+// 扫描内置插件目录，返回每个插件的 skills 子目录：resources/plugins/<name>/skills。
+// 与用户插件（~/.codelf/plugins/*/skills）同源处理，作为 builtin 来源加载。
+export function builtinPluginSkillsRoots(): string[] {
+  const out: string[] = []
+  for (const pluginsRoot of builtinPluginsRoots()) {
+    try {
+      for (const entry of readdirSync(pluginsRoot, { withFileTypes: true })) {
+        if (entry.isDirectory()) out.push(join(pluginsRoot, entry.name, 'skills'))
+      }
+    } catch {
+      // 该候选根不存在，尝试下一个
+    }
+  }
+  return [...new Set(out)]
+}
+
 export function userSkillsRoots(): string[] {
   const env = process.env[ENV_SKILLS_DIR] || process.env[ENV_USER_SKILLS_DIR]
   if (env?.trim()) {
@@ -316,6 +343,11 @@ export async function loadUserSkills(): Promise<SkillDefinition[]> {
 export async function loadBuiltinSkills(): Promise<SkillDefinition[]> {
   const merged = new Map<string, SkillDefinition>()
   for (const root of builtinSkillsRoots()) {
+    for (const skill of await loadSkillsFromRoot(root, 'user')) {
+      if (!merged.has(skill.name.toLowerCase())) merged.set(skill.name.toLowerCase(), skill)
+    }
+  }
+  for (const root of builtinPluginSkillsRoots()) {
     for (const skill of await loadSkillsFromRoot(root, 'user')) {
       if (!merged.has(skill.name.toLowerCase())) merged.set(skill.name.toLowerCase(), skill)
     }

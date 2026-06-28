@@ -63,6 +63,8 @@ extraResources:
     to: deepseek-tokenizer
   - from: resources/skills
     to: skills
+  - from: resources/plugins
+    to: plugins
   - from: resources/models
     to: models
 

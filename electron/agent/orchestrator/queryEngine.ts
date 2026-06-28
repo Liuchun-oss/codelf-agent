@@ -43,7 +43,7 @@ import {
 import { buildPromptCacheKey, buildPromptCacheOptions } from './promptCache'
 import { buildDefaultRegistry, type ToolRegistry } from '../tools/registry'
 import { ensureMcpReady, syncMcpToolsIntoRegistry } from '../mcp/sync'
-import type { SnipHistoryRequest, ToolContext, ToolResult } from '../tools/types'
+import type { SnipHistoryRequest, Tool, ToolContext, ToolResult } from '../tools/types'
 import { ToolCallAccumulator, executeToolBatch, parseToolArguments } from '../tools/streamingExecutor'
 import { PermissionEngine } from '../permissions/engine'
 import { PermissionBroker } from '../permissions/broker'
@@ -552,6 +552,29 @@ export class QueryEngine {
       return { content: `工具参数 JSON 解析失败：${call.arguments}`, isError: true }
     }
     return this.registry.run(call.name, args, { ...ctx, toolCallId: call.id })
+  }
+
+  // 把一个工具调用解析为「实际要执行的工具 + 调用」。
+  // 对 ExecuteExtraTool：若其目标延迟工具已被发现，则解包成对真实工具的直接调用，
+  // 这样后台并发预热可以正确识别 GenerateImage 等延迟工具的 readOnly/background 属性。
+  private resolveActiveCall(c: ToolCallRequest): { activeCall: ToolCallRequest; activeTool: Tool<unknown> | undefined } {
+    let activeCall = c
+    let activeTool = this.registry.get(c.name)
+    if (c.name === EXECUTE_EXTRA_TOOL_NAME) {
+      const args = argsForEvent(c.arguments)
+      const targetName = typeof args.name === 'string' ? args.name : undefined
+      const targetArgs = args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments)
+        ? args.arguments
+        : {}
+      if (targetName && this.registry.isDeferredToolDiscovered(targetName)) {
+        const targetTool = this.registry.get(targetName)
+        if (targetTool) {
+          activeTool = targetTool
+          activeCall = { id: c.id, name: targetName, arguments: JSON.stringify(targetArgs) }
+        }
+      }
+    }
+    return { activeCall, activeTool }
   }
 
   async *submitTurn(payload: AiSendPayload): AsyncGenerator<AgentEvent, void, unknown> {
@@ -1278,6 +1301,30 @@ export class QueryEngine {
         const parallelResults = yield* runWithLiveToolEvents(executeToolBatch(parallelCalls, this.registry, toolCtx))
         for (const [k, v] of parallelResults) results.set(k, v)
 
+        // 后台并发预热：同一轮里多个「允许 + 只读 + 可后台执行」的调用（如多张 GenerateImage、
+        // 多个 GenerateVideo/Audio）在进入串行循环前先全部 start 起跑，使它们真正并行执行。
+        // 串行循环命中这些调用时直接 await 已启动的任务，而非现起现等（否则会退化成逐个串行）。
+        const prewarmed = new Map<string, ReturnType<typeof startBackgroundTool>>()
+        if (gatedCalls.length > 1) {
+          for (const c of gatedCalls) {
+            const { activeCall, activeTool } = this.resolveActiveCall(c)
+            if (!activeTool?.supportsBackgroundExecution || !activeTool.readOnly) continue
+            const verdict = this.permissionEngine.decide(
+              activeTool,
+              parseToolArguments(activeCall.arguments),
+              permOpts
+            )
+            if (verdict !== 'allow') continue
+            prewarmed.set(c.id, startBackgroundTool({
+              sessionId: payload.sessionId || 'default',
+              turnId,
+              call: activeCall,
+              ctx: toolCtx,
+              run: (deferredCtx) => this.runSingle(activeCall, deferredCtx)
+            }))
+          }
+        }
+
         for (const c of gatedCalls) {
           const tool = this.registry.get(c.name)
           let activeCall = c
@@ -1517,7 +1564,7 @@ export class QueryEngine {
             denials.recordSuccess()
             let res: ToolResult
             if (activeTool?.supportsBackgroundExecution) {
-              const record = startBackgroundTool({
+              const record = prewarmed.get(c.id) ?? startBackgroundTool({
                 sessionId: payload.sessionId || 'default',
                 turnId,
                 call: activeCall,

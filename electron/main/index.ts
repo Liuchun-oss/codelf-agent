@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain, nativeImage, protocol } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, nativeImage, protocol, dialog } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { registerFileIpc } from '../ipc/file'
@@ -161,11 +161,12 @@ function createWindow(): void {
   })
 
   
-  mainWindow.webContents.on('before-input-event', (_event, input) => {
+  mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     const key = input.key?.toLowerCase()
+    // 屏蔽 F12 / Ctrl+Shift+I 打开调试窗口
     if (key === 'f12' || (input.control && input.shift && key === 'i')) {
-      mainWindow?.webContents.toggleDevTools()
+      event.preventDefault()
     }
   })
 
@@ -219,6 +220,25 @@ function createWindow(): void {
 
 }
 
+// 单实例锁：保证同一时间只有一个 codelf 在运行。
+// 抢锁失败说明已有实例在跑，弹窗提示后立即退出当前进程。
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  dialog.showErrorBox(APP_NAME, `${APP_NAME} 已在运行中，请勿重复运行。`)
+  app.quit()
+} else {
+  // 已存在实例时，新启动会触发此事件：把已有窗口唤到前台，避免“看起来没反应”。
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      if (!mainWindow.isVisible()) mainWindow.show()
+      mainWindow.focus()
+    }
+  })
+  bootstrap()
+}
+
+function bootstrap(): void {
 app.whenReady().then(() => {
   migrateUserDataDir()
 
@@ -306,3 +326,4 @@ app.on('before-quit', (e) => {
     app.quit()
   })
 })
+}
