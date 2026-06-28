@@ -2,7 +2,7 @@
   "name": "Codelf",
   "tagline": "轻量级 Agent 工具。",
   "slug": "codelf",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Codelf（码灵）- 轻量级 Agent 辅助编程 IDE",
   "appId": "com.wufeng.codelf",
   "copyright": "Copyright © 2026 巫枫",
