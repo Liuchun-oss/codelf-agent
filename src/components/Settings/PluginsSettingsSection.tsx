@@ -116,19 +116,24 @@ export default function PluginsSettingsSection(): JSX.Element {
                 {plugin.mcpServers.length > 0 && (
                   <span className="settings-tag">{plugin.mcpServers.length} MCP</span>
                 )}
+                {plugin.builtin && <span className="settings-tag">内置</span>}
               </div>
               {plugin.description && <div className="skill-card-desc">{plugin.description}</div>}
               {plugin.sourceLabel && <div className="skill-card-desc">来源：{plugin.sourceLabel}</div>}
             </div>
             <div className="skill-card-actions">
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={busy}
-                onClick={() => void handleUninstall(plugin)}
-              >
-                卸载
-              </button>
+              {plugin.builtin ? (
+                <span className="skill-card-desc">内置插件，不可卸载</span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={busy}
+                  onClick={() => void handleUninstall(plugin)}
+                >
+                  卸载
+                </button>
+              )}
             </div>
           </div>
         ))}

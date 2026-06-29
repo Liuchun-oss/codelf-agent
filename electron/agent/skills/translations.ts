@@ -32,9 +32,27 @@ export const SKILL_DESCRIPTION_ZH: Record<string, string> = {
   'writing-skills':
     '创建新技能、编辑现有技能或在部署前验证技能是否正常工作时使用。',
   'zoom-out':
-    '告诉 agent 放大视角，提供更广泛的上下文或更高层次的视角。当你不熟悉某个代码部分或需要了解它如何融入更大的图景时使用。'
+    '告诉 agent 放大视角，提供更广泛的上下文或更高层次的视角。当你不熟悉某个代码部分或需要了解它如何融入更大的图景时使用。',
+  'docx':
+    '当用户需要创建、读取、编辑或处理 Word 文档（.docx 文件）时使用。触发词包括「Word 文档」「word doc」「.docx」，或要求生成带目录、标题、页码、信头等格式的专业文档。也用于从 .docx 提取或重组内容、插入或替换文档中的图片、在 Word 文件中查找替换、处理修订与批注，或把内容整理成精美的 Word 文档。当用户要「报告」「备忘录」「信函」「模板」等 Word/.docx 交付物时使用。不要用于 PDF、表格、Google Docs 或与文档生成无关的编程任务。',
+  'pptx':
+    '只要涉及 .pptx 文件（作为输入、输出或两者）就使用本技能。包括：创建幻灯片、路演稿或演示文稿；读取、解析或从任意 .pptx 提取文本（即便提取内容用在别处，如邮件或摘要）；编辑、修改或更新现有演示文稿；合并或拆分幻灯片文件；处理模板、版式、演讲者备注或批注。当用户提到「幻灯片」「PPT」「演示文稿」「deck」或引用 .pptx 文件名时触发，无论后续打算如何使用。',
+  'pdf-extraction':
+    '使用 pdfplumber 从 PDF 中提取文本、表格和元数据。',
+  'document-converter':
+    '当用户需要在不同格式间转换文档（Office 转 PDF、PDF 转图片、图片转 PDF）、执行 PDF 操作（合并、拆分、旋转、加密、解密），或对扫描件做 OCR 时使用。基于本地免费工具（LibreOffice、ghostscript、pdftk、tesseract、imagemagick），无需 API key。当用户说「转换这个文档」「导出为 PDF」「合并 PDF」「拆分 PDF」「旋转 PDF」「对这张扫描件做 OCR」「PPTX 转 PDF」「DOCX 转 PDF」或任何文档格式转换请求时触发。'
+}
+
+// 内置插件简介的中文翻译表。key 为插件名小写；缺失回退英文原文。
+export const PLUGIN_DESCRIPTION_ZH: Record<string, string> = {
+  'product-design':
+    'Product Design 插件用于把早期想法变成团队可评审的原型。它先确认设计简报，再帮助团队探索产品方向、审计用户流程、从线上 URL 克隆原型，并让静态截图变得可交互。'
 }
 
 export function localizeSkillDescription(name: string, original: string): string {
   return SKILL_DESCRIPTION_ZH[name.trim().toLowerCase()] ?? original
+}
+
+export function localizePluginDescription(name: string, original: string | undefined): string | undefined {
+  return PLUGIN_DESCRIPTION_ZH[name.trim().toLowerCase()] ?? original
 }

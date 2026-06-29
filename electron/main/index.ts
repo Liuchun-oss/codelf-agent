@@ -20,6 +20,7 @@ import { ensureTray, destroyTray } from './tray'
 import { registerChannelsIpc } from '../ipc/channels'
 import { registerScheduleIpc } from '../ipc/schedule'
 import { registerRoomIpc } from '../ipc/room'
+import { registerTakeoverIpc } from '../ipc/takeover'
 import { initChannels } from '../channels/index'
 import { initLogging } from '../logger'
 import { setLocalWriteTarget } from '../services/localWriteRegistry'
@@ -220,6 +221,33 @@ function createWindow(): void {
 
 }
 
+// 供其他主进程模块（如接管控制器）访问主窗口引用。
+export function getMainWindow(): BrowserWindow | null {
+  return mainWindow
+}
+
+// 把主窗口收进托盘（隐藏但不退出）。接管模式进入时调用，复用微信「最小化到托盘」逻辑。
+export function hideMainWindowToTray(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  ensureTray({
+    getWindow: () => mainWindow,
+    iconPath: resolveAppIconPath(),
+    quit: () => {
+      allowClose = true
+      mainWindow?.close()
+    }
+  })
+  mainWindow.hide()
+}
+
+// 从托盘恢复主窗口（显示并聚焦）。接管模式结束时调用。
+export function restoreMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
 // 单实例锁：保证同一时间只有一个 codelf 在运行。
 // 抢锁失败说明已有实例在跑，弹窗提示后立即退出当前进程。
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
@@ -265,16 +293,7 @@ app.whenReady().then(() => {
 
   // 微信连接时用户选择「最小化到托盘」：隐藏窗口（不退出），保证后台继续收消息。
   ipcMain.on('app:minimizeToTray', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    ensureTray({
-      getWindow: () => mainWindow,
-      iconPath: resolveAppIconPath(),
-      quit: () => {
-        allowClose = true
-        mainWindow?.close()
-      }
-    })
-    mainWindow.hide()
+    hideMainWindowToTray()
   })
 
   registerFileIpc()
@@ -294,6 +313,7 @@ app.whenReady().then(() => {
   registerChannelsIpc()
   registerScheduleIpc()
   registerRoomIpc()
+  registerTakeoverIpc()
 
   buildAppMenu()
   createWindow()

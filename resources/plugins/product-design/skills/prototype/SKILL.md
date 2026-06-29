@@ -1,6 +1,6 @@
 ---
 name: prototype
-description: "Route coded prototype requests after Product Design get-context has confirmed the design brief. Use for building prototypes from URLs, images, mockups, Figma, existing code, or ideas that need visual exploration before build. 中文触发词：做个原型、做原型、设计官网、做个网站、落地页、做个 App、做个页面、做个仪表盘、把这个想法做成原型、可点击原型、界面设计、网页设计、设计感高级。"
+description: "Route coded prototype requests after Product Design get-context has confirmed the design brief. Use for building prototypes from URLs, images, mockups, Figma, existing code, or ideas that need visual exploration before build."
 ---
 
 > [!NOTE] Codelf 适配说明

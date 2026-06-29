@@ -1,6 +1,6 @@
 ---
 name: ideate
-description: "Generate image-based visual alternatives, remixes, or concept directions after Product Design get-context has confirmed the design brief. Use when the user asks for design variants, visual exploration, remixes, or image-generated approaches from provided context. 中文触发词：出几个方案、设计方向、多个视觉方案、视觉探索、设计变体、给我几个不同的设计、配色方案、风格探索。"
+description: "Generate image-based visual alternatives, remixes, or concept directions after Product Design get-context has confirmed the design brief. Use when the user asks for design variants, visual exploration, remixes, or image-generated approaches from provided context."
 ---
 
 > [!NOTE] Codelf 适配说明

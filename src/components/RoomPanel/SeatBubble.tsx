@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import MarkdownView from '../AgentPanel/MarkdownView'
 import Collapsible from '../AgentPanel/Collapsible'
+import ForcedRefsBadge from '../AgentPanel/ForcedRefsBadge'
+import { stripForcedInstruction } from '../AgentPanel/slashCommand'
 import type { RoomMessageView } from '../../stores/roomStore'
 
 // 单条群消息气泡。极简显示策略（§7.4）：默认只显示最终交付文本 + 一行过程摘要，
@@ -18,6 +20,10 @@ export default function SeatBubble({ msg }: { msg: RoomMessageView }): JSX.Eleme
   const isUser = msg.from === 'user'
   const isSystem = msg.from === 'system'
   const hasProcess = msg.activities.length > 0 || !!msg.thinking
+  // 仅用户消息可能含隐藏的强制指令，剥离后只显示正文 + 小徽标。
+  const { body: displayText, forced } = isUser
+    ? stripForcedInstruction(msg.text)
+    : { body: msg.text, forced: [] }
 
   if (isSystem) {
     return (
@@ -55,10 +61,11 @@ export default function SeatBubble({ msg }: { msg: RoomMessageView }): JSX.Eleme
             </div>
           )}
           {msg.text
-            ? <MarkdownView text={msg.text} streaming={msg.streaming} />
+            ? <MarkdownView text={displayText} streaming={msg.streaming} />
             : msg.streaming
               ? <span className="room-msg-typing">正在输入…</span>
               : null}
+          {forced.length > 0 && <ForcedRefsBadge refs={forced} />}
         </div>
         {isUser && <div className="room-msg-time">{formatTime(msg.ts)}</div>}
       </div>

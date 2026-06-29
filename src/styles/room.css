@@ -373,7 +373,7 @@
   font-size: 12px;
   color: var(--text-dim);
 }
-.room-composer-input { display: flex; gap: 8px; align-items: flex-end; }
+.room-composer-input { display: flex; gap: 8px; align-items: flex-end; position: relative; }
 .room-composer-input textarea {
   flex: 1;
   resize: none;
@@ -752,8 +752,9 @@
   cursor: text;
 }
 .pm-item--mine .pm-bubble { background: var(--accent); border-color: transparent; color: #fff; }
-.seat-chat-composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); align-items: flex-end; }
+.seat-chat-composer { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); align-items: flex-end; position: relative; }
 .seat-chat-composer textarea { flex: 1; resize: none; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); }
+.seat-chat-composer .agent-attachments { flex-basis: 100%; margin-bottom: 0; }
 
 /* L2 团队战报右侧滑出抽屉 */
 .room-kpi-drawer-mask { position: fixed; top: var(--titlebar-h, 0px); left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.35); display: flex; justify-content: flex-end; z-index: 65; animation: seat-chat-mask-in 0.3s ease both; }

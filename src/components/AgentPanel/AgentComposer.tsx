@@ -3,6 +3,8 @@ import type { ContextAttachment, ImageAttachment, ProviderProfileSummary } from 
 import { useAgentStore } from '@/stores/agentStore'
 import { toWorkspaceRelative } from '@/utils/path'
 import ContextPicker from './ContextPicker'
+import SlashPicker from './SlashPicker'
+import type { SlashReference } from './slashCommand'
 import ContextUsageRing from '@/components/StatusBar/ContextUsageRing'
 import ContextUsagePopover from '@/components/StatusBar/ContextUsagePopover'
 
@@ -19,6 +21,11 @@ export interface AgentComposerProps {
   pickerActive: number
   pickSignal: number
   atMentionQuery: string
+  slashRefs: SlashReference[]
+  showSlashPicker: boolean
+  slashQuery: string
+  slashActive: number
+  slashPickSignal: number
   hasProfile: boolean
   streaming: boolean
   onInputChange: (value: string) => void
@@ -31,6 +38,10 @@ export interface AgentComposerProps {
   onPick: (item: import('./ContextPicker').PickItem) => void
   onPickerActiveChange: (index: number) => void
   onPickerRowCount: (count: number) => void
+  onSlashPick: (item: import('./SlashPicker').SlashItem) => void
+  onSlashActiveChange: (index: number) => void
+  onSlashRowCount: (count: number) => void
+  onRemoveSlashRef: (id: string) => void
   onRemoveAttachment: (path: string) => void
   onRemoveImage: (dataUrl: string) => void
   textareaRef: React.RefObject<HTMLTextAreaElement>
@@ -50,6 +61,11 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
     pickerActive,
     pickSignal,
     atMentionQuery,
+    slashRefs,
+    showSlashPicker,
+    slashQuery,
+    slashActive,
+    slashPickSignal,
     hasProfile,
     streaming,
     onInputChange,
@@ -62,6 +78,10 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
     onPick,
     onPickerActiveChange,
     onPickerRowCount,
+    onSlashPick,
+    onSlashActiveChange,
+    onSlashRowCount,
+    onRemoveSlashRef,
     onRemoveAttachment,
     onRemoveImage,
     textareaRef
@@ -130,6 +150,30 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
   return (
     <div className="agent-composer">
       <div className="agent-composer-box">
+        {slashRefs.length > 0 && (
+          <div className="agent-attachments" aria-label="强制使用的技能/插件">
+            {slashRefs.map((ref) => (
+              <span
+                key={`${ref.kind}:${ref.name}`}
+                className={`agent-attachment-chip agent-slash-chip ${ref.kind}`}
+              >
+                <span className="agent-attachment-label" title={`强制使用${ref.kind === 'plugin' ? '插件' : '技能'}：${ref.name}`}>
+                  {ref.kind === 'plugin' ? '🧩' : '⚡'} /{ref.name}
+                </span>
+                <button
+                  type="button"
+                  className="agent-attachment-remove"
+                  aria-label="移除引用"
+                  disabled={streaming}
+                  onClick={() => onRemoveSlashRef(`${ref.kind}:${ref.name}`)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         {attachments.length > 0 && (
           <div className="agent-attachments" aria-label="已附加文件">
             {attachments.map((att) => (
@@ -187,6 +231,18 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
           />
         )}
 
+        {showSlashPicker && (
+          <SlashPicker
+            query={slashQuery}
+            workspaceRoot={workspaceRoot}
+            activeIndex={slashActive}
+            onActiveIndexChange={onSlashActiveChange}
+            onPick={onSlashPick}
+            pickSignal={slashPickSignal}
+            onRowCountChange={onSlashRowCount}
+          />
+        )}
+
         <textarea
           ref={textareaRef}
           className="agent-composer-input"
@@ -194,8 +250,8 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
           placeholder={
             hasProfile
               ? supportsVision
-                ? '规划、构建；@ 附加上下文，可粘贴图片，Enter 发送，Shift+Enter 换行'
-                : '规划、构建；@ 附加上下文，Enter 发送，Shift+Enter 换行'
+                ? '规划、构建；@ 附加上下文，/ 引用技能或插件，可粘贴图片，Enter 发送，Shift+Enter 换行'
+                : '规划、构建；@ 附加上下文，/ 引用技能或插件，Enter 发送，Shift+Enter 换行'
               : '请先在设置中配置 Provider'
           }
           disabled={!hasProfile || !!pickingPath}

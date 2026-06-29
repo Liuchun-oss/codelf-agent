@@ -101,7 +101,11 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/index.html') }
+        input: {
+          index: resolve(__dirname, 'src/index.html'),
+          overlayHud: resolve(__dirname, 'src/overlay/hud.html'),
+          overlayMarquee: resolve(__dirname, 'src/overlay/marquee.html')
+        }
       }
     }
   }

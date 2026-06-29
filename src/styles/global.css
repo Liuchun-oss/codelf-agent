@@ -7893,6 +7893,44 @@ kbd {
 .agent-attachment-remove:hover:not(:disabled) {
   color: var(--danger);
 }
+.agent-slash-chip.skill {
+  border-color: var(--accent, #4a9eff);
+}
+.agent-slash-chip.plugin {
+  border-color: #b07cff;
+}
+.agent-slash-kind {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-overlay);
+  color: var(--text-dim);
+}
+.agent-forced-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.agent-forced-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-soft);
+  color: var(--text-dim);
+}
+.agent-forced-ref.plugin {
+  border-color: #b07cff;
+}
+.agent-forced-ref.skill {
+  border-color: var(--accent, #4a9eff);
+}
 .agent-context-picker {
   position: absolute;
   left: 0;
@@ -8525,6 +8563,7 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  position: relative;
   box-shadow:
     0 0 0 1px var(--border-soft),
     0 4px 16px rgba(0, 0, 0, 0.18);

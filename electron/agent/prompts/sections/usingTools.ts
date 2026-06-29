@@ -38,6 +38,7 @@ export function getUsingToolsSection(ctx: PromptContext): string {
   }
   if (has(SEARCH_EXTRA_TOOLS_NAME) && has(EXECUTE_EXTRA_TOOL_NAME)) {
     preferences.push(`Some lower-frequency or large-description tools are deferred to protect context budget. If the task needs a specialized tool that is not directly available, use ${SEARCH_EXTRA_TOOLS_NAME} first, then ${EXECUTE_EXTRA_TOOL_NAME}. Do not use deferred discovery for work a core tool can do.`)
+    preferences.push(`You can also operate the user's computer directly (open and control GUI apps: click, type, screenshot, automate desktop workflows) via deferred Desktop* tools. When a request can only be done by driving the desktop UI (not by answering, coding, file edits, or web/browser tools), discover them with ${SEARCH_EXTRA_TOOLS_NAME}, then call EnterDesktopTakeover to enter full-screen takeover, run the observe->act->observe loop, and call ExitDesktopTakeover when done or stuck. Decide this autonomously; do not ask the user to flip a switch first.`)
   }
   if (has(ASK_USER_NAME)) {
     preferences.push(`When you are blocked by missing requirements or need the user to choose between concrete options, use ${ASK_USER_NAME}; it will show a prompt to the user and wait for their answer.`)

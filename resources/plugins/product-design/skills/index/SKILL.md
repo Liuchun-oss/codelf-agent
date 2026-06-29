@@ -1,6 +1,6 @@
 ---
 name: index
-description: "Use to discover specific skills for the Product Design plugin, when it is at-mentioned directly, or for any mentions of potentially relevant work, including: UX research; product, screen, or flow audits; visual ideation; app or interface design, redesign, cloning, prototyping, or implementation from ideas, URLs, images, Figma, or code; design QA; and prototype sharing or deployment. 中文触发词：设计官网、做个网站、落地页、产品设计、原型、做原型、界面设计、UI 设计、网页设计、克隆网站、仿站、还原设计稿、重设计、改版、把设计图变成代码、设计感、高级感、做个 app、做个页面、做个仪表盘、dashboard、审计体验、UX 审计。当用户用中文要求设计或制作网站、官网、落地页、App、界面、原型时，应路由到本插件。"
+description: "Use to discover specific skills for the Product Design plugin, when it is at-mentioned directly, or for any mentions of potentially relevant work, including: UX research; product, screen, or flow audits; visual ideation; app or interface design, redesign, cloning, prototyping, or implementation from ideas, URLs, images, Figma, or code; design QA; and prototype sharing or deployment."
 ---
 
 > [!NOTE] Codelf 适配说明

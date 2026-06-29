@@ -10,9 +10,13 @@ export const DESKTOP_DRAG_NAME = 'DesktopDrag'
 export const DESKTOP_SCROLL_NAME = 'DesktopScroll'
 export const DESKTOP_KEY_NAME = 'DesktopKey'
 export const DESKTOP_SCREENSHOT_NAME = 'DesktopScreenshot'
+export const DESKTOP_SCREENSHOT_SCREEN_NAME = 'DesktopScreenshotScreen'
+export const DESKTOP_SCREEN_CLICK_NAME = 'DesktopScreenClick'
 export const DESKTOP_WAIT_FOR_NAME = 'DesktopWaitFor'
 export const DESKTOP_HANDOFF_NAME = 'DesktopHandoff'
 export const DESKTOP_CLOSE_APP_NAME = 'DesktopCloseApp'
+export const ENTER_DESKTOP_TAKEOVER_NAME = 'EnterDesktopTakeover'
+export const EXIT_DESKTOP_TAKEOVER_NAME = 'ExitDesktopTakeover'
 
 export const DESKTOP_LAUNCH_APP_DESCRIPTION = `Launch a local desktop application and return its process id and session id.
 
@@ -26,7 +30,14 @@ Behavior:
 Usage:
 - Call this (or DesktopGetWindow) first. Keep the sessionId for follow-up calls.
 - "args" (optional) are extra command-line arguments.
-- Requires OS permission; on macOS the user must grant Accessibility (and Screen Recording for screenshots).`
+- Requires OS permission; on macOS the user must grant Accessibility (and Screen Recording for screenshots).
+
+Computer-control workflow (observe → think → act → observe). Follow this loop on every step:
+1. OBSERVE: read the current state. On the FIRST step take a screenshot (DesktopScreenshot for a window, or DesktopScreenshotScreen for the whole screen) and/or DesktopSnapshot. On LATER steps do NOT take a new screenshot first — the action tool from the previous step already auto-returned a fresh screenshot of the target window; reuse that as your observation.
+2. THINK: decide the single next action from what you actually see — never assume the result of a previous action.
+3. ACT: perform exactly one action (DesktopClick/DesktopType/DesktopKey/DesktopMouse/DesktopDrag/DesktopScroll/DesktopScreenClick).
+4. OBSERVE again: the action tools auto-return a fresh screenshot of the target window; read THAT returned image to verify the action worked before the next step — do NOT call DesktopScreenshot again just to look, it would duplicate the image and waste tokens. Only take an extra screenshot when you genuinely need something the auto-returned one cannot show (e.g. a different window, the full screen, or a popup outside the target window). If the result is wrong, re-snapshot/adjust (e.g. retry a virtual click with mode:"real").
+Repeat until the goal is done. Prefer accessibility refs (DesktopSnapshot + DesktopClick/DesktopType) over raw coordinates when a ref exists; fall back to coordinates/screen clicks for canvases, custom UIs, or Chromium/Electron windows.`
 
 export const DESKTOP_LIST_WINDOWS_DESCRIPTION = `List currently visible top-level windows (title, owning process, process id, and a native handle).
 
@@ -65,7 +76,8 @@ export const DESKTOP_TYPE_DESCRIPTION = `Type text into an editable control insi
 Usage:
 - "windowId" from DesktopGetWindow, "ref" from DesktopSnapshot, "text" is the content.
 - Prefers setting the control value directly; falls back to focusing and sending keystrokes.
-- "submit" (optional) presses Enter after typing.`
+- "submit" (optional) presses Enter after typing.
+- "mode" (optional): "auto" (default) sets the value directly then falls back to keystrokes — fast and reliable for most fields. "realKeystroke" focuses the control and types character-by-character with real keyboard events (Unicode-aware); slower, but use it when "auto" appears to fill the field yet the app does not react (rich-text/contenteditable editors, fields with live validation or input-method composition, some Electron/web inputs), or when an input blocks programmatic value-setting.`
 
 export const DESKTOP_MOUSE_DESCRIPTION = `Click at an arbitrary coordinate inside a window (not tied to an accessibility ref).
 
@@ -128,6 +140,29 @@ Usage:
 - macOS requires Screen Recording permission.
 - This is read-only.`
 
+export const DESKTOP_SCREENSHOT_SCREEN_DESCRIPTION = `Take a screenshot of the WHOLE screen (all monitors or the primary one), not tied to any window. Use for global reconnaissance: locating pop-ups/dialogs/notifications, the taskbar/menu bar, the desktop, or windows you have not registered yet.
+
+The image is sent to the model ONLY when the active model has image input (vision) enabled; otherwise a text placeholder is kept.
+
+Usage:
+- "sessionId" is required (create one via DesktopGetWindow/DesktopLaunchApp). No windowId needed.
+- "area": "virtual" (default, the full multi-monitor virtual desktop) or "primary" (primary monitor only).
+- "maxDimension" (optional) caps the longest side in pixels and downscales (e.g. 1280) to lower vision-token cost.
+- Pixel coordinates you read off this screenshot can be passed straight to DesktopScreenClick — they auto-map back to true screen pixels.
+- To act inside a specific window, prefer the window-scoped tools (DesktopScreenshot + DesktopSnapshot/Click). Use this + DesktopScreenClick only for free-form, screen-global clicking.
+- macOS requires Screen Recording permission. This is read-only.`
+
+export const DESKTOP_SCREEN_CLICK_DESCRIPTION = `Click at an absolute SCREEN coordinate (not relative to any window). Always uses real input (moves the actual cursor), so it works on any window including Chromium/Electron apps.
+
+Use together with DesktopScreenshotScreen for screen-global clicking: read the target pixel off the latest full-screen screenshot and pass it here.
+
+Coordinates:
+- "x"/"y" are pixels off the latest DesktopScreenshotScreen by default; the tool auto-maps them back to true screen pixels using that screenshot's scale/origin. Set "coordinateSpace":"screen" if you already have true physical screen pixels.
+
+Behavior:
+- "button": "left" (default), "right", "middle". "doubleClick": true performs a double click.
+- This moves the real cursor and clicks wherever it lands — make sure the coordinate is correct (re-screenshot to verify).`
+
 export const DESKTOP_WAIT_FOR_DESCRIPTION = `Wait for a window matching a title/process to appear before continuing.
 
 Usage:
@@ -153,3 +188,28 @@ Usage:
 - Provide "processId" (from DesktopLaunchApp) or "windowId" (from DesktopGetWindow).
 - "force" (optional) kills the process immediately instead of requesting a graceful close.
 - This is destructive: closing an app may discard unsaved work.`
+
+export const ENTER_DESKTOP_TAKEOVER_DESCRIPTION = `Enter full-screen takeover mode before you start operating the user's computer with the Desktop* tools.
+
+When to use this AUTONOMOUSLY (decide yourself, do not wait to be asked):
+- The user's request can only be fulfilled by operating GUI applications on their computer (clicking, typing, navigating apps, filling forms, automating a desktop workflow) rather than by answering, writing code, or editing files.
+- Examples: "help me open X and do Y", "fill in this form in app Z", "organize these windows", "click through this installer".
+
+What it does:
+- Minimizes the codelf window to the tray, shows a corner HUD (your live progress + an ESC-to-exit hint) and a screen-edge marquee so the user clearly sees the computer is being controlled.
+- After entering, use the Desktop* tools (DesktopScreenshotScreen, DesktopGetWindow, DesktopSnapshot, DesktopClick, DesktopType, DesktopScreenClick, etc.) in an observe->act->observe loop.
+- While in takeover, DesktopGetWindow automatically restores and brings the target window to the foreground, so the user can watch what you do. Keep the target window visible: do not minimize it; if you must switch apps, bring the next one to front via DesktopGetWindow.
+- When the task is done OR you cannot make progress, call ExitDesktopTakeover to hand control back and restore the codelf window, then summarize the outcome.
+
+Notes:
+- "task" (optional): a short label of what you are about to do, shown on the HUD.
+- Do NOT enter takeover for pure Q&A, coding, file edits, or web/browser-only tasks (use Browser* tools for the latter).
+- The user can interrupt anytime with ESC or the HUD stop button; if that happens your turn is cancelled.`
+
+export const EXIT_DESKTOP_TAKEOVER_DESCRIPTION = `Exit full-screen takeover mode and restore the codelf window.
+
+Call this as soon as the desktop task is complete, or when you have determined you cannot complete it. After calling, continue your reply normally (e.g. summarize what you did or why you stopped).
+
+Usage:
+- "summary" (optional): a one-line result shown briefly on the HUD before it closes.
+- Safe to call even if not currently in takeover (no-op).`

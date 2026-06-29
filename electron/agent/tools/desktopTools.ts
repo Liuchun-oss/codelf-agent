@@ -5,11 +5,13 @@ import {
   getDesktopSession,
   getWindow,
   registerWindow,
+  setScreenShotMapping,
   setWindowScreenshotScale,
   trackLaunchedPid
 } from '../../services/desktopSession'
 import { getDesktopDriver, DesktopDriverError, type WindowInfo } from '../../services/desktopDriver'
 import { storeBrowserPreview, browserPreviewUrl } from '../../services/browserPreviewImage'
+import { enterTakeover, exitTakeover, isTakeoverActive } from '../../services/takeover/takeoverController'
 import { BROWSER_OPEN_NAME } from '../prompts/tools/browser'
 import {
   DESKTOP_LAUNCH_APP_NAME,
@@ -36,12 +38,20 @@ import {
   DESKTOP_KEY_DESCRIPTION,
   DESKTOP_SCREENSHOT_NAME,
   DESKTOP_SCREENSHOT_DESCRIPTION,
+  DESKTOP_SCREENSHOT_SCREEN_NAME,
+  DESKTOP_SCREENSHOT_SCREEN_DESCRIPTION,
+  DESKTOP_SCREEN_CLICK_NAME,
+  DESKTOP_SCREEN_CLICK_DESCRIPTION,
   DESKTOP_WAIT_FOR_NAME,
   DESKTOP_WAIT_FOR_DESCRIPTION,
   DESKTOP_HANDOFF_NAME,
   DESKTOP_HANDOFF_DESCRIPTION,
   DESKTOP_CLOSE_APP_NAME,
-  DESKTOP_CLOSE_APP_DESCRIPTION
+  DESKTOP_CLOSE_APP_DESCRIPTION,
+  ENTER_DESKTOP_TAKEOVER_NAME,
+  ENTER_DESKTOP_TAKEOVER_DESCRIPTION,
+  EXIT_DESKTOP_TAKEOVER_NAME,
+  EXIT_DESKTOP_TAKEOVER_DESCRIPTION
 } from '../prompts/tools/desktop'
 
 const MAX_SNAPSHOT_NODES = 200
@@ -140,6 +150,30 @@ function routingAdvisory(w: WindowInfo): string {
   return ''
 }
 
+// 操作类工具执行后自动回带一张目标窗口截图，形成「操作→观察」闭环：
+// 模型每次点击/输入/按键后都能立刻看到结果，无需显式再调 DesktopScreenshot。
+// 失败不抛错（仅在文本里说明），避免影响主操作的成功结果。
+async function autoScreenshot(
+  sessionId: string,
+  windowId: string,
+  win: WindowInfo
+): Promise<{ note: string; images?: { dataUrl: string }[] }> {
+  try {
+    const driver = await getDesktopDriver()
+    const shot = await driver.screenshot(win.nativeHandle, { maxDimension: DEFAULT_SCREENSHOT_MAX_DIM })
+    if (shot.buffer.length > MAX_SCREENSHOT_BYTES) {
+      return { note: '\n\n（操作后截图过大，已省略，可手动调小窗口后用 DesktopScreenshot 查看。）' }
+    }
+    setWindowScreenshotScale(sessionId, windowId, shot.scale)
+    const previewId = await storeBrowserPreview(shot.buffer, shot.mime)
+    const dataUrl = `data:${shot.mime};base64,${shot.buffer.toString('base64')}`
+    const note = `\n\n操作后窗口截图（${shot.imageWidth}×${shot.imageHeight}px，坐标可直接读图）：\n\n![after](${browserPreviewUrl(previewId)})`
+    return { note, images: [{ dataUrl }] }
+  } catch {
+    return { note: '\n\n（操作后自动截图失败，可单独调用 DesktopScreenshot 查看当前状态。）' }
+  }
+}
+
 // [LAUNCH]
 const launchSchema = z.object({
   app: z.string().min(1).describe('Executable name, path, or app name to launch'),
@@ -236,8 +270,19 @@ export const desktopGetWindowTool: Tool<GetWindowInput> = {
       if (!win) return { content: '未找到匹配的窗口。可先用 DesktopListWindows 查看现有窗口。', isError: true }
       const ref = registerWindow(session.id, win)
       if (!ref) return { content: '会话已关闭，无法登记窗口', isError: true }
+      // 接管模式下：把目标窗口取消最小化并提到前台，让用户能看见 agent 正在操作的窗口
+      // （否则虚拟模式可后台操作最小化窗口，跑马灯/HUD 想展示却看不到内容）。
+      let frontNote = ''
+      if (isTakeoverActive()) {
+        try {
+          await driver.bringToFront(win.nativeHandle)
+          frontNote = '\n（接管中：已将该窗口恢复并置于前台。）'
+        } catch {
+          frontNote = '\n（接管中：尝试置前台失败，窗口可能仍在后台。）'
+        }
+      }
       return {
-        content: `windowId: ${ref.windowId}\nsessionId: ${session.id}\n${describeWindow(win)}${routingAdvisory(win)}`
+        content: `windowId: ${ref.windowId}\nsessionId: ${session.id}\n${describeWindow(win)}${routingAdvisory(win)}${frontNote}`
       }
     } catch (e) {
       return driverError(e)
@@ -315,7 +360,8 @@ export const desktopClickTool: Tool<ClickInput> = {
       const driver = await getDesktopDriver()
       const res = await driver.click(win.nativeHandle, input.ref)
       if (!res.ok) return { content: res.message ?? '点击失败', isError: true }
-      return { content: `Clicked ${input.ref}.${res.message ? ` (${res.message})` : ''}` }
+      const shot = await autoScreenshot(input.sessionId, input.windowId, win)
+      return { content: `Clicked ${input.ref}.${res.message ? ` (${res.message})` : ''}${shot.note}`, images: shot.images }
     } catch (e) {
       return driverError(e)
     }
@@ -327,7 +373,11 @@ const typeSchema = z.object({
   windowId: z.string().min(1).describe('Window id from DesktopGetWindow'),
   ref: z.string().min(1).describe('Element ref from DesktopSnapshot'),
   text: z.string().describe('Text to fill into the control'),
-  submit: z.boolean().optional().describe('Press Enter after typing')
+  submit: z.boolean().optional().describe('Press Enter after typing'),
+  mode: z
+    .enum(['auto', 'realKeystroke'])
+    .optional()
+    .describe('auto=set value directly then fall back to keystrokes (default, fast); realKeystroke=type character-by-character with real keyboard events (slower, bypasses inputs that block programmatic value-setting)')
 })
 type TypeInput = z.infer<typeof typeSchema>
 
@@ -342,9 +392,11 @@ export const desktopTypeTool: Tool<TypeInput> = {
     if (error) return error
     try {
       const driver = await getDesktopDriver()
-      const res = await driver.type(win.nativeHandle, input.ref, input.text, input.submit ?? false)
+      const res = await driver.type(win.nativeHandle, input.ref, input.text, input.submit ?? false, input.mode)
       if (!res.ok) return { content: res.message ?? '输入失败', isError: true }
-      return { content: `Typed into ${input.ref}${input.submit ? ' and submitted' : ''}.` }
+      const how = input.mode === 'realKeystroke' ? '逐字符真实键入' : '直接赋值'
+      const shot = await autoScreenshot(input.sessionId, input.windowId, win)
+      return { content: `Typed into ${input.ref}${input.submit ? ' and submitted' : ''} [${how}].${shot.note}`, images: shot.images }
     } catch (e) {
       return driverError(e)
     }
@@ -395,7 +447,11 @@ export const desktopMouseTool: Tool<MouseInput> = {
         (input.mode ?? 'auto') !== 'real' && classifyWindow(win) !== 'native'
           ? ` 若无效，该窗口（${win.processName}）疑似 Chromium/Electron，请重试并传 mode:"real"。`
           : ''
-      return { content: `Clicked at client (${Math.round(x)}, ${Math.round(y)}) with ${input.button ?? 'left'} button [${how}].${retryHint}` }
+      const shot = await autoScreenshot(input.sessionId, input.windowId, win)
+      return {
+        content: `Clicked at client (${Math.round(x)}, ${Math.round(y)}) with ${input.button ?? 'left'} button [${how}].${retryHint}${shot.note}`,
+        images: shot.images
+      }
     } catch (e) {
       return driverError(e)
     }
@@ -474,8 +530,10 @@ export const desktopDragTool: Tool<DragInput> = {
         mode: input.mode
       })
       if (!res.ok) return { content: res.message ?? '拖拽失败', isError: true }
+      const shot = await autoScreenshot(input.sessionId, input.windowId, win)
       return {
-        content: `Dragged from client (${Math.round(fromX)}, ${Math.round(fromY)}) to (${Math.round(toX)}, ${Math.round(toY)}) with ${input.button ?? 'left'} button.`
+        content: `Dragged from client (${Math.round(fromX)}, ${Math.round(fromY)}) to (${Math.round(toX)}, ${Math.round(toY)}) with ${input.button ?? 'left'} button.${shot.note}`,
+        images: shot.images
       }
     } catch (e) {
       return driverError(e)
@@ -520,7 +578,11 @@ export const desktopScrollTool: Tool<ScrollInput> = {
         mode: input.mode
       })
       if (!res.ok) return { content: res.message ?? '滚动失败', isError: true }
-      return { content: `Scrolled at client (${Math.round(x)}, ${Math.round(y)}) deltaY=${input.deltaY ?? 0} deltaX=${input.deltaX ?? 0}.` }
+      const shot = await autoScreenshot(input.sessionId, input.windowId, win)
+      return {
+        content: `Scrolled at client (${Math.round(x)}, ${Math.round(y)}) deltaY=${input.deltaY ?? 0} deltaX=${input.deltaX ?? 0}.${shot.note}`,
+        images: shot.images
+      }
     } catch (e) {
       return driverError(e)
     }
@@ -548,7 +610,8 @@ export const desktopKeyTool: Tool<KeyInput> = {
       const driver = await getDesktopDriver()
       const res = await driver.pressKeys(win.nativeHandle, { combo: input.combo, mode: input.mode })
       if (!res.ok) return { content: res.message ?? '按键失败', isError: true }
-      return { content: `Pressed ${input.combo}.` }
+      const shot = await autoScreenshot(input.sessionId, input.windowId, win)
+      return { content: `Pressed ${input.combo}.${shot.note}`, images: shot.images }
     } catch (e) {
       return driverError(e)
     }
@@ -608,6 +671,115 @@ export const desktopScreenshotTool: Tool<ScreenshotInput> = {
         content: `Screenshot of "${win.title}" (${shot.imageWidth}×${shot.imageHeight}px):\n\n![screenshot](${browserPreviewUrl(previewId)})${scaledNote}`,
         // 仅当模型开启视觉时由编排层附带；否则自动丢弃，仅保留文本。
         images: [{ dataUrl }]
+      }
+    } catch (e) {
+      return driverError(e)
+    }
+  }
+}
+// [SCREENSHOT_SCREEN]
+const screenshotScreenSchema = z.object({
+  sessionId: z.string().min(1).describe('Desktop session id'),
+  area: z.enum(['virtual', 'primary']).optional().describe('"virtual" (all monitors, default) or "primary" (primary monitor only)'),
+  maxDimension: z
+    .number()
+    .int()
+    .min(320)
+    .max(4096)
+    .optional()
+    .describe('Cap the screenshot longest side in pixels (default 1280) to lower vision-token cost')
+})
+type ScreenshotScreenInput = z.infer<typeof screenshotScreenSchema>
+
+export const desktopScreenshotScreenTool: Tool<ScreenshotScreenInput> = {
+  name: DESKTOP_SCREENSHOT_SCREEN_NAME,
+  description: DESKTOP_SCREENSHOT_SCREEN_DESCRIPTION,
+  schema: screenshotScreenSchema,
+  readOnly: true,
+  concurrencySafe: false,
+  async execute(input, ctx): Promise<ToolResult> {
+    const session = getDesktopSession(input.sessionId)
+    if (!session || session.status !== 'open') {
+      return { content: `桌面会话不存在或已关闭：${input.sessionId}`, isError: true }
+    }
+    try {
+      const driver = await getDesktopDriver()
+      const maxDimension = input.maxDimension ?? DEFAULT_SCREENSHOT_MAX_DIM
+      const shot = await driver.screenshotScreen({ maxDimension, area: input.area })
+      if (shot.buffer.length > MAX_SCREENSHOT_BYTES) {
+        return { content: '全屏截图过大，无法内嵌显示。请调低 maxDimension 后重试。', isError: true }
+      }
+      // 记录屏幕坐标映射，供 DesktopScreenClick 把图片坐标还原为屏幕绝对坐标。
+      setScreenShotMapping(input.sessionId, { scale: shot.scale, originX: shot.originX, originY: shot.originY })
+      const previewId = await storeBrowserPreview(shot.buffer, shot.mime)
+      const dataUrl = `data:${shot.mime};base64,${shot.buffer.toString('base64')}`
+      if (ctx.emitEvent && ctx.turnId && ctx.toolCallId) {
+        ctx.emitEvent({
+          type: 'tool_call_progress',
+          turnId: ctx.turnId,
+          callId: ctx.toolCallId,
+          status: 'running',
+          message: 'Full-screen screenshot captured.'
+        })
+      }
+      const scaledNote =
+        shot.scale < 0.999
+          ? `\n\n（图片为 ${shot.imageWidth}×${shot.imageHeight}，已从屏幕 ${shot.screenWidth}×${shot.screenHeight} 缩小；点击坐标可直接读图，DesktopScreenClick 会自动还原。）`
+          : ''
+      return {
+        content: `Full-screen screenshot (${shot.imageWidth}×${shot.imageHeight}px):\n\n![screen](${browserPreviewUrl(previewId)})${scaledNote}`,
+        images: [{ dataUrl }]
+      }
+    } catch (e) {
+      return driverError(e)
+    }
+  }
+}
+
+// [SCREEN_CLICK]
+const screenClickSchema = z.object({
+  sessionId: z.string().min(1).describe('Desktop session id'),
+  x: z.number().describe('X pixels (image-space off the latest DesktopScreenshotScreen by default; see coordinateSpace)'),
+  y: z.number().describe('Y pixels (image-space off the latest DesktopScreenshotScreen by default; see coordinateSpace)'),
+  coordinateSpace: z
+    .enum(['image', 'screen'])
+    .optional()
+    .describe('Coordinate space of x/y: "image" (default, pixels off the latest DesktopScreenshotScreen, auto-rescaled) or "screen" (true physical screen pixels)'),
+  button: buttonSchema,
+  doubleClick: z.boolean().optional().describe('Perform a double click')
+})
+type ScreenClickInput = z.infer<typeof screenClickSchema>
+
+export const desktopScreenClickTool: Tool<ScreenClickInput> = {
+  name: DESKTOP_SCREEN_CLICK_NAME,
+  description: DESKTOP_SCREEN_CLICK_DESCRIPTION,
+  schema: screenClickSchema,
+  readOnly: false,
+  concurrencySafe: false,
+  async execute(input): Promise<ToolResult> {
+    const session = getDesktopSession(input.sessionId)
+    if (!session || session.status !== 'open') {
+      return { content: `桌面会话不存在或已关闭：${input.sessionId}`, isError: true }
+    }
+    try {
+      const driver = await getDesktopDriver()
+      // 把图片坐标还原为屏幕绝对坐标：screen = origin + image / scale。
+      let sx = input.x
+      let sy = input.y
+      if (input.coordinateSpace !== 'screen' && session.lastScreenShot) {
+        const m = session.lastScreenShot
+        sx = m.originX + input.x / m.scale
+        sy = m.originY + input.y / m.scale
+      }
+      const res = await driver.mouseClickAbsolute({
+        x: sx,
+        y: sy,
+        button: input.button,
+        doubleClick: input.doubleClick
+      })
+      if (!res.ok) return { content: res.message ?? '点击失败', isError: true }
+      return {
+        content: `Clicked at screen (${Math.round(sx)}, ${Math.round(sy)}) with ${input.button ?? 'left'} button [真实光标]. 可调用 DesktopScreenshotScreen 查看结果。`
       }
     } catch (e) {
       return driverError(e)
@@ -733,6 +905,52 @@ export const desktopCloseAppTool: Tool<CloseInput> = {
 }
 // [CLOSE_END]
 
+// [TAKEOVER]
+const enterTakeoverSchema = z.object({
+  task: z.string().optional().describe('Short label of what you are about to do on the computer (shown on HUD)'),
+  displayId: z.number().optional().describe('Target display id; omit to use the display under the cursor')
+})
+type EnterTakeoverInput = z.infer<typeof enterTakeoverSchema>
+
+export const enterDesktopTakeoverTool: Tool<EnterTakeoverInput> = {
+  name: ENTER_DESKTOP_TAKEOVER_NAME,
+  description: ENTER_DESKTOP_TAKEOVER_DESCRIPTION,
+  schema: enterTakeoverSchema,
+  readOnly: false,
+  concurrencySafe: false,
+  async execute(input, ctx): Promise<ToolResult> {
+    const sessionId = ctx.sessionId
+    if (!sessionId) {
+      return { content: '无法进入接管：缺少会话上下文。', isError: true }
+    }
+    const res = await enterTakeover({ sessionId, task: input.task, displayId: input.displayId })
+    if (!res.ok) return { content: res.error ?? '无法进入接管模式', isError: true }
+    return {
+      content:
+        '已进入全屏接管模式。codelf 已收进托盘，HUD 与跑马灯已显示。现在用 Desktop* 工具按「截图→分析→操作→再截图」推进任务；完成或无法推进时调用 ExitDesktopTakeover 退出。'
+    }
+  }
+}
+
+const exitTakeoverSchema = z.object({
+  summary: z.string().optional().describe('One-line result shown briefly on the HUD before closing')
+})
+type ExitTakeoverInput = z.infer<typeof exitTakeoverSchema>
+
+export const exitDesktopTakeoverTool: Tool<ExitTakeoverInput> = {
+  name: EXIT_DESKTOP_TAKEOVER_NAME,
+  description: EXIT_DESKTOP_TAKEOVER_DESCRIPTION,
+  schema: exitTakeoverSchema,
+  readOnly: false,
+  concurrencySafe: false,
+  async execute(): Promise<ToolResult> {
+    // 正常完成退出，不取消 agent（agent 继续在 codelf 窗口里收尾回话）。
+    await exitTakeover('completed', { cancelAgent: false })
+    return { content: '已退出接管模式，codelf 窗口已恢复。请用一句话总结刚才的操作结果。' }
+  }
+}
+// [TAKEOVER_END]
+
 export const desktopTools = [
   desktopLaunchAppTool,
   desktopListWindowsTool,
@@ -746,7 +964,11 @@ export const desktopTools = [
   desktopScrollTool,
   desktopKeyTool,
   desktopScreenshotTool,
+  desktopScreenshotScreenTool,
+  desktopScreenClickTool,
   desktopWaitForTool,
   desktopHandoffTool,
-  desktopCloseAppTool
+  desktopCloseAppTool,
+  enterDesktopTakeoverTool,
+  exitDesktopTakeoverTool
 ]

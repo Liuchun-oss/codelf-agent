@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatMessageView } from '@/stores/agentStore'
 import { useAgentStore } from '@/stores/agentStore'
+import { stripForcedInstruction } from './slashCommand'
+import ForcedRefsBadge from './ForcedRefsBadge'
 
 interface Props {
   msg: ChatMessageView
@@ -10,13 +12,17 @@ interface Props {
 export default function UserMessageBubble({ msg }: Props): JSX.Element {
   const streaming = useAgentStore((s) => s.streaming)
   const editAndResend = useAgentStore((s) => s.editAndResend)
+  const { body: displayText, forced } = useMemo(
+    () => stripForcedInstruction(msg.content),
+    [msg.content]
+  )
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(msg.content)
+  const [draft, setDraft] = useState(displayText)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    if (!editing) setDraft(msg.content)
-  }, [msg.content, editing])
+    if (!editing) setDraft(displayText)
+  }, [displayText, editing])
 
   useEffect(() => {
     if (!editing) return
@@ -34,7 +40,7 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
   }, [editing])
 
   const resend = (): void => {
-    const text = (editing ? draft : msg.content).trim()
+    const text = (editing ? draft : displayText).trim()
     if (!text || streaming) return
     void editAndResend(msg.id, text)
     setEditing(false)
@@ -43,7 +49,7 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Escape') {
       e.preventDefault()
-      setDraft(msg.content)
+      setDraft(displayText)
       setEditing(false)
       return
     }
@@ -54,7 +60,7 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
   }
 
   const onBlur = (): void => {
-    setDraft(msg.content)
+    setDraft(displayText)
     setEditing(false)
   }
 
@@ -92,13 +98,13 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
             onClick={() => setEditing(true)}
             title="点击编辑"
           >
-            <span className="agent-user-bubble-text-inner">{msg.content}</span>
+            <span className="agent-user-bubble-text-inner">{displayText}</span>
           </button>
         )}
         <button
           type="button"
           className="agent-user-bubble-resend"
-          disabled={streaming || !(editing ? draft.trim() : msg.content.trim())}
+          disabled={streaming || !(editing ? draft.trim() : displayText.trim())}
           title={editing ? '发送修改后的问题' : '用此问题重新发送'}
           aria-label="重新发送"
           onClick={(e) => {
@@ -111,6 +117,7 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
           </span>
         </button>
       </div>
+      <ForcedRefsBadge refs={forced} />
     </div>
   )
 }

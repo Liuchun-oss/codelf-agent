@@ -10,6 +10,9 @@ import ConversationView from '@/components/AgentPanel/ConversationView'
 import ArtifactPanel from '@/components/AgentPanel/ArtifactPanel'
 import { deriveArtifacts } from '@/components/AgentPanel/artifacts'
 import { fileToImageAttachment, appendImage } from '@/components/AgentPanel/imageAttachment'
+import SlashPicker from '@/components/AgentPanel/SlashPicker'
+import SlashRefChips from '@/components/AgentPanel/SlashRefChips'
+import { useSlashRefs } from '@/components/AgentPanel/useSlashRefs'
 import type { ImageAttachment } from '@shared/agentTypes'
 import { useAppVersion } from '@/hooks/useAppVersion'
 import CwdPicker from './CwdPicker'
@@ -73,6 +76,7 @@ export default function HomeScreen(): JSX.Element {
   const pickedWs = useUiStore((s) => s.homePickedWorkspace)
   const setPickedWs = useUiStore((s) => s.setHomePickedWorkspace)
   const [draft, setDraft] = useState('')
+  const [draftCursor, setDraftCursor] = useState(0)
   const [draftImages, setDraftImages] = useState<ImageAttachment[]>([])
   const [artifactClosing, setArtifactClosing] = useState(false)
   const initializedPick = useRef(false)
@@ -91,6 +95,12 @@ export default function HomeScreen(): JSX.Element {
   )
   const hasProfile = useAgentStore((s) => !!s.activeProfile)
   const supportsVision = useAgentStore((s) => !!s.activeProfile?.supportsVision)
+
+  const slash = useSlashRefs(draft, draftCursor, false)
+  const syncDraftCursor = useCallback((): void => {
+    const el = textareaRef.current
+    if (el) setDraftCursor(el.selectionStart ?? 0)
+  }, [])
 
   // 当前对话里是否存在可预览产物（决定右侧预览栏是否出现）。
   // 视频队列里有任务（哪怕只提交还在后台生成）也算可预览产物，否则
@@ -182,7 +192,8 @@ export default function HomeScreen(): JSX.Element {
   const startChat = (): void => {
     const text = draft.trim()
     const imgs = draftImages.length > 0 ? [...draftImages] : undefined
-    if (!text && !imgs) return
+    const message = slash.composeMessage(text)
+    if (!message && !imgs) return
     if (!hasProfile) {
       // 不静默跳转：说明原因，草稿保留，配置完成回来可直接发送
       toast.warn('尚未配置 AI Provider，请先在设置中添加；输入内容已保留')
@@ -192,9 +203,11 @@ export default function HomeScreen(): JSX.Element {
     const cwd = pickedWs?.path ?? null
     newSession(cwd)
     if (pickedWs) addRecentWorkspace(pickedWs)
-    void sendMessage(text, undefined, imgs)
+    void sendMessage(message, undefined, imgs)
     setDraft('')
+    setDraftCursor(0)
     setDraftImages([])
+    slash.clearSlashRefs()
     setChatOpen(true)
   }
 
@@ -476,6 +489,25 @@ export default function HomeScreen(): JSX.Element {
                   </div>
                 )}
                 <div className="home-composer">
+                  {slash.showSlashPicker && (
+                    <SlashPicker
+                      query={slash.slashQuery}
+                      workspaceRoot={pickedWs?.path}
+                      activeIndex={slash.slashActive}
+                      onActiveIndexChange={slash.setSlashActive}
+                      onPick={(item) =>
+                        slash.applySlashPick(item, {
+                          input: draft,
+                          setInput: setDraft,
+                          setCursor: setDraftCursor,
+                          textareaRef
+                        })
+                      }
+                      pickSignal={slash.slashPickSignal}
+                      onRowCountChange={slash.setSlashRowCount}
+                    />
+                  )}
+                  <SlashRefChips refs={slash.slashRefs} onRemove={slash.removeSlashRef} />
                   {draftImages.length > 0 && (
                     <div className="agent-image-strip" aria-label="已附加图片">
                       {draftImages.map((img) => (
@@ -509,14 +541,26 @@ export default function HomeScreen(): JSX.Element {
                     value={draft}
                     onChange={(e) => {
                       setDraft(e.target.value)
+                      setDraftCursor(e.target.selectionStart ?? e.target.value.length)
                       autoGrow()
                     }}
+                    onSelect={syncDraftCursor}
+                    onClick={syncDraftCursor}
+                    onKeyUp={syncDraftCursor}
                     onPaste={(e) => void onComposerPaste(e)}
                     onDragOver={(e) => {
                       if (Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault()
                     }}
                     onDrop={onComposerDrop}
                     onKeyDown={(e) => {
+                      if (
+                        slash.handleSlashKeyDown(e, {
+                          input: draft,
+                          setInput: setDraft,
+                          setCursor: setDraftCursor
+                        })
+                      )
+                        return
                       if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                         e.preventDefault()
                         startChat()
@@ -533,7 +577,7 @@ export default function HomeScreen(): JSX.Element {
                       type="button"
                       className="home-composer-send"
                       title="开始对话 (Enter)"
-                      disabled={!draft.trim() && draftImages.length === 0}
+                      disabled={!draft.trim() && draftImages.length === 0 && slash.slashRefs.length === 0}
                       onClick={startChat}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">

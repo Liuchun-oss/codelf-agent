@@ -118,6 +118,8 @@ export interface PluginInstallRecord {
 // 设置界面展示的已安装插件信息。
 export interface InstalledPluginInfo extends PluginInstallRecord {
   installDir: string
+  // 随应用分发的内置插件（位于 resources/plugins）：只读，不可卸载。
+  builtin?: boolean
 }
 
 export interface PluginUninstallResult {

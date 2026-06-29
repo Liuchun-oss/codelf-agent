@@ -201,6 +201,25 @@ const api = {
     ipcRenderer.invoke('ai:userQuestionResponse', sessionId, requestId, response),
   aiFileChangeResponse: (sessionId: string, changeId: string, decision: FileChangeDecision) =>
     ipcRenderer.invoke('ai:fileChangeResponse', sessionId, changeId, decision),
+
+  
+  takeoverStop: () => ipcRenderer.invoke('takeover:stop') as Promise<boolean>,
+  takeoverState: () =>
+    ipcRenderer.invoke('takeover:state') as Promise<import('@shared/takeoverTypes').TakeoverState>,
+  takeoverResizeHud: (height: number) => ipcRenderer.send('takeover:resizeHud', height),
+  // HUD 覆盖层订阅：状态快照与精简事件流。
+  onTakeoverStatus: (cb: (status: import('@shared/takeoverTypes').TakeoverStatus) => void) => {
+    const listener = (_e: IpcRendererEvent, status: import('@shared/takeoverTypes').TakeoverStatus) =>
+      cb(status)
+    ipcRenderer.on('takeover:status', listener)
+    return () => ipcRenderer.removeListener('takeover:status', listener)
+  },
+  onTakeoverEvent: (cb: (ev: import('@shared/takeoverTypes').TakeoverHudEvent) => void) => {
+    const listener = (_e: IpcRendererEvent, ev: import('@shared/takeoverTypes').TakeoverHudEvent) =>
+      cb(ev)
+    ipcRenderer.on('takeover:event', listener)
+    return () => ipcRenderer.removeListener('takeover:event', listener)
+  },
   readBrowserPreview: (id: string) =>
     ipcRenderer.invoke('browser:readPreview', id) as Promise<{ mime: string; data: string } | null>,
   onBrowserOpenUrl: (cb: (url: string) => void) => {

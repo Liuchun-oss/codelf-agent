@@ -80,9 +80,13 @@ import {
   desktopScrollTool,
   desktopKeyTool,
   desktopScreenshotTool,
+  desktopScreenshotScreenTool,
+  desktopScreenClickTool,
   desktopWaitForTool,
   desktopHandoffTool,
-  desktopCloseAppTool
+  desktopCloseAppTool,
+  enterDesktopTakeoverTool,
+  exitDesktopTakeoverTool
 } from './desktopTools'
 
 const CORE_TOOL_NAMES = new Set<string>([
@@ -418,9 +422,13 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...desktopScrollTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopKeyTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopScreenshotTool, deferred: true, supportsBackgroundExecution: true, permissionGroup: 'desktop' })
+  registry.register({ ...desktopScreenshotScreenTool, deferred: true, supportsBackgroundExecution: true, permissionGroup: 'desktop' })
+  registry.register({ ...desktopScreenClickTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopWaitForTool, deferred: true, supportsBackgroundExecution: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopHandoffTool, deferred: true, permissionGroup: 'desktop' })
   registry.register({ ...desktopCloseAppTool, deferred: true, destructive: true, permissionGroup: 'desktop' })
+  registry.register({ ...enterDesktopTakeoverTool, deferred: true, permissionGroup: 'desktop' })
+  registry.register({ ...exitDesktopTakeoverTool, deferred: true, permissionGroup: 'desktop' })
   registry.register(writeFileTool)
   registry.register(editFileTool)
   registry.register({ ...multiEditTool, deferred: true })

@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import type { Room } from '@shared/roomTypes'
 import { useRoomStore } from '../../stores/roomStore'
 import MarkdownView from '../AgentPanel/MarkdownView'
+import SlashPicker from '../AgentPanel/SlashPicker'
+import SlashRefChips from '../AgentPanel/SlashRefChips'
+import ForcedRefsBadge from '../AgentPanel/ForcedRefsBadge'
+import { useSlashRefs } from '../AgentPanel/useSlashRefs'
+import { stripForcedInstruction } from '../AgentPanel/slashCommand'
 import { useDismiss } from './useDismiss'
 
 // 岗位 1v1 私聊抽屉（§7.2 / U1）：集中显示「与该岗位相关的全部私聊消息」——
@@ -28,7 +33,14 @@ export default function SeatChatDrawer({
   const messages = useRoomStore((s) => (room ? s.messages[room.id] ?? [] : []))
   const privateChat = useRoomStore((s) => s.privateChat)
   const [text, setText] = useState('')
+  const [cursor, setCursor] = useState(0)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const slash = useSlashRefs(text, cursor, false)
+  const syncCursor = (): void => {
+    const el = textareaRef.current
+    if (el) setCursor(el.selectionStart ?? 0)
+  }
   const { closing, requestClose, onAnimationEnd } = useDismiss(onClose)
 
   const seat = room.seats.find((s) => s.id === seatId)
@@ -57,9 +69,12 @@ export default function SeatChatDrawer({
 
   const submit = (): void => {
     const t = text.trim()
-    if (!t) return
-    void privateChat(seatId, t)
+    const message = slash.composeMessage(t)
+    if (!message) return
+    void privateChat(seatId, message)
     setText('')
+    setCursor(0)
+    slash.clearSlashRefs()
   }
 
   return (
@@ -85,6 +100,9 @@ export default function SeatChatDrawer({
             ? <div className="seat-chat-empty">还没有私聊记录。在下方说一句，单独找 TA 聊。</div>
             : thread.map((m) => {
                 const mine = m.from === 'user'
+                const { body: pmText, forced: pmForced } = mine
+                  ? stripForcedInstruction(m.text)
+                  : { body: m.text, forced: [] }
                 return (
                   <div key={m.id} className={`pm-item${mine ? ' pm-item--mine' : ''}`}>
                     <div className="pm-meta">
@@ -92,20 +110,42 @@ export default function SeatChatDrawer({
                       <span className="pm-time">{formatTime(m.ts)}</span>
                     </div>
                     <div className="pm-bubble">
-                      {m.text
-                        ? <MarkdownView text={m.text} streaming={m.streaming} />
+                      {pmText
+                        ? <MarkdownView text={pmText} streaming={m.streaming} />
                         : m.streaming ? <span className="room-msg-typing">正在输入…</span> : null}
+                      {pmForced.length > 0 && <ForcedRefsBadge refs={pmForced} />}
                     </div>
                   </div>
                 )
               })}
         </div>
         <div className="seat-chat-composer">
+          <SlashRefChips refs={slash.slashRefs} onRemove={slash.removeSlashRef} />
+          {slash.showSlashPicker && (
+            <SlashPicker
+              query={slash.slashQuery}
+              activeIndex={slash.slashActive}
+              onActiveIndexChange={slash.setSlashActive}
+              onPick={(item) =>
+                slash.applySlashPick(item, { input: text, setInput: setText, setCursor, textareaRef })
+              }
+              pickSignal={slash.slashPickSignal}
+              onRowCountChange={slash.setSlashRowCount}
+            />
+          )}
           <textarea
+            ref={textareaRef}
             value={text}
-            placeholder={`单独对 ${seat?.name ?? '该岗位'} 说，Enter 发送，Shift+Enter 换行`}
-            onChange={(e) => setText(e.target.value)}
+            placeholder={`单独对 ${seat?.name ?? '该岗位'} 说，/ 引用技能或插件，Enter 发送`}
+            onChange={(e) => {
+              setText(e.target.value)
+              setCursor(e.target.selectionStart ?? e.target.value.length)
+            }}
+            onSelect={syncCursor}
+            onClick={syncCursor}
+            onKeyUp={syncCursor}
             onKeyDown={(e) => {
+              if (slash.handleSlashKeyDown(e, { input: text, setInput: setText, setCursor })) return
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 submit()
@@ -113,7 +153,7 @@ export default function SeatChatDrawer({
             }}
             rows={2}
           />
-          <button type="button" className="room-send-btn" onClick={submit} disabled={!text.trim()}>发送</button>
+          <button type="button" className="room-send-btn" onClick={submit} disabled={!text.trim() && slash.slashRefs.length === 0}>发送</button>
         </div>
       </div>
     </div>

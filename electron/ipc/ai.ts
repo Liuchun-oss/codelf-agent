@@ -66,6 +66,7 @@ import { testConnection, testImageGeneration } from '../agent/providers/testConn
 import { fimComplete } from '../agent/providers/fim'
 import { inlineEdit } from '../agent/orchestrator/inlineEdit'
 import { getExistingQueryEngine, getQueryEngine, disposeQueryEngine } from '../agent/orchestrator/queryEngine'
+import { feedTakeoverEvent, exitTakeover, isTakeoverActive } from '../services/takeover/takeoverController'
 import {
   cancelSubagentTask,
   listAvailableSubagentDefinitions,
@@ -136,6 +137,8 @@ export function registerAiIpc(): void {
       try {
         for await (const ev of engine.submitTurn(payload)) {
           if (wc.isDestroyed()) break
+          // 接管激活时，把事件镜像给 HUD 悬浮窗显示进度。
+          feedTakeoverEvent(sessionId, ev)
           wc.send('ai:event', ev)
         }
       } catch (err) {
@@ -147,6 +150,12 @@ export function registerAiIpc(): void {
             message: err instanceof Error ? err.message : '未知错误',
             retryable: false
           })
+        }
+      } finally {
+        // 安全网：轮次结束时若 agent 忘了调用 ExitDesktopTakeover，自动退出接管，
+        // 避免覆盖层与托盘状态卡死。正常路径下 agent 已显式退出，这里是幂等空操作。
+        if (isTakeoverActive()) {
+          await exitTakeover('completed', { cancelAgent: false })
         }
       }
     })()

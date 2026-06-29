@@ -180,7 +180,7 @@ export const useUiStore = create<UiState>((set, get) => {
     appView: 'home',
     lastChatView: 'home',
     setAppView: (view) =>
-      set((s) => (view === 'home' || view === 'room' ? { appView: view, lastChatView: view } : { appView: view })),
+      set(() => (view === 'home' || view === 'room' ? { appView: view, lastChatView: view } : { appView: view })),
     homeChatOpen: false,
     setHomeChatOpen: (v) => set({ homeChatOpen: v }),
     homeSidebarOpen: true,

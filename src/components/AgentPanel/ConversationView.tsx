@@ -8,7 +8,14 @@ import MessageList from './MessageList'
 import AgentComposer from './AgentComposer'
 import AgentsMdHint from './AgentsMdHint'
 import { detectAtMention, removeAtMention } from './atMention'
+import {
+  detectSlashCommand,
+  removeSlashCommand,
+  buildForcedInstruction,
+  type SlashReference
+} from './slashCommand'
 import type { PickItem } from './ContextPicker'
+import type { SlashItem } from './SlashPicker'
 import {
   appendAttachment,
   loadFileAttachment,
@@ -37,6 +44,10 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
   const [pickSignal, setPickSignal] = useState(0)
   const [pickerRowCount, setPickerRowCount] = useState(0)
   const [pickingPath, setPickingPath] = useState<string | null>(null)
+  const [slashRefs, setSlashRefs] = useState<SlashReference[]>([])
+  const [slashActive, setSlashActive] = useState(0)
+  const [slashPickSignal, setSlashPickSignal] = useState(0)
+  const [slashRowCount, setSlashRowCount] = useState(0)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -58,6 +69,19 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
   const atMention = useMemo(() => detectAtMention(input, cursor), [input, cursor])
 
   const showPicker = !!atMention && !!workspaceRoot && !streaming && pickingPath === null
+
+  const slashCommand = useMemo(() => detectSlashCommand(input, cursor), [input, cursor])
+
+  // @ 提及优先：两者都命中时不展示斜线面板，避免冲突。
+  const showSlashPicker = !!slashCommand && !atMention && !streaming && pickingPath === null
+
+  useEffect(() => {
+    setSlashActive(0)
+  }, [slashCommand?.query, showSlashPicker])
+
+  useEffect(() => {
+    if (!showSlashPicker) setSlashPickSignal(0)
+  }, [showSlashPicker])
 
   useEffect(() => {
     setPickerActive(0)
@@ -118,10 +142,40 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
 
   const supportsVision = !!activeProfile?.supportsVision
 
+  const applySlashPick = useCallback(
+    (item: SlashItem): void => {
+      if (slashCommand) {
+        const { text, cursor: nextCur } = removeSlashCommand(input, slashCommand)
+        setInput(text)
+        requestAnimationFrame(() => {
+          const el = textareaRef.current
+          if (el) {
+            el.focus()
+            el.setSelectionRange(nextCur, nextCur)
+            setCursor(nextCur)
+          }
+        })
+      }
+      setSlashRefs((prev) => {
+        if (prev.some((r) => r.kind === item.kind && r.name === item.name)) return prev
+        return [
+          ...prev,
+          {
+            kind: item.kind,
+            name: item.name,
+            pluginSkills: item.pluginSkills,
+            pluginMcpServers: item.pluginMcpServers
+          }
+        ]
+      })
+    },
+    [slashCommand, input]
+  )
+
   const onSend = (): void => {
     const trimmed = input.trim()
     const hasImages = images.length > 0
-    if (!trimmed && !hasImages) return
+    if (!trimmed && !hasImages && slashRefs.length === 0) return
     if (streaming) {
       // 不静默吞掉发送：告知用户当前状态与出路
       toast.warn('正在生成回复，请等待完成或点击「停止」')
@@ -131,13 +185,17 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
       toast.warn('请先完成 @ 文件选择或删除 @ 提及')
       return
     }
+    const forced = buildForcedInstruction(slashRefs)
+    const message = forced ? (trimmed ? `${forced}\n\n${trimmed}` : forced) : trimmed
+    if (!message && !hasImages) return
     const toSend = attachments.length > 0 ? [...attachments] : undefined
     const imgs = hasImages ? [...images] : undefined
-    void sendMessage(trimmed, toSend, imgs)
+    void sendMessage(message, toSend, imgs)
     setInput('')
     setCursor(0)
     setAttachments([])
     setImages([])
+    setSlashRefs([])
   }
 
   const onPaste = useCallback(
@@ -196,6 +254,33 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
   )
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (showSlashPicker) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        if (slashCommand) {
+          const { text, cursor: nextCur } = removeSlashCommand(input, slashCommand)
+          setInput(text)
+          setCursor(nextCur)
+        }
+        return
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSlashActive((i) => (slashRowCount > 0 ? Math.min(i + 1, slashRowCount - 1) : 0))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSlashActive((i) => Math.max(0, i - 1))
+        return
+      }
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+        e.preventDefault()
+        setSlashPickSignal((n) => n + 1)
+        return
+      }
+    }
+
     if (showPicker) {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -284,6 +369,11 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
           pickerActive={pickerActive}
           pickSignal={pickSignal}
           atMentionQuery={atMention?.query ?? ''}
+          slashRefs={slashRefs}
+          showSlashPicker={showSlashPicker}
+          slashQuery={slashCommand?.query ?? ''}
+          slashActive={slashActive}
+          slashPickSignal={slashPickSignal}
           hasProfile={hasProfile}
           streaming={streaming}
           textareaRef={textareaRef}
@@ -297,6 +387,12 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
           onPick={(item) => void applyPick(item)}
           onPickerActiveChange={setPickerActive}
           onPickerRowCount={setPickerRowCount}
+          onSlashPick={applySlashPick}
+          onSlashActiveChange={setSlashActive}
+          onSlashRowCount={setSlashRowCount}
+          onRemoveSlashRef={(id) =>
+            setSlashRefs((prev) => prev.filter((r) => `${r.kind}:${r.name}` !== id))
+          }
           onRemoveAttachment={(path) =>
             setAttachments((prev) => prev.filter((a) => !(a.path && pathsEqual(a.path, path))))
           }

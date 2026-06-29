@@ -6,6 +6,7 @@ import { tmpdir } from 'os'
 import { tmpName } from '@shared/appConfig'
 import {
   DesktopDriverError,
+  type AbsoluteClickOptions,
   type DesktopDriver,
   type DriverActionResult,
   type KeyComboOptions,
@@ -15,9 +16,12 @@ import {
   type MouseDragOptions,
   type MouseMoveOptions,
   type MouseScrollOptions,
+  type ScreenScreenshotOptions,
+  type ScreenScreenshotResult,
   type ScreenshotOptions,
   type ScreenshotResult,
   type SnapshotResult,
+  type TypeMode,
   type UiNode,
   type WindowInfo
 } from './index'
@@ -299,9 +303,11 @@ export class MacosDesktopDriver implements DesktopDriver {
     nativeHandle: string,
     ref: string,
     text: string,
-    submit: boolean
+    submit: boolean,
+    mode: TypeMode = 'auto'
   ): Promise<DriverActionResult> {
     const { pid, title } = this.parseHandle(nativeHandle)
+    if (mode === 'realKeystroke') return this.typeRealKeystroke(pid, text, submit)
     const script = [
       'tell application "System Events"',
       this.elementSelector(pid, title, ref),
@@ -314,6 +320,47 @@ export class MacosDesktopDriver implements DesktopDriver {
       .filter(Boolean)
       .join('\n')
     const out = await osascript(script)
+    return { ok: true, message: out }
+  }
+
+  // 逐字符真实键入：先聚焦目标进程，全选清空，再用 CGEvent + CGEventKeyboardSetUnicodeString
+  // 逐字符发送真实键盘事件（支持任意 Unicode），最大程度模拟人工输入，绕过禁用程序化赋值的输入框。
+  private async typeRealKeystroke(pid: number, text: string, submit: boolean): Promise<DriverActionResult> {
+    // 先把目标进程提到前台，确保键盘事件进入正确窗口。
+    await osascript(
+      [
+        'tell application "System Events"',
+        `  set frontmost of (first application process whose unix id is ${pid}) to true`,
+        'end tell',
+        'return "ok"'
+      ].join('\n')
+    ).catch(() => {})
+    // 用 JSON 把字符串安全传入 python（避免引号/换行/转义问题）。
+    const payload = JSON.stringify(text)
+    const body = [
+      'def _post(ev): Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)',
+      `text = ${payload}`,
+      // Cmd+A 全选清空：keycode 0 = 'a'，配合 Command 修饰。
+      'sel_d = Quartz.CGEventCreateKeyboardEvent(None, 0, True)',
+      'Quartz.CGEventSetFlags(sel_d, Quartz.kCGEventFlagMaskCommand)',
+      '_post(sel_d)',
+      'sel_u = Quartz.CGEventCreateKeyboardEvent(None, 0, False)',
+      'Quartz.CGEventSetFlags(sel_u, Quartz.kCGEventFlagMaskCommand)',
+      '_post(sel_u); time.sleep(0.04)',
+      'for ch in text:',
+      '    d = Quartz.CGEventCreateKeyboardEvent(None, 0, True)',
+      '    Quartz.CGEventKeyboardSetUnicodeString(d, len(ch), ch)',
+      '    _post(d)',
+      '    u = Quartz.CGEventCreateKeyboardEvent(None, 0, False)',
+      '    Quartz.CGEventKeyboardSetUnicodeString(u, len(ch), ch)',
+      '    _post(u); time.sleep(0.01)',
+      submit ? 'ed = Quartz.CGEventCreateKeyboardEvent(None, 36, True); _post(ed)' : '',
+      submit ? 'eu = Quartz.CGEventCreateKeyboardEvent(None, 36, False); _post(eu)' : '',
+      'print("ok")'
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const out = await this.runQuartz(body)
     return { ok: true, message: out }
   }
 
@@ -514,6 +561,82 @@ export class MacosDesktopDriver implements DesktopDriver {
     return { ok: true, message: out }
   }
 
+  // [SCREENSHOT_SCREEN]
+  // 全屏截图：screencapture 不带 -R 即抓整个（主）屏幕。Retina 下图片为物理像素，
+  // 而点击坐标系用「点」，故 scale = 图片像素宽 / 屏幕点宽，origin 取屏幕左上角（主屏为 0,0）。
+  async screenshotScreen(options?: ScreenScreenshotOptions): Promise<ScreenScreenshotResult> {
+    const outPath = join(tmpdir(), `${tmpName('desktop-screen')}-${randomUUID()}.png`)
+    // 取主屏点尺寸，作为坐标系参照。
+    const boundsScript = [
+      'tell application "Finder"',
+      '  set b to bounds of window of desktop',
+      '  return (item 3 of b as string) & "," & (item 4 of b as string)',
+      'end tell'
+    ].join('\n')
+    let screenW = 0
+    let screenH = 0
+    try {
+      const out = await osascript(boundsScript)
+      const [w, h] = out.split(',').map((n) => Number.parseInt(n.trim(), 10))
+      screenW = w || 0
+      screenH = h || 0
+    } catch {
+      // 取不到点尺寸时退化为像素尺寸（scale=1），坐标按图片像素直传。
+    }
+    await runProcess('screencapture', ['-x', outPath], undefined, 20_000).catch((e) => {
+      if (e instanceof DesktopDriverError) throw e
+      throw new DesktopDriverError('全屏截图失败', AX_PERMISSION_GUIDANCE)
+    })
+    const maxDim = options?.maxDimension && options.maxDimension > 0 ? Math.round(options.maxDimension) : 0
+    if (maxDim > 0) {
+      await runProcess('sips', ['-Z', String(maxDim), outPath], undefined, 15_000).catch(() => {})
+    }
+    const dims = await this.readPngDimensions(outPath)
+    try {
+      const buffer = await readFile(outPath)
+      const baseW = screenW > 0 ? screenW : dims.width
+      const baseH = screenH > 0 ? screenH : dims.height
+      const scale = baseW > 0 ? dims.width / baseW : 1
+      return {
+        buffer,
+        mime: 'image/png',
+        imageWidth: dims.width,
+        imageHeight: dims.height,
+        screenWidth: baseW,
+        screenHeight: baseH,
+        scale,
+        originX: 0,
+        originY: 0
+      }
+    } finally {
+      await unlink(outPath).catch(() => {})
+    }
+  }
+
+  // [SCREEN_CLICK]
+  // 屏幕绝对坐标点击（屏幕点坐标）：经 HID 系统事件发送，移动真实光标。
+  async mouseClickAbsolute(options: AbsoluteClickOptions): Promise<DriverActionResult> {
+    const button = options.button ?? 'left'
+    const c = this.buttonConst(button)
+    const clicks = options.doubleClick ? 2 : 1
+    const body = [
+      'def _post(ev): Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)',
+      `pt = Quartz.CGPointMake(${options.x}, ${options.y})`,
+      'mv = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, pt, Quartz.kCGMouseButtonLeft)',
+      '_post(mv); time.sleep(0.02)',
+      `for i in range(${clicks}):`,
+      `    d = Quartz.CGEventCreateMouseEvent(None, Quartz.${c.down}, pt, Quartz.${c.btn})`,
+      '    Quartz.CGEventSetIntegerValueField(d, Quartz.kCGMouseEventClickState, i + 1)',
+      '    _post(d); time.sleep(0.02)',
+      `    u = Quartz.CGEventCreateMouseEvent(None, Quartz.${c.up}, pt, Quartz.${c.btn})`,
+      '    Quartz.CGEventSetIntegerValueField(u, Quartz.kCGMouseEventClickState, i + 1)',
+      '    _post(u); time.sleep(0.04)',
+      'print("ok")'
+    ].join('\n')
+    const out = await this.runQuartz(body)
+    return { ok: true, message: out }
+  }
+
   // [SCREENSHOT]
   // 经 AX 取窗口位置与尺寸，再用 screencapture -R 截取该矩形区域。
   // 可选 maxDimension：用 sips 等比缩小，压低视觉 token 成本。
@@ -579,6 +702,27 @@ export class MacosDesktopDriver implements DesktopDriver {
   }
 
   // [WAIT_CLOSE]
+  // 取消最小化并把窗口提到前台：用 System Events 把目标进程设为 frontmost，
+  // 并尝试取消该窗口的 minimized 属性（若被最小化）。
+  async bringToFront(nativeHandle: string): Promise<DriverActionResult> {
+    const { pid, title } = this.parseHandle(nativeHandle)
+    const script = [
+      'tell application "System Events"',
+      `  set p to first application process whose unix id is ${pid}`,
+      '  set frontmost of p to true',
+      '  try',
+      `    set w to (first window of p whose name is ${JSON.stringify(title)})`,
+      '    if value of attribute "AXMinimized" of w is true then',
+      '      set value of attribute "AXMinimized" of w to false',
+      '    end if',
+      '  end try',
+      'end tell',
+      'return "ok"'
+    ].join('\n')
+    const out = await osascript(script)
+    return { ok: true, message: out }
+  }
+
   async waitForWindow(
     query: { title?: string; processName?: string },
     timeoutMs: number

@@ -22,6 +22,7 @@ import { toast } from '@/stores/toastStore'
 import { getEditorInstance } from '@/components/Editor/editorBridge'
 import { syncEditorDirtyPaths } from '@/utils/syncEditorSnapshot'
 import { pathsEqual } from '@/utils/path'
+import { stripForcedInstruction } from '@/components/AgentPanel/slashCommand'
 
 
 export interface SessionMeta {
@@ -75,7 +76,8 @@ function saveAgentPreferences(patch: Partial<AgentPreferences>): void {
 }
 
 function deriveTitle(text: string): string {
-  const firstLine = text.trim().split(/\r?\n/)[0]?.trim() ?? ''
+  const stripped = stripForcedInstruction(text).body
+  const firstLine = stripped.trim().split(/\r?\n/)[0]?.trim() ?? ''
   if (!firstLine) return DEFAULT_SESSION_TITLE
   return firstLine.length > 30 ? firstLine.slice(0, 30) + '…' : firstLine
 }

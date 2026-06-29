@@ -1,6 +1,6 @@
 ---
 name: audit
-description: "Audit or critique a product flow, journey, workflow, funnel, onboarding path, checkout path, settings path, screen, or multi-step product experience by capturing screenshots first, placing them in Figma or a local folder, then reporting UX, design, and accessibility findings from that evidence. Use when the user asks to audit, critique, review, inspect, assess, or evaluate a product experience. 中文触发词：审计这个流程、评估体验、检查这个页面、UX 审计、可用性评估、找出体验问题、无障碍检查、点评这个原型、看看这个流程有什么问题。"
+description: "Audit or critique a product flow, journey, workflow, funnel, onboarding path, checkout path, settings path, screen, or multi-step product experience by capturing screenshots first, placing them in Figma or a local folder, then reporting UX, design, and accessibility findings from that evidence. Use when the user asks to audit, critique, review, inspect, assess, or evaluate a product experience."
 ---
 
 > [!NOTE] Codelf 适配说明

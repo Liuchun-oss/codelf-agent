@@ -1,6 +1,6 @@
 ---
 name: image-to-code
-description: "Implement a selected image, screenshot, mockup, or Image Gen reference as a faithful responsive frontend after Product Design get-context has confirmed the design brief. 中文触发词：把设计图变成代码、把截图做成网页、还原这张设计稿、照着这张图做、把 Figma 实现出来、设计稿转代码、图转代码。"
+description: "Implement a selected image, screenshot, mockup, or Image Gen reference as a faithful responsive frontend after Product Design get-context has confirmed the design brief."
 ---
 
 > [!NOTE] Codelf 适配说明

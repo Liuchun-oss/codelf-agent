@@ -1,6 +1,6 @@
 ---
 name: url-to-code
-description: "Clone a live URL as a runnable frontend-only local app using Browser/Chrome source evidence after Product Design get-context has confirmed the design brief. 中文触发词：克隆网站、仿站、复刻这个网址、把这个网站做出来、照着这个网址做、还原这个页面、扒站、1:1 还原网站。"
+description: "Clone a live URL as a runnable frontend-only local app using Browser/Chrome source evidence after Product Design get-context has confirmed the design brief."
 ---
 
 > [!NOTE] Codelf 适配说明

@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'os'
 import { runCommand } from '../../services/headlessTerminal'
 import { resolveSkillSource } from '../skills/installSkill'
 import { adaptSkillMarkdown } from '../skills/adaptSkill'
+import { localizePluginDescription } from '../skills/translations'
 import { getMcpSettings, saveMcpSettings, getAgentBehaviorSettings } from '../settings/agentSettingsStore'
 import { parsePluginManifest, PLUGIN_MANIFEST_PATHS, isSafePluginName, pluginMcpServerName, type PluginManifest } from '@shared/pluginTypes'
 import type { PluginInstallRecord, InstalledPluginInfo } from '@shared/pluginTypes'
@@ -22,6 +23,84 @@ const PLUGIN_RECORD_FILE = '.codelf-plugin.json'
 // 用户级插件安装根：~/.codelf/plugins
 export function userPluginsInstallRoot(): string {
   return join(homedir(), DATA_DIR_NAME, 'plugins')
+}
+
+// 随应用分发的「内置插件」根目录候选（如 resources/plugins）。
+function builtinPluginsRoots(): string[] {
+  const roots: string[] = []
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+  if (resourcesPath) roots.push(join(resourcesPath, 'plugins'))
+  roots.push(join(__dirname, '..', '..', 'resources', 'plugins'))
+  roots.push(pathResolve(process.cwd(), 'resources', 'plugins'))
+  return [...new Set(roots)]
+}
+
+// 内置插件清单可能的位置（相对插件根）：内置使用 .codelf-plugin，同时兼容 codex/claude。
+const BUILTIN_MANIFEST_PATHS = ['.codelf-plugin/plugin.json', ...PLUGIN_MANIFEST_PATHS] as const
+
+// 列出随应用分发的内置插件（resources/plugins/*）。这些插件只读，不可卸载。
+// skills 直接扫描其 skills 子目录获得，与运行时 skill 加载同源。
+async function listBuiltinPlugins(): Promise<InstalledPluginInfo[]> {
+  const seen = new Set<string>()
+  const out: InstalledPluginInfo[] = []
+  for (const root of builtinPluginsRoots()) {
+    let entries
+    try {
+      entries = await fs.readdir(root, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const installDir = join(root, entry.name)
+      let manifest: PluginManifest | null = null
+      for (const rel of BUILTIN_MANIFEST_PATHS) {
+        try {
+          manifest = parsePluginManifest(await readJsonFile(join(installDir, rel)))
+          if (manifest) break
+        } catch {
+          // 尝试下一个候选清单路径
+        }
+      }
+      const pluginName = manifest?.name ?? entry.name
+      if (seen.has(pluginName)) continue
+      seen.add(pluginName)
+      const skills = await listPluginSkillNames(installDir, manifest?.skillsDir)
+      out.push({
+        pluginName,
+        version: manifest?.version,
+        description: localizePluginDescription(pluginName, manifest?.description),
+        sourceLabel: '内置',
+        installedAt: '',
+        skills,
+        mcpServers: [],
+        installDir,
+        builtin: true
+      })
+    }
+  }
+  return out
+}
+
+// 扫描插件 skills 目录，返回其中每个含 SKILL.md 的子目录名。
+async function listPluginSkillNames(installDir: string, skillsDir?: string): Promise<string[]> {
+  const root = join(installDir, skillsDir?.trim() || 'skills')
+  let entries
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const names: string[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    try {
+      if ((await fs.stat(join(root, entry.name, 'SKILL.md'))).isFile()) names.push(entry.name)
+    } catch {
+      // 非 skill 目录，跳过
+    }
+  }
+  return names
 }
 
 // 某个已安装插件内的 skills 根：~/.codelf/plugins/<name>/skills
@@ -530,17 +609,19 @@ export async function installPluginFromSource(opts: InstallPluginOptions): Promi
   }
 }
 
-// 列出 ~/.codelf/plugins 下所有已安装插件（读取各自的安装记录）。
+// 列出 ~/.codelf/plugins 下所有已安装插件（读取各自的安装记录），并合并内置插件。
 export async function listInstalledPlugins(): Promise<InstalledPluginInfo[]> {
+  const builtin = await listBuiltinPlugins()
   const root = userPluginsInstallRoot()
   let entries
   try {
     entries = await fs.readdir(root, { withFileTypes: true })
   } catch {
-    return []
+    return builtin.sort((a, b) => a.pluginName.localeCompare(b.pluginName))
   }
 
-  const out: InstalledPluginInfo[] = []
+  const out: InstalledPluginInfo[] = [...builtin]
+  const seen = new Set(builtin.map((p) => p.pluginName))
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     const installDir = join(root, entry.name)
@@ -550,10 +631,14 @@ export async function listInstalledPlugins(): Promise<InstalledPluginInfo[]> {
     } catch {
       // 无记录文件：可能是手动放置的插件目录，给出最小信息。
     }
+    const pluginName = record?.pluginName ?? entry.name
+    // 用户目录同名插件覆盖内置（视为升级版），避免重复展示。
+    if (seen.has(pluginName)) continue
+    seen.add(pluginName)
     out.push({
-      pluginName: record?.pluginName ?? entry.name,
+      pluginName,
       version: record?.version,
-      description: record?.description,
+      description: localizePluginDescription(pluginName, record?.description),
       sourceLabel: record?.sourceLabel,
       gitUrl: record?.gitUrl,
       installedAt: record?.installedAt ?? '',

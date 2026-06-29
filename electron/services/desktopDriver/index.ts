@@ -67,6 +67,38 @@ export interface ScreenshotOptions {
   maxDimension?: number
 }
 
+// 全屏截图结果。坐标原点为「被截区域左上角」在屏幕物理像素中的位置（多显示器虚拟桌面可能为负）。
+export interface ScreenScreenshotResult {
+  buffer: Buffer
+  mime: string
+  // 返回图片的像素尺寸（可能因 maxDimension 缩放而小于被截区域）。
+  imageWidth: number
+  imageHeight: number
+  // 被截屏幕区域的真实像素尺寸。
+  screenWidth: number
+  screenHeight: number
+  // 被截区域→图片的缩放系数（imageWidth / screenWidth）。
+  scale: number
+  // 被截区域左上角在屏幕坐标系中的物理像素偏移；屏幕绝对坐标 = origin + 图片坐标 / scale。
+  originX: number
+  originY: number
+}
+
+export interface ScreenScreenshotOptions {
+  // 图片最长边上限（像素）；超过则等比缩小。不设则原样返回。
+  maxDimension?: number
+  // 截哪块：'virtual' 全部显示器拼成的虚拟桌面（默认），'primary' 仅主显示器。
+  area?: 'virtual' | 'primary'
+}
+
+// 屏幕绝对坐标点击：x/y 为屏幕物理像素（虚拟桌面坐标系），始终走真实输入（移动真实光标）。
+export interface AbsoluteClickOptions {
+  x: number
+  y: number
+  button?: MouseButton
+  doubleClick?: boolean
+}
+
 // 键盘组合键/特殊键。combo 形如 "ctrl+c"、"alt+tab"、"enter"、"ctrl+shift+esc"。
 export interface KeyComboOptions {
   combo: string
@@ -86,6 +118,13 @@ export type MouseButton = 'left' | 'right' | 'middle'
 // - 'auto' 等同 'virtual'：优先不打扰用户。消息注入对部分应用（Chromium/Electron、
 //   DirectX 游戏、Raw Input 程序）无效，此类情况无法在驱动内自动感知，需显式改用 'real'。
 export type MousePointerMode = 'virtual' | 'real' | 'auto'
+
+// 文本输入模式：
+// - 'auto'（默认）：优先无障碍 ValuePattern/AXValue 直接赋值，失败回退聚焦+SendKeys；快、稳，但
+//   对忽略 SetValue 或依赖逐键事件的输入框（富文本、带实时校验、部分 Electron/网页）可能"看似填了无反应"。
+// - 'realKeystroke'：聚焦后逐字符发送真实键盘事件（Windows SendInput / macOS CGEvent），最大程度
+//   模拟人工输入，触发应用的逐键监听；最慢但兼容性最好，可绕过"禁用程序化赋值"的输入框。
+export type TypeMode = 'auto' | 'realKeystroke'
 
 // 坐标统一约定为「目标窗口客户区左上角为原点」的相对坐标（像素）。
 export interface MouseClickOptions {
@@ -144,7 +183,7 @@ export interface DesktopDriver {
   }): Promise<WindowInfo | null>
   snapshot(nativeHandle: string, maxNodes: number): Promise<SnapshotResult>
   click(nativeHandle: string, ref: string): Promise<DriverActionResult>
-  type(nativeHandle: string, ref: string, text: string, submit: boolean): Promise<DriverActionResult>
+  type(nativeHandle: string, ref: string, text: string, submit: boolean, mode?: TypeMode): Promise<DriverActionResult>
   // 坐标级鼠标控制（相对目标窗口客户区）。虚拟模式尽量不打扰用户真实鼠标。
   mouseClick(nativeHandle: string, options: MouseClickOptions): Promise<DriverActionResult>
   mouseMove(nativeHandle: string, options: MouseMoveOptions): Promise<DriverActionResult>
@@ -153,6 +192,12 @@ export interface DesktopDriver {
   // 发送键盘组合键/特殊键（不针对具体控件，作用于当前焦点窗口）。
   pressKeys(nativeHandle: string, options: KeyComboOptions): Promise<DriverActionResult>
   screenshot(nativeHandle: string, options?: ScreenshotOptions): Promise<ScreenshotResult>
+  // 取消最小化并把窗口提到前台（接管模式下用，保证用户能看到 agent 操作的窗口）。
+  bringToFront(nativeHandle: string): Promise<DriverActionResult>
+  // 全屏/整显示器截图（不绑定窗口），用于侦察屏幕全局状态、定位弹窗。
+  screenshotScreen(options?: ScreenScreenshotOptions): Promise<ScreenScreenshotResult>
+  // 屏幕绝对坐标点击（虚拟桌面物理像素），始终走真实输入。配合 screenshotScreen 使用。
+  mouseClickAbsolute(options: AbsoluteClickOptions): Promise<DriverActionResult>
   // 等待匹配窗口出现；返回命中窗口或在超时后返回 null。
   waitForWindow(
     query: { title?: string; processName?: string },

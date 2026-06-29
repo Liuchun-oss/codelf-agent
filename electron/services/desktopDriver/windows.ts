@@ -6,6 +6,7 @@ import { tmpdir } from 'os'
 import { tmpName } from '@shared/appConfig'
 import {
   DesktopDriverError,
+  type AbsoluteClickOptions,
   type DesktopDriver,
   type DriverActionResult,
   type KeyComboOptions,
@@ -14,9 +15,12 @@ import {
   type MouseDragOptions,
   type MouseMoveOptions,
   type MouseScrollOptions,
+  type ScreenScreenshotOptions,
+  type ScreenScreenshotResult,
   type ScreenshotOptions,
   type ScreenshotResult,
   type SnapshotResult,
+  type TypeMode,
   type UiNode,
   type WindowInfo
 } from './index'
@@ -296,8 +300,10 @@ export class WindowsDesktopDriver implements DesktopDriver {
     nativeHandle: string,
     ref: string,
     text: string,
-    submit: boolean
+    submit: boolean,
+    mode: TypeMode = 'auto'
   ): Promise<DriverActionResult> {
+    if (mode === 'realKeystroke') return this.typeRealKeystroke(nativeHandle, ref, text, submit)
     const script = [
       this.locateElementScript(nativeHandle, ref),
       '$vp = $null',
@@ -318,6 +324,60 @@ export class WindowsDesktopDriver implements DesktopDriver {
       .join('\n')
     const out = await runPowerShell(script, 15_000)
     return { ok: true, message: out }
+  }
+
+  // 逐字符真实键入：SendInput + KEYEVENTF_UNICODE 直接发送 UTF-16 字符（不依赖键盘布局，
+  // 支持任意 Unicode/中文/emoji），先聚焦控件并全选清空，再逐字符发，最大程度模拟人工输入。
+  private async typeRealKeystroke(
+    nativeHandle: string,
+    ref: string,
+    text: string,
+    submit: boolean
+  ): Promise<DriverActionResult> {
+    // 用 \uXXXX 转义全部字符，避免编码/特殊字符问题。
+    const codeUnits: number[] = []
+    for (let i = 0; i < text.length; i++) codeUnits.push(text.charCodeAt(i))
+    const csArray = codeUnits.join(',')
+    const script = [
+      this.locateElementScript(nativeHandle, ref),
+      'try { $target.SetFocus() } catch {}',
+      'Start-Sleep -Milliseconds 120',
+      this.sendInputTypes(),
+      // 全选清空已有内容（Ctrl+A 经真实按键），再逐字符输入。
+      '[DesktopCtl.SendInputNative]::TapCtrl(0x41)', // Ctrl+A
+      'Start-Sleep -Milliseconds 40',
+      `$codes = @(${csArray})`,
+      'foreach ($c in $codes) {',
+      '  [DesktopCtl.SendInputNative]::TapUnicode([uint16]$c)',
+      '  Start-Sleep -Milliseconds 8',
+      '}',
+      submit ? '[DesktopCtl.SendInputNative]::TapVk(0x0D)' : '', // Enter
+      '"ok"'
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const out = await runPowerShell(script, 30_000)
+    return { ok: true, message: out }
+  }
+
+  // SendInput 封装：TapUnicode 发送一个 UTF-16 字符（KEYEVENTF_UNICODE），
+  // TapVk/TapCtrl 发送虚拟键 / Ctrl+键，均为「按下+抬起」一次完整键击。
+  // 用 MOUSEINPUT/KEYBDINPUT 显式联合体，保证 Marshal.SizeOf(INPUT) 在 x64/x86 下均与
+  // 系统 sizeof(INPUT) 一致（x64=40），否则 SendInput 因 cbSize 不符而静默失败。
+  private sendInputTypes(): string {
+    return [
+      'Add-Type -MemberDefinition @"',
+      '[StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }',
+      '[StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }',
+      '[StructLayout(LayoutKind.Explicit)] public struct InputUnion { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }',
+      '[StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public InputUnion u; }',
+      '[DllImport("user32.dll")] public static extern uint SendInput(uint n, INPUT[] inp, int size);',
+      'static void Send(ushort vk, ushort scan, uint flags) { var a = new INPUT[1]; a[0].type = 1; a[0].u.ki.wVk = vk; a[0].u.ki.wScan = scan; a[0].u.ki.dwFlags = flags; SendInput(1, a, Marshal.SizeOf(typeof(INPUT))); }',
+      'public static void TapUnicode(ushort ch) { Send(0, ch, 0x0004); Send(0, ch, 0x0004 | 0x0002); }',
+      'public static void TapVk(ushort vk) { Send(vk, 0, 0); Send(vk, 0, 0x0002); }',
+      'public static void TapCtrl(ushort vk) { Send(0x11, 0, 0); Send(vk, 0, 0); Send(vk, 0, 0x0002); Send(0x11, 0, 0x0002); }',
+      '"@ -Name SendInputNative -Namespace DesktopCtl'
+    ].join('\n')
   }
 
   // [MOUSE]
@@ -648,6 +708,120 @@ export class WindowsDesktopDriver implements DesktopDriver {
     } finally {
       await unlink(outPath).catch(() => {})
     }
+  }
+
+  // [SCREENSHOT_SCREEN]
+  // 用 System.Windows.Forms 抓整块屏幕（虚拟桌面或主显示器），CopyFromScreen 拷贝像素。
+  // 返回区域原点（虚拟桌面坐标可能为负）与缩放系数，供工具层把图片坐标换算回屏幕绝对坐标。
+  async screenshotScreen(options?: ScreenScreenshotOptions): Promise<ScreenScreenshotResult> {
+    const outPath = join(tmpdir(), `${tmpName('desktop-screen')}-${randomUUID()}.png`)
+    const maxDim = options?.maxDimension && options.maxDimension > 0 ? Math.round(options.maxDimension) : 0
+    const primary = options?.area === 'primary'
+    const script = [
+      primary
+        ? '$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds'
+        : '$b = [System.Windows.Forms.SystemInformation]::VirtualScreen',
+      '$sx = $b.X; $sy = $b.Y; $sw = $b.Width; $sh = $b.Height',
+      'if ($sw -le 0 -or $sh -le 0) { throw "屏幕尺寸无效" }',
+      '$shot = New-Object System.Drawing.Bitmap($sw, $sh)',
+      '$g = [System.Drawing.Graphics]::FromImage($shot)',
+      '$g.CopyFromScreen($sx, $sy, 0, 0, (New-Object System.Drawing.Size($sw, $sh)))',
+      '$g.Dispose()',
+      `$maxDim = ${maxDim}`,
+      '$imgW = $sw; $imgH = $sh',
+      '$longest = [Math]::Max($sw, $sh)',
+      'if ($maxDim -gt 0 -and $longest -gt $maxDim) {',
+      '  $ratio = $maxDim / $longest',
+      '  $imgW = [Math]::Max(1, [int]($sw * $ratio)); $imgH = [Math]::Max(1, [int]($sh * $ratio))',
+      '  $scaled = New-Object System.Drawing.Bitmap($imgW, $imgH)',
+      '  $sg = [System.Drawing.Graphics]::FromImage($scaled)',
+      '  $sg.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic',
+      '  $sg.DrawImage($shot, 0, 0, $imgW, $imgH)',
+      '  $sg.Dispose(); $shot.Dispose(); $shot = $scaled',
+      '}',
+      `$shot.Save(${psQuote(outPath)}, [System.Drawing.Imaging.ImageFormat]::Png)`,
+      '$shot.Dispose()',
+      '@{ screenWidth = $sw; screenHeight = $sh; imageWidth = $imgW; imageHeight = $imgH; originX = $sx; originY = $sy } | ConvertTo-Json -Compress'
+    ].join('\n')
+    const raw = await runPowerShell(script, 20_000)
+    const dims = JSON.parse(raw) as {
+      screenWidth: number
+      screenHeight: number
+      imageWidth: number
+      imageHeight: number
+      originX: number
+      originY: number
+    }
+    try {
+      const buffer = await readFile(outPath)
+      const scale = dims.screenWidth > 0 ? dims.imageWidth / dims.screenWidth : 1
+      return {
+        buffer,
+        mime: 'image/png',
+        imageWidth: dims.imageWidth,
+        imageHeight: dims.imageHeight,
+        screenWidth: dims.screenWidth,
+        screenHeight: dims.screenHeight,
+        scale,
+        originX: dims.originX,
+        originY: dims.originY
+      }
+    } finally {
+      await unlink(outPath).catch(() => {})
+    }
+  }
+
+  // [SCREEN_CLICK]
+  // 屏幕绝对坐标点击：SetCursorPos 到物理像素后 mouse_event 触发，始终走真实输入。
+  async mouseClickAbsolute(options: AbsoluteClickOptions): Promise<DriverActionResult> {
+    const button = options.button ?? 'left'
+    const dbl = options.doubleClick ?? false
+    const f = this.buttonRealFlags(button)
+    const onceReal = `[DesktopCtl.MouseNative]::mouse_event(${f.down},0,0,0,[UIntPtr]::Zero); [DesktopCtl.MouseNative]::mouse_event(${f.up},0,0,0,[UIntPtr]::Zero)`
+    const script = [
+      this.mouseNativeTypes(),
+      `$sx = ${Math.round(options.x)}; $sy = ${Math.round(options.y)}`,
+      '[void][DesktopCtl.MouseNative]::SetCursorPos($sx, $sy)',
+      'Start-Sleep -Milliseconds 30',
+      onceReal,
+      dbl ? `Start-Sleep -Milliseconds 60; ${onceReal}` : '',
+      '"ok-real"'
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const out = await runPowerShell(script, 15_000)
+    return { ok: true, message: out }
+  }
+
+  // [BRING_TO_FRONT]
+  // 取消最小化（SW_RESTORE）并把窗口提到前台。SetForegroundWindow 在跨线程时常被系统限制，
+  // 故用 AttachThreadInput 把当前线程附加到目标窗口线程后再提权，提高成功率。
+  async bringToFront(nativeHandle: string): Promise<DriverActionResult> {
+    const script = [
+      `$hwnd = [IntPtr]::new([int64]${psQuote(nativeHandle)})`,
+      'Add-Type -MemberDefinition @"',
+      '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);',
+      '[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);',
+      '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);',
+      '[DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);',
+      '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();',
+      '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);',
+      '[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();',
+      '[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool f);',
+      '"@ -Name FgNative -Namespace DesktopCtl',
+      '$SW_RESTORE = 9',
+      'if ([DesktopCtl.FgNative]::IsIconic($hwnd)) { [void][DesktopCtl.FgNative]::ShowWindow($hwnd, $SW_RESTORE) }',
+      '$fg = [DesktopCtl.FgNative]::GetForegroundWindow()',
+      '$tFg = [DesktopCtl.FgNative]::GetWindowThreadProcessId($fg, [IntPtr]::Zero)',
+      '$tCur = [DesktopCtl.FgNative]::GetCurrentThreadId()',
+      '[void][DesktopCtl.FgNative]::AttachThreadInput($tCur, $tFg, $true)',
+      '[void][DesktopCtl.FgNative]::BringWindowToTop($hwnd)',
+      '[void][DesktopCtl.FgNative]::SetForegroundWindow($hwnd)',
+      '[void][DesktopCtl.FgNative]::AttachThreadInput($tCur, $tFg, $false)',
+      '"ok"'
+    ].join('\n')
+    const out = await runPowerShell(script, 10_000)
+    return { ok: true, message: out }
   }
 
   // [WAIT_CLOSE]

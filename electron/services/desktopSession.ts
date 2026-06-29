@@ -27,6 +27,9 @@ export interface DesktopSession {
   windows: Map<string, DesktopWindowRef>
   // 由本会话启动的进程 pid，用于关闭与清理。
   launchedPids: Set<number>
+  // 最近一次全屏截图的坐标映射（不绑定窗口）：屏幕绝对坐标 = origin + 图片坐标 / scale。
+  // 供 DesktopScreenClick 接受「图片像素坐标」并还原为屏幕物理坐标。
+  lastScreenShot?: { scale: number; originX: number; originY: number }
   createdAt: number
   updatedAt: number
 }
@@ -97,6 +100,17 @@ export function getWindow(sessionId: string, windowId: string): DesktopWindowRef
 export function setWindowScreenshotScale(sessionId: string, windowId: string, scale: number): void {
   const win = sessions.get(sessionId)?.windows.get(windowId)
   if (win && Number.isFinite(scale) && scale > 0) win.lastScreenshotScale = scale
+}
+
+// 记录某会话最近一次全屏截图的坐标映射，供屏幕级点击把图片坐标还原为屏幕绝对坐标。
+export function setScreenShotMapping(
+  sessionId: string,
+  mapping: { scale: number; originX: number; originY: number }
+): void {
+  const session = sessions.get(sessionId)
+  if (!session || !Number.isFinite(mapping.scale) || mapping.scale <= 0) return
+  session.lastScreenShot = mapping
+  touch(session)
 }
 
 export function trackLaunchedPid(sessionId: string, pid: number): void {

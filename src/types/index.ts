@@ -668,6 +668,17 @@ export interface LcApi {
   appZoomOut: () => Promise<void>
   appResetZoom: () => Promise<void>
   appToggleFullscreen: () => Promise<void>
+
+  
+  takeoverStop: () => Promise<boolean>
+  takeoverState: () => Promise<import('@shared/takeoverTypes').TakeoverState>
+  takeoverResizeHud: (height: number) => void
+  onTakeoverStatus: (
+    cb: (status: import('@shared/takeoverTypes').TakeoverStatus) => void
+  ) => () => void
+  onTakeoverEvent: (
+    cb: (ev: import('@shared/takeoverTypes').TakeoverHudEvent) => void
+  ) => () => void
 }
 
 declare global {
