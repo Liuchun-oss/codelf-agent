@@ -5,6 +5,14 @@ import type { RoomMessageView } from '../../stores/roomStore'
 
 // 单条群消息气泡。极简显示策略（§7.4）：默认只显示最终交付文本 + 一行过程摘要，
 // 点「展开过程」才渲染工具活动/思考。用户消息靠右，岗位/系统靠左（仿微信）。
+function formatTime(ts: number): string {
+  try {
+    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return ''
+  }
+}
+
 export default function SeatBubble({ msg }: { msg: RoomMessageView }): JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const isUser = msg.from === 'user'
@@ -25,6 +33,9 @@ export default function SeatBubble({ msg }: { msg: RoomMessageView }): JSX.Eleme
       <div className="room-msg-body">
         {!isUser && <div className="room-msg-name">{msg.seatName}</div>}
         <div className="room-msg-bubble">
+          {msg.visibility && msg.visibility.length > 0 && (
+            <div className="room-msg-private" title="私信：仅主管与该岗位可见，其他岗位看不到">🔒 私信</div>
+          )}
           {hasProcess && (
             <div className="room-msg-process">
               <button type="button" className="room-process-toggle" onClick={() => setExpanded((v) => !v)}>
@@ -49,6 +60,7 @@ export default function SeatBubble({ msg }: { msg: RoomMessageView }): JSX.Eleme
               ? <span className="room-msg-typing">正在输入…</span>
               : null}
         </div>
+        {isUser && <div className="room-msg-time">{formatTime(msg.ts)}</div>}
       </div>
     </div>
   )

@@ -52,7 +52,9 @@ export default function CommandCard({ msg }: { msg: ChatMessageView }): JSX.Elem
   const [open, setOpen] = useState(running || error)
 
   useEffect(() => {
-    if (status === 'done') setOpen(false)
+    if (status !== 'done') return
+    const timer = setTimeout(() => setOpen(false), 2000)
+    return () => clearTimeout(timer)
   }, [status])
 
   return (

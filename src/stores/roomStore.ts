@@ -31,6 +31,8 @@ export interface RoomMessageView {
   from: string
   // 定向接收方（私聊用：用户→某岗位的定向消息带上 seatId，§U1）
   to?: string
+  // 私信可见性白名单（主管私信工人）：非空表示这是私信，UI 标注「🔒 私信」。
+  visibility?: string[]
   seatName?: string
   // 最终交付文本（流式累积）。
   text: string
@@ -93,7 +95,8 @@ function utterancesToMessages(list: Utterance[], room: Room | null): RoomMessage
     text: u.text,
     activities: [],
     ts: u.ts,
-    ...(u.to ? { to: u.to } : {})
+    ...(u.to ? { to: u.to } : {}),
+    ...(u.visibility && u.visibility.length ? { visibility: u.visibility } : {})
   }))
 }
 
@@ -112,8 +115,9 @@ function summarizeArgs(args: Record<string, unknown> | undefined): string {
 }
 
 // 把一个岗位的 AgentEvent 折叠进它的「当前回合气泡」。无气泡则新建。
+// visibility：私密回合的可见性白名单，新建气泡时打上，使其只进私聊框、不进公屏。
 // 返回更新后的消息数组。
-function foldSeatEvent(msgs: RoomMessageView[], seatId: string, seatName: string | undefined, ev: AgentEvent): RoomMessageView[] {
+function foldSeatEvent(msgs: RoomMessageView[], seatId: string, seatName: string | undefined, ev: AgentEvent, visibility?: string[]): RoomMessageView[] {
   // 找到该岗位最后一条「流式中」的气泡作为当前回合；否则新建。
   let idx = -1
   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -123,7 +127,8 @@ function foldSeatEvent(msgs: RoomMessageView[], seatId: string, seatName: string
     if (idx >= 0) return { list: msgs, i: idx }
     const fresh: RoomMessageView = {
       id: `m-${seatId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      from: seatId, seatName, text: '', activities: [], streaming: true, ts: Date.now()
+      from: seatId, seatName, text: '', activities: [], streaming: true, ts: Date.now(),
+      ...(visibility && visibility.length ? { visibility } : {})
     }
     return { list: [...msgs, fresh], i: msgs.length }
   }
@@ -245,9 +250,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   privateChat: async (seatId: string, text: string) => {
     const roomId = get().currentRoomId
     if (!roomId || !text.trim()) return
-    // 乐观插入带 to 的定向用户消息（1v1 抽屉据 to 筛选，§U1）。
+    // 乐观插入带 to + visibility 的定向用户消息：visibility 使其不进公屏、只在该岗位私聊框显示（§U1）。
     const userMsg: RoomMessageView = {
-      id: `pm-${Date.now()}`, from: 'user', to: seatId, seatName: '我', text, activities: [], ts: Date.now()
+      id: `pm-${Date.now()}`, from: 'user', to: seatId, visibility: [seatId], seatName: '我', text, activities: [], ts: Date.now()
     }
     set((s) => ({ messages: { ...s.messages, [roomId]: [...(s.messages[roomId] ?? []), userMsg] } }))
     await window.lc.room.privateChat(roomId, seatId, text)
@@ -293,7 +298,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       const room = s.rooms.find((r) => r.id === ev.roomId) ?? null
       const seatName = seatNameOf(room, ev.seatId)
       const list = s.messages[ev.roomId] ?? []
-      const messages = { ...s.messages, [ev.roomId]: foldSeatEvent(list, ev.seatId, seatName, payload) }
+      const messages = { ...s.messages, [ev.roomId]: foldSeatEvent(list, ev.seatId, seatName, payload, ev.visibility) }
       // 交互类事件升为挂起项（横幅，§7.4）。
       let pending = s.pending
       if (ev.interactive && payload.type === 'user_question') {
@@ -335,16 +340,25 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   },
 
   applyUtterance: (roomId, u) => {
-    // 只处理用户消息（岗位发言走 room:event 流式渲染）。桌面发起已乐观插入，
-    // 这里对相同文本/定向的近期用户消息去重，避免重复；微信发起的则补显到界面。
-    if (u.from !== 'user') return
     set((s) => {
       const list = s.messages[roomId] ?? []
-      const dup = list.slice(-6).some((m) => m.from === 'user' && m.text === u.text && (m.to ?? undefined) === (u.to ?? undefined))
-      if (dup) return {}
+      const room = s.rooms.find((r) => r.id === roomId) ?? null
+      // seq 去重：同一条 utterance（含编排器实时广播的定向/私信消息）只插一次。
+      if (list.some((m) => m.id === `evt-${u.seq}`)) return {}
+      if (u.from === 'user') {
+        // 桌面发起已乐观插入 → 对相同文本/定向的近期用户消息去重，避免重复；微信发起的补显。
+        const dup = list.slice(-6).some((m) => m.from === 'user' && m.text === u.text && (m.to ?? undefined) === (u.to ?? undefined))
+        if (dup) return {}
+      }
       const msg: RoomMessageView = {
-        id: `user-evt-${u.seq}`, from: 'user', seatName: '我', text: u.text,
-        ...(u.to ? { to: u.to } : {}), activities: [], ts: u.ts
+        id: `evt-${u.seq}`,
+        from: u.from,
+        seatName: seatNameOf(room, u.from),
+        text: u.text,
+        ...(u.to ? { to: u.to } : {}),
+        ...(u.visibility && u.visibility.length ? { visibility: u.visibility } : {}),
+        activities: [],
+        ts: u.ts
       }
       return { messages: { ...s.messages, [roomId]: [...list, msg] } }
     })

@@ -8,15 +8,22 @@ interface LayoutSizes {
   sidebarWidth: number
   agentWidth: number
   terminalHeight: number
+  homeSidebarWidth: number
 }
 
-const DEFAULTS: LayoutSizes = { sidebarWidth: 240, agentWidth: 340, terminalHeight: 240 }
+const DEFAULTS: LayoutSizes = {
+  sidebarWidth: 240,
+  agentWidth: 340,
+  terminalHeight: 240,
+  homeSidebarWidth: 256
+}
 
 
 const LIMITS = {
   sidebar: { min: 160, max: 600 },
   agent: { min: 240, max: 720 },
-  terminal: { min: 80, max: 1200 }
+  terminal: { min: 80, max: 1200 },
+  homeSidebar: { min: 200, max: 480 }
 }
 
 const clamp = (v: number, min: number, max: number): number => Math.min(Math.max(v, min), max)
@@ -49,6 +56,11 @@ function loadSizes(): LayoutSizes {
         typeof p.terminalHeight === 'number' ? p.terminalHeight : DEFAULTS.terminalHeight,
         LIMITS.terminal.min,
         terminalMax()
+      ),
+      homeSidebarWidth: clamp(
+        typeof p.homeSidebarWidth === 'number' ? p.homeSidebarWidth : DEFAULTS.homeSidebarWidth,
+        LIMITS.homeSidebar.min,
+        LIMITS.homeSidebar.max
       )
     }
   } catch {
@@ -98,7 +110,10 @@ interface UiState {
   /** 首页左侧会话侧栏是否展开（同样提升：视图切换不丢收起状态） */
   homeSidebarOpen: boolean
   setHomeSidebarOpen: (v: boolean) => void
-  /** 对话模式下右侧「产物预览」栏是否展开（仅当存在可预览产物时生效） */
+  /** 首页左侧会话侧栏宽度（px），展开时可拖拽分隔条调整 */
+  homeSidebarWidth: number
+  setHomeSidebarWidth: (w: number) => void
+  /** 对话模式下右侧「产物预览」栏是否展开（仅当存在可预览产物时生效）。默认收起，由用户点击工具栏按钮手动展开 */
   homeArtifactOpen: boolean
   setHomeArtifactOpen: (v: boolean) => void
   /** 产物预览栏宽度（px），可拖拽分隔条调整 */
@@ -156,7 +171,8 @@ export const useUiStore = create<UiState>((set, get) => {
     saveSizes({
       sidebarWidth: s.sidebarWidth,
       agentWidth: s.agentWidth,
-      terminalHeight: s.terminalHeight
+      terminalHeight: s.terminalHeight,
+      homeSidebarWidth: s.homeSidebarWidth
     })
   }
 
@@ -169,7 +185,14 @@ export const useUiStore = create<UiState>((set, get) => {
     setHomeChatOpen: (v) => set({ homeChatOpen: v }),
     homeSidebarOpen: true,
     setHomeSidebarOpen: (v) => set({ homeSidebarOpen: v }),
-    homeArtifactOpen: true,
+    homeSidebarWidth: initial.homeSidebarWidth,
+    setHomeSidebarWidth: (w) => {
+      set({
+        homeSidebarWidth: clamp(Math.round(w), LIMITS.homeSidebar.min, LIMITS.homeSidebar.max)
+      })
+      persist()
+    },
+    homeArtifactOpen: false,
     setHomeArtifactOpen: (v) => set({ homeArtifactOpen: v }),
     homeArtifactWidth: 520,
     setHomeArtifactWidth: (w) => set({ homeArtifactWidth: Math.max(320, Math.min(w, 1100)) }),

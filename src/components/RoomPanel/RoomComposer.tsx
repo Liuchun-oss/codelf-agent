@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { Room } from '@shared/roomTypes'
+import RoomSelect from './RoomSelect'
 
 // 输入框：支持选择 @ 目标（不选默认发主管）。Enter 发送，Shift+Enter 换行。
 export default function RoomComposer({
@@ -15,6 +16,13 @@ export default function RoomComposer({
 }): JSX.Element {
   const [text, setText] = useState('')
   const [mention, setMention] = useState<string>('')
+  const mentionOptions = useMemo(
+    () => [
+      { value: '', label: '@主管（默认）' },
+      ...room.seats.filter((s) => !s.isHost && s.enabled).map((s) => ({ value: s.id, label: `@${s.name}` }))
+    ],
+    [room.seats]
+  )
 
   const submit = (): void => {
     const t = text.trim()
@@ -26,17 +34,12 @@ export default function RoomComposer({
   return (
     <div className="room-composer">
       <div className="room-composer-row">
-        <select
+        <RoomSelect
           className="room-mention-select"
           value={mention}
-          onChange={(e) => setMention(e.target.value)}
-          title="选择 @ 的对象"
-        >
-          <option value="">@主管（默认）</option>
-          {room.seats.filter((s) => !s.isHost && s.enabled).map((s) => (
-            <option key={s.id} value={s.id}>@{s.name}</option>
-          ))}
-        </select>
+          options={mentionOptions}
+          onChange={setMention}
+        />
         {busy && <span className="room-composer-busy">团队进行中…</span>}
       </div>
       <div className="room-composer-input">

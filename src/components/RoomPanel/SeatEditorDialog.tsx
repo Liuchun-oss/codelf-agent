@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import type { Seat, SeatDraft } from '@shared/roomTypes'
 import type { ProviderProfileSummary } from '@shared/agentTypes'
 import { useRoomStore } from '../../stores/roomStore'
+import { useDismiss } from './useDismiss'
+import RoomSelect from './RoomSelect'
 
 // 岗位编辑器（U4）：建群后新增岗位 / 编辑已有岗位共用一个表单。
 // mode='add' 调 addSeat；mode='edit' 调 editSeat（仅传改动字段，id 只读）。
@@ -24,6 +26,7 @@ export default function SeatEditorDialog({
   const [profiles, setProfiles] = useState<ProviderProfileSummary[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const { closing, requestClose, onAnimationEnd } = useDismiss(onClose)
 
   useEffect(() => {
     void window.lc.aiListProfiles().then(setProfiles).catch(() => setProfiles([]))
@@ -55,7 +58,7 @@ export default function SeatEditorDialog({
         }
         await addSeat(draft)
       }
-      onClose()
+      requestClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setSubmitting(false)
@@ -63,11 +66,15 @@ export default function SeatEditorDialog({
   }
 
   return (
-    <div className="room-dialog-overlay" onClick={onClose}>
-      <div className="room-dialog room-dialog--narrow" onClick={(e) => e.stopPropagation()}>
+    <div className={`room-dialog-overlay${closing ? ' closing' : ''}`} onClick={requestClose}>
+      <div
+        className="room-dialog room-dialog--narrow"
+        onClick={(e) => e.stopPropagation()}
+        onAnimationEnd={onAnimationEnd}
+      >
         <div className="room-dialog-header">
           <span>{isEdit ? `编辑岗位 · ${seat?.name}` : '添加岗位'}</span>
-          <button type="button" className="room-dialog-close" onClick={onClose}>×</button>
+          <button type="button" className="room-dialog-close" onClick={requestClose}>×</button>
         </div>
         <div className="room-dialog-body">
           <div className="room-seat-card-row">
@@ -82,10 +89,12 @@ export default function SeatEditorDialog({
             placeholder="岗位说明书 / 人设（可选）"
           />
           <div className="room-seat-card-row">
-            <select value={model} onChange={(e) => setModel(e.target.value)}>
-              <option value="">默认模型</option>
-              {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <RoomSelect
+              className="room-seat-model-select"
+              value={model}
+              options={[{ value: '', label: '默认模型' }, ...profiles.map((p) => ({ value: p.id, label: p.name }))]}
+              onChange={setModel}
+            />
             <label className="room-seat-readonly">
               <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
               只读岗位
@@ -98,7 +107,7 @@ export default function SeatEditorDialog({
           {error && <div className="room-dialog-error">{error}</div>}
         </div>
         <div className="room-dialog-footer">
-          <button type="button" className="room-dialog-cancel" onClick={onClose}>取消</button>
+          <button type="button" className="room-dialog-cancel" onClick={requestClose}>取消</button>
           <button type="button" className="room-dialog-create" disabled={submitting} onClick={() => void submit()}>
             {submitting ? '保存中…' : (isEdit ? '保存' : '添加')}
           </button>

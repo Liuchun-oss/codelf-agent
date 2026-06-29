@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
-import { resolve, sep, isAbsolute } from 'path'
-import { realpathSync } from 'fs'
+import { resolve, isAbsolute } from 'path'
+import { homedir } from 'os'
 import type { AgentEvent, AiSendPayload } from '@shared/agentTypes'
 import type { Room, Seat, RoomContext, RoomEvent, SeatSignals, SeatKpiRecord } from '@shared/roomTypes'
 import type { AgentErrorCode } from '@shared/agentTypes'
@@ -33,7 +33,7 @@ import {
 import { enterWorktreeSession, exitWorktreeSession } from '../agent/orchestrator/worktreeSession'
 import { readProjectMemoryContent, writeProjectMemoryContent, ensureProjectMemory, purgeSessionAndProjectMemory } from '../agent/memory/store'
 import { isRetryableCode, explainError } from './roomErrorMap'
-import { createRoomHostTools, type MentionRecord } from '../agent/tools/roomTools'
+import { createRoomHostTools, createRoomWorkerTools, type MentionRecord } from '../agent/tools/roomTools'
 import { INSTALL_SKILL_TOOL_NAME } from '../agent/tools/installSkillTool'
 import { INSTALL_PLUGIN_TOOL_NAME } from '../agent/tools/installPluginTool'
 import { MODEL_CONFIG_TOOL_NAME } from '../agent/tools/modelConfigTool'
@@ -109,13 +109,16 @@ interface SeatRuntime {
   currentStep?: string
   // §14.3 最近一次故障（错误码 + 人话）。
   lastError?: { code: AgentErrorCode; message: string }
+  // 私密回合（被 private_message 私密派活叫起）：本回合的最终发言也写成私密，
+  // 仅 visibility 白名单内可见（= [主管, 本岗位]），不进公屏。下个回合开始时清空。
+  privateReplyVisibility?: string[]
 }
 
 interface RoomRuntime {
   room: Room
   seats: Map<string, SeatRuntime>   // seatId -> 运行态（懒加载引擎）
   running: boolean                  // 是否有发言循环在跑
-  pendingMention: MentionRecord | null  // host 本回合 @ 的岗位
+  mentionQueue: MentionRecord[]          // host 本回合批量 @ 的岗位队列（依次排空后再回主管，支持一次给多个岗位派活）
   abort: AbortController | null
   noProgressStreak: number
   pendingUserInputs: Array<{ text: string; mention?: string; fromWeixin?: boolean; alreadyPosted?: boolean }>  // 并发输入排队（§11.4）
@@ -149,7 +152,7 @@ class RoomOrchestrator {
       room,
       seats: new Map(),
       running: false,
-      pendingMention: null,
+      mentionQueue: [],
       abort: null,
       noProgressStreak: 0,
       pendingUserInputs: [],
@@ -205,8 +208,26 @@ class RoomOrchestrator {
       for (const tool of createRoomHostTools({
         roomId: rt.room.id,
         hostSeatId: seat.id,
-        recordMention: (m) => { rt.pendingMention = m },
+        recordMention: (m) => { rt.mentionQueue.push(m) },
         describeProgress: () => this.describeProgress(rt.room.id)
+      })) {
+        registry.register(tool)
+      }
+    } else {
+      // 工人岗位：注入「队友私语」工具（写带 visibility 白名单的留言进 transcript，支持群发小队）。
+      for (const tool of createRoomWorkerTools({
+        roomId: rt.room.id,
+        selfSeatId: seat.id,
+        recordWhisper: (toSeatIds, message) => {
+          const text = message.trim()
+          if (!text || toSeatIds.length === 0) return false
+          // 可见性白名单 = 自己 + 全部接收方（去重）。to 取第一个接收方仅作 UI 定向标注。
+          const visibility = [...new Set([seat.id, ...toSeatIds])]
+          const u = appendUtterance(rt.room.id, { from: seat.id, to: toSeatIds[0], text, visibility })
+          // 实时广播，否则被私语的队友要等重进群才看到（私聊框收不到对方私语）。
+          sendToRenderer('room:utterance', { roomId: rt.room.id, utterance: u })
+          return true
+        }
       })) {
         registry.register(tool)
       }
@@ -246,8 +267,15 @@ class RoomOrchestrator {
   }
 
   // 广播一条 RoomEvent 给 UI（带 seatId 归类到气泡，§7.3）。
-  private broadcast(roomId: string, seatId: string, payload: AgentEvent, interactive = false): void {
-    const ev: RoomEvent = { roomId, seatId, payload, ...(interactive ? { interactive: true } : {}) }
+  // visibility：私密回合的可见性白名单，前端据此把流式气泡路由进私聊框、并从公屏过滤。
+  private broadcast(roomId: string, seatId: string, payload: AgentEvent, interactive = false, visibility?: string[]): void {
+    const ev: RoomEvent = {
+      roomId,
+      seatId,
+      payload,
+      ...(interactive ? { interactive: true } : {}),
+      ...(visibility && visibility.length ? { visibility } : {})
+    }
     sendToRenderer('room:event', ev)
   }
 
@@ -259,8 +287,14 @@ class RoomOrchestrator {
 
   // 写入一条用户消息并广播给前端（room:utterance）。桌面发起时前端已乐观插入，
   // 但微信发起的消息前端无从得知 → 必须广播，否则 codelf 界面看不到机主在微信发的话。
-  private appendUserUtterance(roomId: string, text: string, to?: string): void {
-    const u = appendUtterance(roomId, { from: 'user', text, ...(to ? { to } : {}) })
+  // visibility：用户私聊某岗位时带白名单（仅该岗位可见），让这条用户私聊也不进公屏、不被其他岗位读到。
+  private appendUserUtterance(roomId: string, text: string, to?: string, visibility?: string[]): void {
+    const u = appendUtterance(roomId, {
+      from: 'user',
+      text,
+      ...(to ? { to } : {}),
+      ...(visibility && visibility.length ? { visibility } : {})
+    })
     sendToRenderer('room:utterance', { roomId, utterance: u })
   }
 
@@ -293,7 +327,8 @@ class RoomOrchestrator {
   // - 写类（带 path）：命中密钥文件 / 系统目录 → deny（红线，谁都不能碰）；否则 allow。
   // - 终端命令（带 command）：危险命令 → ask（交用户拍板）；引用密钥/系统路径 → deny；否则 allow。
   // - 相对路径按岗位工作区解析后再判红线（与 resolveAnyPath 同口径）。
-  // - 无 details 可判定 → ask（保守）。
+  // - 既无 path 也无 command（如 append_note/todo_write 等纯应用内工具）：不碰文件、不跑命令，
+  //   无任何外部副作用 → allow。这类工具不应打断用户（修复：旧版回退 ask 导致每条笔记都弹审批）。
   private autoResolvePermission(seat: Seat, ev: Extract<AgentEvent, { type: 'permission_request' }>): 'allow' | 'deny' | 'ask' {
     const d = ev.details
     if (d?.path) {
@@ -306,7 +341,7 @@ class RoomOrchestrator {
       if (paths.some((p) => this.crossesRedline(seat, p))) return 'deny'
       return 'allow'
     }
-    return 'ask'
+    return 'allow'
   }
 
   // 硬红线：密钥文件（secrets）与系统目录，任何岗位都不能写/动。相对路径按岗位工作区解析。
@@ -315,21 +350,6 @@ class RoomOrchestrator {
       ? targetPath
       : (seat.workspaceRoot ? resolve(seat.workspaceRoot, targetPath) : resolve(targetPath))
     return isSensitivePath(abs) || isSystemPath(abs)
-  }
-
-  // 路径围栏（§6.6 + §11.8）：目标路径规范化（含 realpath 防符号链接绕过）后，
-  // 判断是否落在 seat.workspaceRoot 子树内。在内 → 放行；越界 → 拦截。
-  // 关键：相对路径必须按 seat 工作区解析（与 resolveAnyPath 同口径），不能用 process.cwd()，
-  // 否则 delete/终端命令带相对路径时围栏判定会落到 app 进程目录，导致误放行或误拦截。
-  private isWithinFence(seat: Seat, targetPath: string): boolean {
-    if (!seat.workspaceRoot) return false
-    const resolvedTarget = isAbsolute(targetPath)
-      ? targetPath
-      : resolve(seat.workspaceRoot, targetPath)
-    const fenceReal = safeRealpath(resolve(seat.workspaceRoot))
-    const targetReal = safeRealpath(resolvedTarget)
-    const fence = fenceReal.endsWith(sep) ? fenceReal : fenceReal + sep
-    return targetReal === fenceReal || targetReal.startsWith(fence)
   }
 
   // 组装注入岗位引擎的 roomContext（驱动 roomSeat 提示词段）。
@@ -502,7 +522,9 @@ class RoomOrchestrator {
     const sr = this.getSeatRuntime(rt, seat)
     sr.state = 'working'
     sr.turnStartedAt = Date.now()
-    rt.pendingMention = null
+    // 仅在 host 回合开始时清空派发队列：host 本回合可能批量 @ 多个岗位（mention_seat/private_message
+    // 调多次），队列在 nextHostRouted 里依次排空；工人回合不能清，否则排队中的后续岗位会丢失。
+    if (seat.isHost) rt.mentionQueue = []
 
     // host 同源覆盖（微信人格 + 工作区），工人岗位原样（§8/§11.1）。
     const effSeat0 = this.resolveEffectiveSeat(rt, seat)
@@ -510,13 +532,19 @@ class RoomOrchestrator {
     const effSeat = this.ensureSeatWorktree(rt, seat, effSeat0)
     const sessionId = `room:${rt.room.id}:seat:${seat.id}`
     const incoming = collectUnseenFor(rt.room.id, seat.id)
-    const prompt = renderGroupTranscript(incoming, !!seat.isHost)
+    const prompt = renderGroupTranscript(incoming, !!seat.isHost, !!sr.privateReplyVisibility)
+
+    // 终端/命令工具的运行根：岗位 workspaceRoot 为空（主管/纯对话岗位 = null）时，
+    // 回退到用户家目录，否则 PowerShell/terminal 等工具会一律「未打开工作区」直接失败，
+    // 岗位反复重试卡死、对工作区以外目录（含 D:\projects\... 这类绝对路径）也动不了（修复 bug3）。
+    // 注意：仅给「命令执行的 cwd」兜底，记忆绑定仍用基础工作区，不受影响。
+    const execCwd = effSeat.workspaceRoot ?? safeHomeDir()
 
     const payload: AiSendPayload = {
       sessionId,
       turnId: randomUUID(),
       message: prompt,
-      sessionCwd: effSeat.workspaceRoot,
+      sessionCwd: execCwd,
       // 每岗位模型：用 seat.modelProfileId（不设则引擎回退到全局激活 profile）。
       ...(seat.modelProfileId ? { profileId: seat.modelProfileId } : {}),
       // 记忆绑定基础工作区（worktree 隔离前），不随临时副本漂移 → KPI/注入/UI 三处同源（§9.2 决策）。
@@ -529,10 +557,17 @@ class RoomOrchestrator {
     const finalText = await this.consumeSeatEvents(rt, effSeat, sr, payload)
     markSeen(rt.room.id, seat.id)
     sr.signals.durationMs += Date.now() - sr.turnStartedAt
+    // 私密回合：本回合的最终发言也写成私密（仅主管+本岗位可见），不进公屏。读取后清空（一次性）。
+    const replyVisibility = sr.privateReplyVisibility
+    sr.privateReplyVisibility = undefined
     // 空发言不写 transcript（§11.6）；非空才进事实源。
     const trimmed = finalText.trim()
     if (trimmed) {
-      appendUtterance(rt.room.id, { from: seat.id, text: trimmed })
+      appendUtterance(rt.room.id, {
+        from: seat.id,
+        text: trimmed,
+        ...(replyVisibility && replyVisibility.length ? { visibility: replyVisibility } : {})
+      })
       rt.noProgressStreak = 0
       sr.signals.completed = true
     } else {
@@ -647,7 +682,7 @@ class RoomOrchestrator {
           rt.noProgressStreak++
         }
         // 已自动裁决，仍广播为非交互过程事件供 UI 折叠显示，但不挂起全群。
-        this.broadcast(roomId, seat.id, ev, false)
+        this.broadcast(roomId, seat.id, ev, false, sr.privateReplyVisibility)
         return
       }
     }
@@ -662,7 +697,7 @@ class RoomOrchestrator {
       const active = ev.tasks.find((t) => t.status === 'in_progress')
       if (active) sr.currentStep = active.activeForm || active.subject
     }
-    this.broadcast(roomId, seat.id, ev, interactive)
+    this.broadcast(roomId, seat.id, ev, interactive, sr.privateReplyVisibility)
 
     // 微信遥控：交互类事件经主管汇总推机主（host-merge 队列，§8.4）。
     if (rt.weixinRelay && ev.type === 'user_question') {
@@ -709,22 +744,46 @@ class RoomOrchestrator {
     return rt.pausedSeats.has(seatId) || rt.erroredSeats.has(seatId)
   }
 
-  // host-routed（首版默认）：host 用 mention_seat 指定；工人发言完回主管收口。
+  // host-routed（首版默认）：host 用 mention_seat/private_message 批量 @ 岗位，依次排空队列；
+  // 工人发言完，若队列还有人则继续派下一个（同一批），否则回主管收口。
+  // 批量派发支撑「主管一回合给多个岗位分别派活，依次执行后统一收口」（增强①）。
   private nextHostRouted(rt: RoomRuntime, seat: Seat): Seat | null {
-    if (seat.isHost) {
-      const m = rt.pendingMention
-      rt.pendingMention = null
-      if (!m) return null
+    // host 回合结束：开始排空本回合积累的派发队列。
+    // 工人回合结束：若队列仍有人（同一批未派完），继续派下一个；否则回主管。
+    const next = this.dequeueMention(rt)
+    if (next) return next
+    if (seat.isHost) return null
+    return rt.room.seats.find((s) => s.id === rt.room.hostSeatId) ?? null
+  }
+
+  // 从派发队列取下一个有效目标，把交代任务写进消息流（私信带 visibility 白名单）。
+  // 队列归主管所有 → 任务消息恒以主管为 from（不随排空时正在收尾的工人漂移）。
+  // 跳过无效/禁用/不可调度的目标，直到取到一个或队列空。
+  private dequeueMention(rt: RoomRuntime): Seat | null {
+    const hostId = rt.room.hostSeatId
+    while (rt.mentionQueue.length > 0) {
+      const m = rt.mentionQueue.shift()!
       const target = rt.room.seats.find((s) => s.id === m.seatId)
-      if (!target || !target.enabled || this.isUnavailable(rt, target.id)) return null
-      // 把主管经 mention_seat 交代的任务作为定向消息写进消息流，否则 task 丢失、岗位只能看到
-      // 主管的群发言、收不到具体指派（含「项目目录在哪」这类关键交代）。
+      if (!target || !target.enabled || this.isUnavailable(rt, target.id) || target.id === hostId) continue
+      // 任务作为定向消息进消息流；私信（private）带 visibility 白名单，仅主管+目标可见。
       if (m.task && m.task.trim()) {
-        appendUtterance(rt.room.id, { from: seat.id, to: target.id, text: m.task.trim() })
+        const u = appendUtterance(rt.room.id, {
+          from: hostId,
+          to: target.id,
+          text: m.task.trim(),
+          ...(m.private ? { visibility: [hostId, target.id] } : {})
+        })
+        // 实时广播给前端，否则这条定向/私信消息要等重进群才从历史加载（私聊框收不到对方消息）。
+        sendToRenderer('room:utterance', { roomId: rt.room.id, utterance: u })
       }
+      // 私密派活：标记目标本回合为「私密回合」，其最终发言也只回给主管+自己（不进公屏）。
+      // 公开派活：清除可能残留的私密标记，回归正常公开发言。
+      // 用 getSeatRuntime 确保运行态存在（目标可能从未发言、尚无 runtime）。
+      const sr = this.getSeatRuntime(rt, target)
+      sr.privateReplyVisibility = m.private ? [hostId, target.id] : undefined
       return target
     }
-    return rt.room.seats.find((s) => s.id === rt.room.hostSeatId) ?? null
+    return null
   }
 
   // round-robin：按固定顺序在「启用的工人岗位」间轮转；转完一圈回主管收口一次。
@@ -775,7 +834,7 @@ class RoomOrchestrator {
     const rt = this.runtimes.get(roomId)
     if (!rt) return
     rt.abort?.abort()
-    rt.pendingMention = null
+    rt.mentionQueue = []
     rt.pendingUserInputs = []
     // 清微信遥控的挂起交互项：中断后这些 requestId 对应的引擎已被 cancel，
     // 不清的话机主下一条微信会被误当成对「已失效提问/审批」的回答而被静默吞掉。
@@ -1049,7 +1108,9 @@ class RoomOrchestrator {
     const seat = rt.room.seats.find((s) => s.id === seatId)
     if (!seat) throw new Error(`岗位不存在：${seatId}`)
     if (rt.running) { rt.pendingUserInputs.push({ text, mention: seatId }); return }
-    this.appendUserUtterance(roomId, text, seatId)
+    // 用户私聊：消息只对该岗位可见（不进公屏、其他岗位读不到），且该岗位的回复也设为私密。
+    this.appendUserUtterance(roomId, text, seatId, [seatId])
+    this.getSeatRuntime(rt, seat).privateReplyVisibility = [seatId]
     rt.running = true
     rt.abort = new AbortController()
     this.broadcastRunning(roomId, true)
@@ -1198,12 +1259,13 @@ function weekPeriod(d = new Date()): string {
   return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`
 }
 
-// realpath 解析真实路径防符号链接绕过（§11.8）；路径不存在时退回 resolve 结果。
-function safeRealpath(p: string): string {
+// 命令执行 cwd 兜底：岗位无工作区（主管/纯对话岗位 = null）时回退到用户家目录，
+// 让 PowerShell/terminal 等工具有合法运行根，不再一律「未打开工作区」失败（修复 bug3）。
+function safeHomeDir(): string {
   try {
-    return realpathSync(p)
+    return homedir() || process.cwd()
   } catch {
-    return p
+    return process.cwd()
   }
 }
 
@@ -1211,11 +1273,15 @@ function safeRealpath(p: string): string {
 // 标注「谁 @ 了你、说了什么」，让岗位知道当前任务来源（§5.4.2 第 4 点）。
 // isHost：主管的职责是「先理解需求、再用 mention_seat 分派」，而非亲自动手（B1-4 决策）。
 function renderGroupTranscript(
-  incoming: Array<{ from: string; to?: string; text: string }>,
-  isHost = false
+  incoming: Array<{ from: string; to?: string; text: string; visibility?: string[] }>,
+  isHost = false,
+  privateReply = false
 ): string {
   const hostTail = '请先理解清楚用户的真实需求，再用 mention_seat 把任务分派给最合适的岗位；不要自己动手写代码/改文件。若需求模糊，先提问澄清。'
-  const workerTail = '请基于以上内容，完成属于你职责范围内的事，并在群里简洁汇报结果。'
+  // 私密回合：被主管私信叫起，本轮发言只回给主管（其他岗位看不到）→ 可放心私下汇报，不会泄露。
+  const workerTail = privateReply
+    ? '你是被主管私信单独叫起的：本轮发言只有主管和你能看到，其他岗位看不到。请直接、私下地把结果/选择回复给主管，不必担心泄露给其他人。'
+    : '请基于以上内容，完成属于你职责范围内的事，并在群里简洁汇报结果。'
   const tail = isHost ? hostTail : workerTail
   if (incoming.length === 0) {
     return isHost
@@ -1225,7 +1291,9 @@ function renderGroupTranscript(
   const lines = incoming.map((u) => {
     const who = u.from === 'user' ? '用户' : u.from === 'system' ? '系统' : u.from
     const at = u.to ? `（@${u.to}）` : ''
-    return `【${who}${at}】：${u.text}`
+    // 私信标注：让收信岗位知道这是私下交代，其他岗位看不到，回复时不必复述私信内容。
+    const priv = u.visibility && u.visibility.length ? '（🔒私信，仅你可见）' : ''
+    return `【${who}${at}${priv}】：${u.text}`
   })
   return ['以下是群里自你上次发言以来的新消息：', '', ...lines, '', tail].join('\n')
 }

@@ -3,6 +3,8 @@ import type { RoomDraft, Seat, SpeakingPolicy } from '@shared/roomTypes'
 import type { ProviderProfileSummary } from '@shared/agentTypes'
 import { useRoomStore } from '../../stores/roomStore'
 import { ROOM_TEMPLATES, type RoomTemplate } from './roomTemplates'
+import { useDismiss } from './useDismiss'
+import RoomSelect from './RoomSelect'
 
 // 建群表单：填群名、主管人设（§5.5 可空→出厂默认），增删工人岗位（名字/职责/人设/模型/只读）。
 // 生成 RoomDraft 调 room:create，后端自动补工作区目录、禁用工人 run_subagent。
@@ -33,6 +35,7 @@ export default function CreateRoomDialog({ onClose }: { onClose: () => void }): 
   const [profiles, setProfiles] = useState<ProviderProfileSummary[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const { closing, requestClose, onAnimationEnd } = useDismiss(onClose)
 
   useEffect(() => {
     void window.lc.aiListProfiles().then(setProfiles).catch(() => setProfiles([]))
@@ -83,7 +86,7 @@ export default function CreateRoomDialog({ onClose }: { onClose: () => void }): 
         ...(bindWeixin ? { weixinBinding: { conversationId: 'weixin' } } : {})
       }
       await createRoom(draft)
-      onClose()
+      requestClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setSubmitting(false)
@@ -91,11 +94,11 @@ export default function CreateRoomDialog({ onClose }: { onClose: () => void }): 
   }
 
   return (
-    <div className="room-dialog-overlay" onClick={onClose}>
-      <div className="room-dialog" onClick={(e) => e.stopPropagation()}>
+    <div className={`room-dialog-overlay${closing ? ' closing' : ''}`} onClick={requestClose}>
+      <div className="room-dialog" onClick={(e) => e.stopPropagation()} onAnimationEnd={onAnimationEnd}>
         <div className="room-dialog-header">
           <span>新建群聊</span>
-          <button type="button" className="room-dialog-close" onClick={onClose}>×</button>
+          <button type="button" className="room-dialog-close" onClick={requestClose}>×</button>
         </div>
 
         <div className="room-dialog-body">
@@ -119,11 +122,15 @@ export default function CreateRoomDialog({ onClose }: { onClose: () => void }): 
 
           <label className="room-field">
             <span className="room-field-label">发言策略</span>
-            <select value={policy} onChange={(e) => setPolicy(e.target.value as SpeakingPolicy)}>
-              <option value="host-routed">主管分派（host-routed）— 主管 @ 谁谁发言</option>
-              <option value="round-robin">轮流接力（round-robin）— 按顺序逐个发言</option>
-              <option value="free">自由讨论（free）— 发言末尾 @ 谁谁接力</option>
-            </select>
+            <RoomSelect
+              value={policy}
+              options={[
+                { value: 'host-routed', label: '主管分派（host-routed）— 主管 @ 谁谁发言' },
+                { value: 'round-robin', label: '轮流接力（round-robin）— 按顺序逐个发言' },
+                { value: 'free', label: '自由讨论（free）— 发言末尾 @ 谁谁接力' }
+              ]}
+              onChange={(v) => setPolicy(v as SpeakingPolicy)}
+            />
           </label>
 
           <label className="room-field">
@@ -155,10 +162,11 @@ export default function CreateRoomDialog({ onClose }: { onClose: () => void }): 
             </label>
             <label className="room-field">
               <span className="room-field-label">模型</span>
-              <select value={hostModel} onChange={(e) => setHostModel(e.target.value)}>
-                <option value="">默认（当前激活）</option>
-                {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}（{p.model}）</option>)}
-              </select>
+              <RoomSelect
+                value={hostModel}
+                options={[{ value: '', label: '默认（当前激活）' }, ...profiles.map((p) => ({ value: p.id, label: `${p.name}（${p.model}）` }))]}
+                onChange={setHostModel}
+              />
             </label>
             <label className="room-seat-readonly">
               <input type="checkbox" checked={bindWeixin} onChange={(e) => setBindWeixin(e.target.checked)} />
@@ -209,10 +217,12 @@ export default function CreateRoomDialog({ onClose }: { onClose: () => void }): 
                   placeholder="岗位说明书 / 人设（可选）"
                 />
                 <div className="room-seat-card-row">
-                  <select value={w.modelProfileId ?? ''} onChange={(e) => updateWorker(w.id, { modelProfileId: e.target.value || undefined })}>
-                    <option value="">默认模型</option>
-                    {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
+                  <RoomSelect
+                    className="room-seat-model-select"
+                    value={w.modelProfileId ?? ''}
+                    options={[{ value: '', label: '默认模型' }, ...profiles.map((p) => ({ value: p.id, label: p.name }))]}
+                    onChange={(v) => updateWorker(w.id, { modelProfileId: v || undefined })}
+                  />
                   <label className="room-seat-readonly">
                     <input type="checkbox" checked={w.readOnly} onChange={(e) => updateWorker(w.id, { readOnly: e.target.checked })} />
                     只读岗位
@@ -232,7 +242,7 @@ export default function CreateRoomDialog({ onClose }: { onClose: () => void }): 
         </div>
 
         <div className="room-dialog-footer">
-          <button type="button" className="room-dialog-cancel" onClick={onClose}>取消</button>
+          <button type="button" className="room-dialog-cancel" onClick={requestClose}>取消</button>
           <button type="button" className="room-dialog-create" disabled={submitting} onClick={() => void submit()}>
             {submitting ? '创建中…' : '创建'}
           </button>

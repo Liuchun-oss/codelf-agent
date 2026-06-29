@@ -62,6 +62,8 @@ export default function HomeScreen(): JSX.Element {
   const setChatOpen = useUiStore((s) => s.setHomeChatOpen)
   const sidebarOpen = useUiStore((s) => s.homeSidebarOpen)
   const setSidebarOpen = useUiStore((s) => s.setHomeSidebarOpen)
+  const sidebarWidth = useUiStore((s) => s.homeSidebarWidth)
+  const setSidebarWidth = useUiStore((s) => s.setHomeSidebarWidth)
   const artifactOpen = useUiStore((s) => s.homeArtifactOpen)
   const setArtifactOpen = useUiStore((s) => s.setHomeArtifactOpen)
   const artifactWidth = useUiStore((s) => s.homeArtifactWidth)
@@ -72,6 +74,7 @@ export default function HomeScreen(): JSX.Element {
   const setPickedWs = useUiStore((s) => s.setHomePickedWorkspace)
   const [draft, setDraft] = useState('')
   const [draftImages, setDraftImages] = useState<ImageAttachment[]>([])
+  const [artifactClosing, setArtifactClosing] = useState(false)
   const initializedPick = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -243,6 +246,20 @@ export default function HomeScreen(): JSX.Element {
     [draft, autoGrow]
   )
 
+  // 关闭产物预览/浏览器面板：先播退场动画，结束后再真正卸载。
+  const closeArtifact = (): void => setArtifactClosing(true)
+  const openArtifact = (): void => {
+    setArtifactClosing(false)
+    setArtifactOpen(true)
+  }
+  const onArtifactAnimEnd = (e: React.AnimationEvent): void => {
+    if (e.currentTarget !== e.target) return
+    if (artifactClosing) {
+      setArtifactClosing(false)
+      setArtifactOpen(false)
+    }
+  }
+
   const openConversation = (sessionId: string): void => {
     switchSession(sessionId)
     setChatOpen(true)
@@ -263,8 +280,12 @@ export default function HomeScreen(): JSX.Element {
         <aside
           className={`home-chat-sidebar${sidebarOpen ? '' : ' collapsed'}`}
           aria-hidden={!sidebarOpen}
+          style={sidebarOpen ? { width: sidebarWidth } : undefined}
         >
-          <div className="home-chat-sidebar-inner">
+          <div
+            className="home-chat-sidebar-inner"
+            style={{ width: sidebarWidth }}
+          >
             <div className="home-sidebar-top">
               <button
                 type="button"
@@ -330,6 +351,14 @@ export default function HomeScreen(): JSX.Element {
               )}
               </div>
           </div>
+          {sidebarOpen && (
+            <ResizeHandle
+              edge="right"
+              getSize={() => sidebarWidth}
+              onResize={setSidebarWidth}
+              title="拖动调整侧栏宽度"
+            />
+          )}
         </aside>
 
         <main className="home-main">
@@ -359,9 +388,9 @@ export default function HomeScreen(): JSX.Element {
                   {hasArtifacts && !artifactOpen && (
                     <button
                       type="button"
-                      className="home-artifact-toggle"
+                      className="home-artifact-toggle home-artifact-toggle--enter"
                       title="展开产物预览"
-                      onClick={() => setArtifactOpen(true)}
+                      onClick={openArtifact}
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
                         <rect x="3" y="4" width="18" height="16" rx="1.5" />
@@ -376,7 +405,7 @@ export default function HomeScreen(): JSX.Element {
                     title="打开内置浏览器"
                     onClick={() => {
                       openHomeBrowser()
-                      setArtifactOpen(true)
+                      openArtifact()
                     }}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
@@ -392,8 +421,9 @@ export default function HomeScreen(): JSX.Element {
               </div>
               {(hasArtifacts || browserOpen) && artifactOpen && (
                 <div
-                  className="home-artifact-pane"
-                  style={{ flex: `0 0 ${artifactWidth}px`, width: artifactWidth }}
+                  className={`home-artifact-pane${artifactClosing ? ' closing' : ''}`}
+                  style={{ flex: `0 0 ${artifactWidth}px`, width: artifactWidth, ['--artifact-w' as string]: `${artifactWidth}px` }}
+                  onAnimationEnd={onArtifactAnimEnd}
                 >
                   <ResizeHandle
                     edge="left"
@@ -401,7 +431,7 @@ export default function HomeScreen(): JSX.Element {
                     onResize={setArtifactWidth}
                     title="拖动调整预览宽度"
                   />
-                  <ArtifactPanel onClose={() => setArtifactOpen(false)} />
+                  <ArtifactPanel onClose={closeArtifact} />
                 </div>
               )}
             </div>

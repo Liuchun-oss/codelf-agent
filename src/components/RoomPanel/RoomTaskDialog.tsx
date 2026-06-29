@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { Room } from '@shared/roomTypes'
 import type { ScheduleKind } from '@shared/scheduleTypes'
+import { useDismiss } from './useDismiss'
+import RoomSelect from './RoomSelect'
 
 // 定时群会议弹窗（U3）：到点把议题投进群，由主管分派团队开工。
 // 频率给几个预设 + 自定义 cron 高级项；投递方式 UI / 微信。
@@ -19,6 +21,7 @@ export default function RoomTaskDialog({ room, onClose }: { room: Room; onClose:
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState('')
   const [error, setError] = useState('')
+  const { closing, requestClose, onAnimationEnd } = useDismiss(onClose)
 
   const isCron = presetId === 'cron'
 
@@ -43,11 +46,15 @@ export default function RoomTaskDialog({ room, onClose }: { room: Room; onClose:
   }
 
   return (
-    <div className="room-dialog-overlay" onClick={onClose}>
-      <div className="room-dialog room-dialog--narrow" onClick={(e) => e.stopPropagation()}>
+    <div className={`room-dialog-overlay${closing ? ' closing' : ''}`} onClick={requestClose}>
+      <div
+        className="room-dialog room-dialog--narrow"
+        onClick={(e) => e.stopPropagation()}
+        onAnimationEnd={onAnimationEnd}
+      >
         <div className="room-dialog-header">
           <span>定时群会议</span>
-          <button type="button" className="room-dialog-close" onClick={onClose}>×</button>
+          <button type="button" className="room-dialog-close" onClick={requestClose}>×</button>
         </div>
         <div className="room-dialog-body">
           {result ? (
@@ -65,9 +72,11 @@ export default function RoomTaskDialog({ room, onClose }: { room: Room; onClose:
               </label>
               <label className="room-field">
                 <span className="room-field-label">频率</span>
-                <select value={presetId} onChange={(e) => setPresetId(e.target.value)}>
-                  {PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-                </select>
+                <RoomSelect
+                  value={presetId}
+                  options={PRESETS.map((p) => ({ value: p.id, label: p.label }))}
+                  onChange={setPresetId}
+                />
               </label>
               {isCron && (
                 <label className="room-field">
@@ -78,17 +87,18 @@ export default function RoomTaskDialog({ room, onClose }: { room: Room; onClose:
               )}
               <label className="room-field">
                 <span className="room-field-label">结果投递</span>
-                <select value={delivery} onChange={(e) => setDelivery(e.target.value as 'ui' | 'weixin')}>
-                  <option value="ui">应用内</option>
-                  <option value="weixin">微信</option>
-                </select>
+                <RoomSelect
+                  value={delivery}
+                  options={[{ value: 'ui', label: '应用内' }, { value: 'weixin', label: '微信' }]}
+                  onChange={(v) => setDelivery(v as 'ui' | 'weixin')}
+                />
               </label>
               {error && <div className="room-dialog-error">{error}</div>}
             </>
           )}
         </div>
         <div className="room-dialog-footer">
-          <button type="button" className="room-dialog-cancel" onClick={onClose}>{result ? '完成' : '取消'}</button>
+          <button type="button" className="room-dialog-cancel" onClick={requestClose}>{result ? '完成' : '取消'}</button>
           {!result && (
             <button type="button" className="room-dialog-create" disabled={submitting} onClick={() => void submit()}>
               {submitting ? '设定中…' : '设为定时会议'}

@@ -305,7 +305,14 @@ export function appendUtterance(
 ): Utterance {
   const list = loadTranscript(roomId)
   const seq = (list[list.length - 1]?.seq ?? 0) + 1
-  const utterance: Utterance = { seq, from: u.from, text: u.text, ts: u.ts ?? Date.now(), ...(u.to ? { to: u.to } : {}) }
+  const utterance: Utterance = {
+    seq,
+    from: u.from,
+    text: u.text,
+    ts: u.ts ?? Date.now(),
+    ...(u.to ? { to: u.to } : {}),
+    ...(u.visibility && u.visibility.length ? { visibility: u.visibility } : {})
+  }
   list.push(utterance)
   try {
     const f = transcriptFile(roomId)
@@ -369,11 +376,17 @@ export function readLatestKpis(roomId: string): SeatKpiRecord[] {
 
 // 收集某岗位「自上次发言以来的未读消息」（§6.2 collectUnseenFor）。
 // 不含该岗位自己说的话；更新游标由 markSeen 单独完成（发言成功后再推进）。
+// 私信过滤：带 visibility 白名单的消息，仅当本岗位在白名单内才可见（其余工人读不到）。
 export function collectUnseenFor(roomId: string, seatId: string): Utterance[] {
   const list = loadTranscript(roomId)
   const seat = findSeat(roomId, seatId)
   const since = seat?.lastSeenUtteranceSeq ?? 0
-  return list.filter((u) => u.seq > since && u.from !== seatId)
+  return list.filter((u) => {
+    if (u.seq <= since || u.from === seatId) return false
+    // 公开消息（无 visibility）全员可见；私信仅白名单内岗位可见。
+    if (u.visibility && u.visibility.length) return u.visibility.includes(seatId)
+    return true
+  })
 }
 
 // 推进某岗位的「已读水位」到最新一条（§11.5：游标持久化）。

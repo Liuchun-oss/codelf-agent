@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useUiStore } from '../../stores/uiStore'
 import { useRoomStore, type InteractivePrompt } from '../../stores/roomStore'
+import type { Room } from '@shared/roomTypes'
 import MemberSidebar from './MemberSidebar'
 import RoomMessageList from './RoomMessageList'
 import RoomComposer from './RoomComposer'
 import CreateRoomDialog from './CreateRoomDialog'
-import KpiDashboard from './KpiDashboard'
+import { KpiDrawer } from './KpiDashboard'
 import RoomTaskDialog from './RoomTaskDialog'
 
 // 群聊主面板（仿微信/飞书三栏：会话列表 | 群消息流 | 成员侧栏）。
@@ -17,6 +18,33 @@ export default function RoomPanel(): JSX.Element {
   const [showKpi, setShowKpi] = useState(false)
   const [showTask, setShowTask] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
+  // 成员栏宽度（可左右拖拽调整，持久化到 localStorage）。
+  const [memberWidth, setMemberWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('room.memberWidth'))
+    return Number.isFinite(saved) && saved >= 200 && saved <= 560 ? saved : 240
+  })
+  const memberWidthRef = useRef(memberWidth)
+
+  const startResizeMembers = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = memberWidth
+    document.body.classList.add('resizing-x')
+    const onMove = (ev: MouseEvent): void => {
+      // 手柄在成员栏左缘：向左拖（clientX 变小）变宽。
+      const next = Math.min(560, Math.max(200, startW + (startX - ev.clientX)))
+      memberWidthRef.current = next
+      setMemberWidth(next)
+    }
+    const onUp = (): void => {
+      document.body.classList.remove('resizing-x')
+      localStorage.setItem('room.memberWidth', String(Math.round(memberWidthRef.current)))
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   useEffect(() => {
     void (async () => {
@@ -88,8 +116,8 @@ export default function RoomPanel(): JSX.Element {
         {room ? (
           <>
             <main className="room-main">
-              <PendingBanner prompts={pend} />
-              <RoomMessageList messages={msgs} />
+              <PendingBanner prompts={pend} room={room} />
+              <RoomMessageList messages={msgs} roomId={currentRoomId ?? undefined} />
               <RoomComposer
                 room={room}
                 busy={busy}
@@ -97,14 +125,15 @@ export default function RoomPanel(): JSX.Element {
                 onStop={() => void useRoomStore.getState().stop()}
               />
             </main>
-            <MemberSidebar room={room} runtime={runtime} />
+            <div
+              className="room-members-resizer"
+              onMouseDown={startResizeMembers}
+              title="拖动调整成员栏宽度"
+            />
+            <MemberSidebar room={room} runtime={runtime} width={memberWidth} />
             {showMembers && <div className="room-members-scrim" onClick={() => setShowMembers(false)} />}
             {showKpi && (
-              <div className="room-kpi-drawer-mask" onClick={() => setShowKpi(false)}>
-                <div className="room-kpi-drawer" onClick={(e) => e.stopPropagation()}>
-                  <KpiDashboard room={room} onClose={() => setShowKpi(false)} />
-                </div>
-              </div>
+              <KpiDrawer room={room} onClose={() => setShowKpi(false)} />
             )}
             {showTask && <RoomTaskDialog room={room} onClose={() => setShowTask(false)} />}
           </>
@@ -125,21 +154,31 @@ export default function RoomPanel(): JSX.Element {
 }
 
 // 交互类事件横幅（§7.4 第二类）：提问/审批强制弹出、挂起全群，等用户回应。
-function PendingBanner({ prompts }: { prompts: InteractivePrompt[] }): JSX.Element | null {
+// 竖向卡片布局：标题行（谁在等你）→ 正文 → 操作区（选项按钮换行 + 输入框独立成行）。
+function PendingBanner({ prompts, room }: { prompts: InteractivePrompt[]; room: Room }): JSX.Element | null {
   if (prompts.length === 0) return null
   const p = prompts[0]
   const store = useRoomStore.getState()
   const more = prompts.length - 1
+  const seat = room.seats.find((s) => s.id === p.seatId)
+  const seatName = seat?.name ?? '某岗位'
+  const isPermission = p.kind === 'permission'
+
   return (
-    <div className="room-banner">
-      <div className="room-banner-text">
-        ⚠️ <strong>有岗位需要你回应</strong>：{p.text}
-        {more > 0 && <span className="room-banner-more">（还有 {more} 条待回应）</span>}
+    <div className={`room-banner${isPermission ? ' room-banner--permission' : ' room-banner--question'}`}>
+      <div className="room-banner-head">
+        <span className="room-banner-icon" aria-hidden>{isPermission ? '🔐' : '💬'}</span>
+        <span className="room-banner-label">
+          <strong>{seatName}</strong>
+          {isPermission ? ' 请求授权' : ' 想问你'}
+        </span>
+        {more > 0 && <span className="room-banner-more">还有 {more} 条待回应</span>}
       </div>
-      {p.kind === 'permission' ? (
+      <div className="room-banner-text">{p.text}</div>
+      {isPermission ? (
         <div className="room-banner-actions">
-          <button type="button" onClick={() => void store.resolvePermission(p, true)}>同意</button>
-          <button type="button" onClick={() => void store.resolvePermission(p, false)}>拒绝</button>
+          <button type="button" className="room-banner-btn room-banner-btn--primary" onClick={() => void store.resolvePermission(p, true)}>同意</button>
+          <button type="button" className="room-banner-btn room-banner-btn--ghost" onClick={() => void store.resolvePermission(p, false)}>拒绝</button>
         </div>
       ) : (
         <QuestionReply prompt={p} />
@@ -151,20 +190,28 @@ function PendingBanner({ prompts }: { prompts: InteractivePrompt[] }): JSX.Eleme
 function QuestionReply({ prompt }: { prompt: InteractivePrompt }): JSX.Element {
   const [answer, setAnswer] = useState('')
   const store = useRoomStore.getState()
+  const hasSuggestions = !!prompt.suggestions?.length
   return (
-    <div className="room-banner-actions">
-      {prompt.suggestions?.map((s) => (
-        <button key={s} type="button" onClick={() => void store.resolveQuestion(prompt, s)}>{s}</button>
-      ))}
-      <input
-        value={answer}
-        placeholder="回复…"
-        onChange={(e) => setAnswer(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && answer.trim()) void store.resolveQuestion(prompt, answer.trim())
-        }}
-      />
-      <button type="button" disabled={!answer.trim()} onClick={() => void store.resolveQuestion(prompt, answer.trim())}>回复</button>
+    <div className="room-banner-reply">
+      {hasSuggestions && (
+        <div className="room-banner-suggestions">
+          {prompt.suggestions!.map((s) => (
+            <button key={s} type="button" className="room-banner-chip" onClick={() => void store.resolveQuestion(prompt, s)}>{s}</button>
+          ))}
+        </div>
+      )}
+      <div className="room-banner-input-row">
+        <input
+          className="room-banner-input"
+          value={answer}
+          placeholder={hasSuggestions ? '或自己回复…' : '回复…'}
+          onChange={(e) => setAnswer(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && answer.trim()) void store.resolveQuestion(prompt, answer.trim())
+          }}
+        />
+        <button type="button" className="room-banner-btn room-banner-btn--primary" disabled={!answer.trim()} onClick={() => void store.resolveQuestion(prompt, answer.trim())}>回复</button>
+      </div>
     </div>
   )
 }

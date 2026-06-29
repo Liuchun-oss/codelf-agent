@@ -84,6 +84,12 @@ export interface Utterance {
   text: string
   // 时间戳（ms）。
   ts: number
+  /**
+   * 可见性白名单（私信用）。undefined = 公开消息，全群可见（向后兼容旧数据）。
+   * 非空数组 = 仅列出的 seatId 能在 collectUnseenFor 里读到这条（其余工人岗位不可见）。
+   * 发送方（from）与接收方（to）会自动纳入。用户在 UI 拥有上帝视角，不受此限制。
+   */
+  visibility?: string[]
 }
 
 /**
@@ -121,6 +127,9 @@ export interface RoomEvent {
   payload: unknown
   // 是否「需要你回应」的交互类事件（提问/审批）。
   interactive?: boolean
+  // 私密回合可见性白名单：非空表示本事件属于私聊（仅这些岗位 + 用户可见），
+  // 前端据此把流式气泡路由进私聊框、并从公屏过滤掉。
+  visibility?: string[]
 }
 
 // 创建群入参：运行时字段由服务计算。

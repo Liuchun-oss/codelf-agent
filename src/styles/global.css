@@ -202,6 +202,53 @@
   .activity-indicator {
     transition-duration: var(--panel-slide-fade-duration) !important;
   }
+  .room-member-menu {
+    transition-duration: 0.32s !important;
+  }
+  .room-member-menu button {
+    transition-duration: 0.3s !important;
+  }
+  .room-member-menu.open button {
+    transition-delay: revert !important;
+  }
+  .seat-chat-mask,
+  .seat-chat-drawer,
+  .seat-chat-mask.closing,
+  .seat-chat-drawer.closing {
+    animation-duration: 0.3s !important;
+  }
+  .room-dialog-overlay,
+  .seat-memory-drawer-mask,
+  .room-kpi-drawer-mask {
+    animation-duration: 0.25s !important;
+  }
+  .room-dialog,
+  .seat-memory-drawer,
+  .room-kpi-drawer {
+    animation-duration: 0.3s !important;
+  }
+  .room-dialog-overlay.closing,
+  .seat-memory-drawer-mask.closing,
+  .room-dialog-overlay.closing .room-dialog,
+  .seat-memory-drawer-mask.closing .seat-memory-drawer {
+    animation-duration: 0.22s !important;
+  }
+  .room-kpi-drawer-mask.closing,
+  .room-kpi-drawer-mask.closing .room-kpi-drawer {
+    animation-duration: 0.3s !important;
+  }
+  .room-msg-time {
+    transition-duration: 0.2s !important;
+  }
+  .room-select-panel {
+    animation-duration: 0.22s !important;
+  }
+  .room-select-panel.closing {
+    animation-duration: 0.16s !important;
+  }
+  .room-select-arrow {
+    transition-duration: 0.22s !important;
+  }
   .lc-popover,
   .lc-menubar-panel,
   .lc-menubar-panel-size.can-animate-size,
@@ -1758,6 +1805,8 @@ body.resizing-x .sidebar-dock {
   box-shadow:
     0 18px 48px rgba(0, 0, 0, 0.48),
     0 0 0 1px rgba(var(--accent-rgb), 0.08) !important;
+  transform-origin: bottom center;
+  animation: picker-menu-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .agent-composer-model-option {
   display: flex;
@@ -2356,7 +2405,35 @@ body.resizing-x .sidebar-dock {
   flex-shrink: 0;
   min-width: 0;
   display: flex;
+  overflow: hidden;
   border-left: 1px solid var(--border-soft);
+  animation: home-artifact-in 0.26s cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: transform, flex-basis;
+}
+.home-artifact-pane.closing {
+  animation: home-artifact-out 0.26s cubic-bezier(0.32, 0.72, 0, 1) both;
+  overflow: hidden;
+}
+/* 退场时立即隐藏内部原生层（webview/iframe）：它们是 Chromium 原生合成层，
+   不跟随 CSS opacity 淡出、transform 平移也常慢一帧，会在销毁瞬间留下纯色残影。
+   关闭一开始就用 visibility 把它们藏掉（原生层对 visibility 立即响应），只让容器滑出。 */
+.home-artifact-pane.closing .browser-webview,
+.home-artifact-pane.closing .artifact-view-iframe {
+  visibility: hidden;
+}
+/* 内层固定面板宽度，避免外层 flex-basis 收拢时内容被挤压重排 */
+.home-artifact-pane.closing > .artifact-panel,
+.home-artifact-pane.closing > .browser-view {
+  width: var(--artifact-w);
+  flex: 0 0 var(--artifact-w);
+}
+@keyframes home-artifact-in {
+  from { flex-basis: 0; transform: translateX(100%); }
+  to { flex-basis: var(--artifact-w); transform: translateX(0); }
+}
+@keyframes home-artifact-out {
+  from { flex-basis: var(--artifact-w); transform: translateX(0); }
+  to { flex-basis: 0; transform: translateX(100%); }
 }
 .home-artifact-pane > .artifact-panel {
   flex: 1 1 auto;
@@ -2382,6 +2459,14 @@ body.resizing-x .sidebar-dock {
 .home-artifact-toggle:hover {
   background: var(--bg-hover);
   color: var(--text);
+}
+/* 产物预览按钮在面板关闭后才出现：加入场动画，避免突兀闪现 */
+.home-artifact-toggle--enter {
+  animation: home-artifact-toggle-in 0.26s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes home-artifact-toggle-in {
+  from { opacity: 0; transform: translateX(8px) scale(0.96); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
 }
 .agent-meta-line {
   display: flex;
@@ -8434,7 +8519,7 @@ kbd {
 .home-composer {
   width: 100%;
   background: var(--bg-elevated);
-  border: 2px solid var(--border);
+  border: 1px solid var(--border-soft);
   border-radius: 10px;
   padding: 10px 12px;
   display: flex;
@@ -8442,7 +8527,7 @@ kbd {
   gap: 8px;
   box-shadow:
     0 0 0 1px var(--border-soft),
-    var(--shadow-lg);
+    0 4px 16px rgba(0, 0, 0, 0.18);
 }
 .home-composer {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -8451,7 +8536,7 @@ kbd {
   border-color: var(--accent);
   box-shadow:
     0 0 0 2px var(--accent-soft),
-    var(--shadow-lg) !important;
+    0 4px 16px rgba(0, 0, 0, 0.18) !important;
 }
 
 .home-composer-input {
@@ -8612,6 +8697,12 @@ kbd {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
   padding: 6px;
   z-index: 40;
+  transform-origin: bottom center;
+  animation: picker-menu-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes picker-menu-in {
+  from { opacity: 0; transform: translateY(8px) scaleY(0.96); }
+  to { opacity: 1; transform: translateY(0) scaleY(1); }
 }
 
 .cwd-picker-group {
@@ -8675,6 +8766,32 @@ kbd {
   min-height: 0;
   overflow-y: auto;
   padding-bottom: 8px;
+}
+
+/* 按日期分组：今天 / 昨天 / 最近 7 天 / 更早 */
+.home-recent-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.home-recent-group + .home-recent-group {
+  margin-top: 10px;
+}
+.home-recent-group-label {
+  padding: 2px 6px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+/* 组内条目相对分组标签缩进，层级更清晰 */
+.home-recent-group .home-recent-item {
+  margin-left: 10px;
+}
+/* 卡片形态（首页）分组标签略大一点，呼吸感更足 */
+.home-recent-list:not(.home-recent-list--sidebar) .home-recent-group-label {
+  padding: 4px 2px 6px;
+  font-size: 12px;
 }
 
 .home-recent-item {
@@ -8750,7 +8867,7 @@ kbd {
   border: 1px solid var(--border-soft);
 }
 
-.home-recent-delete {
+.home-recent-more {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8762,16 +8879,97 @@ kbd {
   color: var(--text-dim);
   cursor: pointer;
   opacity: 0;
+  flex-shrink: 0;
+  transition: background 0.12s ease, color 0.12s ease, opacity 0.12s ease;
 }
-.home-recent-item:hover .home-recent-delete {
+.home-recent-item:hover .home-recent-more {
   opacity: 1;
 }
-.home-recent-delete:hover {
-  background: var(--bg-hover);
-  color: #e07b6a;
+.home-recent-more:focus-visible {
+  opacity: 1;
 }
-.home-recent-delete:disabled {
-  opacity: 0.3;
+.home-recent-more:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.home-recent-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transform-origin: right center;
+  animation: home-recent-actions-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.home-recent-actions.closing {
+  animation: home-recent-actions-out 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+@keyframes home-recent-actions-in {
+  from {
+    opacity: 0.35;
+    max-width: 24px;
+  }
+  to {
+    opacity: 1;
+    max-width: 240px;
+  }
+}
+@keyframes home-recent-actions-out {
+  from {
+    opacity: 1;
+    max-width: 240px;
+  }
+  to {
+    opacity: 0;
+    max-width: 24px;
+  }
+}
+.home-recent-action-btn {
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  white-space: nowrap;
+  padding: 3px 7px;
+  height: 24px;
+  line-height: 18px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(6px);
+  animation: home-recent-action-pop 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.home-recent-action-btn:nth-child(1) {
+  animation-delay: 20ms;
+}
+.home-recent-action-btn:nth-child(2) {
+  animation-delay: 65ms;
+}
+.home-recent-action-btn:nth-child(3) {
+  animation-delay: 110ms;
+}
+@keyframes home-recent-action-pop {
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.home-recent-action-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+.home-recent-action-btn.danger {
+  color: var(--danger, #f14c4c);
+}
+.home-recent-action-btn.danger:hover {
+  background: rgba(241, 76, 76, 0.1);
+}
+.home-recent-action-btn:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
@@ -8809,6 +9007,7 @@ kbd {
 
 /* 聊天视图左侧可收起对话列表：宽度过渡 + 内容淡出，开合丝滑不跳变 */
 .home-chat-sidebar {
+  position: relative;
   width: 256px;
   flex-shrink: 0;
   overflow: hidden;
@@ -8818,15 +9017,24 @@ kbd {
     width 0.26s cubic-bezier(0.32, 0.72, 0, 1),
     border-right-color 0.26s ease;
 }
+/* 拖拽中实时跟手：禁用宽度过渡 */
+body.resizing-x .home-chat-sidebar {
+  transition: none;
+}
 .home-chat-sidebar.collapsed {
-  width: 0;
+  width: 0 !important;
   border-right-color: transparent;
   pointer-events: none;
+}
+/* 收起时隐藏拖拽手柄 */
+.home-chat-sidebar.collapsed .resize-handle {
+  display: none;
 }
 
 /* 内层固定宽度，避免收起过程中内容被挤压换行 */
 .home-chat-sidebar-inner {
   width: 256px;
+  flex-shrink: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -8840,6 +9048,10 @@ kbd {
   opacity: 0;
   transform: translateX(-16px);
   transition-delay: 0s;
+}
+/* 手柄完全落在侧栏内侧，避免被 overflow:hidden 裁掉抓取区 */
+.home-chat-sidebar > .resize-handle.resize-right {
+  right: 0;
 }
 
 .home-sidebar-top {
@@ -9007,10 +9219,34 @@ kbd {
   .home-recent-dot {
     animation: none;
   }
-  .home-composer-send,
-  .home-chat-sidebar,
-  .home-chat-sidebar-inner {
+  .home-composer-send {
     transition: none;
+  }
+  .home-chat-sidebar {
+    transition:
+      width 0.26s cubic-bezier(0.32, 0.72, 0, 1),
+      border-right-color 0.26s ease;
+  }
+  .home-chat-sidebar-inner {
+    transition:
+      opacity 0.18s ease 0.05s,
+      transform 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .home-chat-sidebar.collapsed .home-chat-sidebar-inner {
+    transition-delay: 0s !important;
+  }
+  .home-artifact-pane {
+    animation-duration: 0.26s !important;
+  }
+  .home-artifact-pane.closing {
+    animation-duration: 0.26s !important;
+  }
+  .cwd-picker-menu,
+  .agent-composer-model-menu {
+    animation-duration: 0.2s !important;
+  }
+  .home-artifact-toggle--enter {
+    animation-duration: 0.26s !important;
   }
 }
 

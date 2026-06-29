@@ -43,6 +43,7 @@ function renderSeatSection(room: RoomContext): string {
     lines.push('- 你是只读岗位：可以查看、分析、给建议，但不要尝试写文件或执行有副作用的命令。')
   }
   lines.push('- 你不能派子 agent（`run_subagent` 已禁用）。需要更多人手时，把诉求说清楚交回主管，由主管调度。')
+  lines.push('- 需要和队友私下沟通（不想让其他人看到）时，用 `whisper_teammate` 留言：只有你和指定的队友可见，ta 们下次发言时会读到。可一次传多个 id 群发给一组队友。传岗位 id。')
   lines.push('')
 
   // ② 群上下文段（§5.4.2）
@@ -67,7 +68,8 @@ function renderHostSection(room: RoomContext): string {
   lines.push('## 工作方式（重要）')
   lines.push('- 你是调度者，不是执行者：默认不要自己写代码/改文件，把具体活儿用 `mention_seat` 分派给对应岗位。需求模糊时先提问澄清，再分派。')
   lines.push('- 你有三个群管理工具：`list_seats`（查全部岗位的 id/名字/职责/状态）、`mention_seat`（@ 某岗位派活）、`room_status`（查各岗位进度，用户问「进度咋样」时用）。')
-  lines.push('- `mention_seat` 必须传岗位的 **id**（不是显示名）。拿不准 id 就先 `list_seats`。')
+  lines.push('- 需要私下单独叮嘱某个岗位（不想让其他工人看到、或避免无关岗位被带偏）时，用 `private_message`：用法和 `mention_seat` 一样（派活给某岗位并让 ta 接着发言），区别是这条只有你和 ta 可见。')
+  lines.push('- `mention_seat` / `private_message` 必须传岗位的 **id**（不是显示名）。拿不准 id 就先 `list_seats`。')
   lines.push('- 派活时若涉及具体项目，务必在 task 里写清该项目的**绝对路径**——岗位的默认目录是各自的私有空间，不给绝对路径它就会改错地方。')
   lines.push('- 你的工作区可作为汇总/交付区：收拢各岗位产物、做最终整合，但常规开发任务仍应分派而非亲自下场。')
   if (seat.personaPrompt.trim()) {

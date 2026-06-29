@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Room, SeatKpiRecord } from '@shared/roomTypes'
+import { useDismiss } from './useDismiss'
 
 // 团队战报仪表盘（§12.7）：每个岗位 KPI 卡片 + 四维 + 评语 + 人工校准。
 // 「出战报」按钮触发主管考核回合（§12.6），刷新各岗位最新 KPI。
@@ -155,6 +156,18 @@ function KpiCard({
   )
 }
 
+// 团队战报右侧抽屉外壳：负责遮罩 + 滑入/滑出动画（先播退场再卸载）。
+export function KpiDrawer({ room, onClose }: { room: Room; onClose: () => void }): JSX.Element {
+  const { closing, requestClose, onAnimationEnd } = useDismiss(onClose)
+  return (
+    <div className={`room-kpi-drawer-mask${closing ? ' closing' : ''}`} onClick={requestClose}>
+      <div className="room-kpi-drawer" onClick={(e) => e.stopPropagation()} onAnimationEnd={onAnimationEnd}>
+        <KpiDashboard room={room} onClose={requestClose} />
+      </div>
+    </div>
+  )
+}
+
 // 错题本/经验本查看与编辑抽屉（§13.7 / B5-2）：读岗位 MEMORY.md 全文，可手动改/删后保存。
 function SeatMemoryDrawer({
   roomId,
@@ -171,6 +184,7 @@ function SeatMemoryDrawer({
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState('')
+  const { closing, requestClose, onAnimationEnd } = useDismiss(onClose)
 
   useEffect(() => {
     let alive = true
@@ -191,11 +205,11 @@ function SeatMemoryDrawer({
   }
 
   return (
-    <div className="seat-memory-drawer-mask" onClick={onClose}>
-      <div className="seat-memory-drawer" onClick={(e) => e.stopPropagation()}>
+    <div className={`seat-memory-drawer-mask${closing ? ' closing' : ''}`} onClick={requestClose}>
+      <div className="seat-memory-drawer" onClick={(e) => e.stopPropagation()} onAnimationEnd={onAnimationEnd}>
         <div className="seat-memory-head">
           <span>{seatName} · 错题本 / 经验本</span>
-          <button type="button" onClick={onClose}>关闭</button>
+          <button type="button" onClick={requestClose}>关闭</button>
         </div>
         {loading ? (
           <div className="seat-memory-loading">加载中…</div>
