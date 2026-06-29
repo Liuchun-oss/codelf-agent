@@ -17,7 +17,9 @@ import type {
   FimRequest,
   FimResult,
   InlineEditRequest,
-  InlineEditResult
+  InlineEditResult,
+  UsageStatsQuery,
+  UsageStatsResult
 } from '@shared/agentTypes'
 import { loadProjectRules, ruleActivation } from '../agent/context/rules'
 import type { AgentBehaviorSettings } from '@shared/agentSettings'
@@ -80,6 +82,7 @@ import {
 } from '../agent/orchestrator/sessionPersistence'
 import { readRecentAudit, type AuditEntry } from '../agent/orchestrator/audit'
 import { readRecentDebugEvents, type DebugEventRecord } from '../agent/orchestrator/debugLog'
+import { queryUsageStats } from '../agent/orchestrator/usageLogStore'
 import { listTasks, replaceTasks } from '../agent/tasks/taskStore'
 import { setActiveAgentWebContents } from '../services/diagnosticsBridge'
 import { readBrowserPreview } from '../services/browserPreviewImage'
@@ -278,6 +281,20 @@ export function registerAiIpc(): void {
   ipcMain.handle(
     'ai:deleteProfile',
     async (_e, id: string): Promise<AgentOpResult> => deleteProfile(id)
+  )
+
+  ipcMain.handle(
+    'ai:getUsageStats',
+    async (_e, query: UsageStatsQuery): Promise<UsageStatsResult> => {
+      const result = queryUsageStats(query ?? {})
+      const profiles = listProfiles()
+      const nameById = new Map(profiles.map((p) => [p.id, p.name]))
+      for (const row of result.perProfile) {
+        const name = nameById.get(row.profileId)
+        if (name) row.name = name
+      }
+      return result
+    }
   )
 
   ipcMain.handle(

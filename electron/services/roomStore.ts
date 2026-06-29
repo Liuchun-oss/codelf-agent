@@ -264,7 +264,8 @@ export function roomMemberBriefs(roomId: string): RoomMemberBrief[] {
     name: s.name,
     role: s.role,
     isHost: !!s.isHost,
-    enabled: s.enabled
+    enabled: s.enabled,
+    workspaceRoot: s.workspaceRoot
   }))
 }
 
@@ -401,6 +402,22 @@ export function markSeen(roomId: string, seatId: string): void {
   const latest = loadTranscript(roomId)[loadTranscript(roomId).length - 1]?.seq ?? 0
   if (seat.lastSeenUtteranceSeq === latest) return
   seat.lastSeenUtteranceSeq = latest
+  scheduleCursorPersist(roomId)
+}
+
+// 把游标只推进到指定 seq（并行模型安全版，§并行重构）：岗位发言期间，别的岗位/工人可能
+// 并发往 transcript 追加新消息（seq 更大）。若像 markSeen 那样无脑推到「当前最新」，会把
+// 这些「岗位本回合开始后才到、根本没读过」的消息一并标记已读 → 下回合永远读不到、被吞掉。
+// 故只推进到本回合实际读到的快照 seq（collectUnseenFor 返回的最大 seq），不越界。
+export function markSeenUpTo(roomId: string, seatId: string, seq: number): void {
+  ensureLoaded()
+  const room = rooms.find((r) => r.id === roomId)
+  if (!room) return
+  const seat = room.seats.find((s) => s.id === seatId)
+  if (!seat) return
+  const cur = seat.lastSeenUtteranceSeq ?? 0
+  if (seq <= cur) return
+  seat.lastSeenUtteranceSeq = seq
   scheduleCursorPersist(roomId)
 }
 

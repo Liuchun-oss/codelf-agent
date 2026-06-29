@@ -114,6 +114,8 @@ export interface RoomMemberBrief {
   role: string
   isHost: boolean
   enabled: boolean
+  // 工人工作区根（群主验收时据此打开产物核对质量）。纯对话岗位为 null。
+  workspaceRoot?: string | null
 }
 
 /**

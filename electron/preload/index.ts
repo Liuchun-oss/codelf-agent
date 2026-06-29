@@ -252,6 +252,8 @@ const api = {
   aiSetActiveProfile: (id: string | null) => ipcRenderer.invoke('ai:setActiveProfile', id),
   aiSaveProfile: (draft: ProfileDraft) => ipcRenderer.invoke('ai:saveProfile', draft),
   aiDeleteProfile: (id: string) => ipcRenderer.invoke('ai:deleteProfile', id),
+  aiGetUsageStats: (query: import('@shared/agentTypes').UsageStatsQuery) =>
+    ipcRenderer.invoke('ai:getUsageStats', query),
   aiTestConnection: (draft: ProfileDraft) => ipcRenderer.invoke('ai:testConnection', draft),
   aiTestImageGeneration: (draft: ProfileDraft) => ipcRenderer.invoke('ai:testImageGeneration', draft),
   aiFimComplete: (req: import('@shared/agentTypes').FimRequest) =>

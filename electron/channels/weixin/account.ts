@@ -17,6 +17,7 @@ interface PersistedShape {
   userId?: string
   baseUrl: string
   get_updates_buf: string
+  lastOwnerContextToken?: string
   savedAt: string
 }
 
@@ -65,6 +66,7 @@ export function loadAccount(): WeixinAccountState | null {
     userId: persisted.userId,
     baseUrl: persisted.baseUrl,
     get_updates_buf: persisted.get_updates_buf ?? '',
+    lastOwnerContextToken: persisted.lastOwnerContextToken,
     savedAt: persisted.savedAt
   }
 }
@@ -81,6 +83,7 @@ export function saveAccount(state: WeixinAccountState): void {
     userId: state.userId,
     baseUrl: state.baseUrl,
     get_updates_buf: state.get_updates_buf ?? '',
+    lastOwnerContextToken: state.lastOwnerContextToken,
     savedAt: state.savedAt
   })
 }
@@ -91,6 +94,15 @@ export function saveCursor(buf: string): void {
   if (!persisted) return
   if (persisted.get_updates_buf === buf) return
   writePersisted({ ...persisted, get_updates_buf: buf })
+}
+
+// 仅更新机主最近 context_token（机主每次入站时调用）。持久化供主动通知兜底，
+// 重启后仍可用。无变化则跳过写盘，避免高频 IO。
+export function saveOwnerContextToken(token: string): void {
+  const persisted = readPersisted()
+  if (!persisted) return
+  if (persisted.lastOwnerContextToken === token) return
+  writePersisted({ ...persisted, lastOwnerContextToken: token })
 }
 
 // 清除凭证（断开/重新登录时）。

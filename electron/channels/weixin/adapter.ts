@@ -19,6 +19,7 @@ import { beginQrLogin, pollQrLogin, type QrSession } from './loginQr'
 import {
   loadAccount,
   saveAccount,
+  saveOwnerContextToken,
   hasAccount,
   clearAccount
 } from './account'
@@ -91,6 +92,11 @@ export class WeixinAdapter implements ChannelAdapter {
       throw new Error('微信通道未登录，无法启动')
     }
     this.account = account
+    // 从持久化恢复机主 context_token，供主动通知兜底（重启后仍可用，修复重启后
+    // 主动推送因缺 token 被微信静默丢弃的问题）。
+    if (account.lastOwnerContextToken) {
+      this.lastOwnerContextToken = account.lastOwnerContextToken
+    }
     this.setStatus('connecting')
 
     this.monitor = new WeixinMonitor(
@@ -101,9 +107,11 @@ export class WeixinAdapter implements ChannelAdapter {
         onMessage: ({ from, text, contextToken, raw }) => {
           this.lastInboundAt = Date.now()
           this.setStatus('connected')
-          // 若来自机主，缓存其 context_token 供主动通知兜底（#3）。
+          // 若来自机主，缓存其 context_token 供主动通知兜底（#3），并落盘持久化，
+          // 使 App 重启后主动推送仍可带 token 送达。
           if (this.account?.userId && from === this.account.userId && contextToken) {
             this.lastOwnerContextToken = contextToken
+            saveOwnerContextToken(contextToken)
           }
           ctx.onInbound({
             channelId: this.channelId,

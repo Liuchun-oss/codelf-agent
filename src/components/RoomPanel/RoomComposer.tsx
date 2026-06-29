@@ -40,7 +40,7 @@ export default function RoomComposer({
           options={mentionOptions}
           onChange={setMention}
         />
-        {busy && <span className="room-composer-busy">团队进行中…</span>}
+        {busy && <span className="room-composer-busy">团队进行中…（可随时找主管说话）</span>}
       </div>
       <div className="room-composer-input">
         <textarea
@@ -55,15 +55,16 @@ export default function RoomComposer({
           }}
           rows={2}
         />
-        {busy ? (
-          <button type="button" className="room-stop-btn" onClick={onStop} title="中断当前发言">
+        {/* 发送按钮始终可用：团队在后台干活时，你仍能随时找群主说话/追问进度（并行协作核心）。
+            中断按钮仅在 busy 时额外并排出现，而非替换发送按钮。 */}
+        {busy && (
+          <button type="button" className="room-stop-btn" onClick={onStop} title="中断当前所有发言">
             中断
           </button>
-        ) : (
-          <button type="button" className="room-send-btn" onClick={submit} disabled={!text.trim()}>
-            发送
-          </button>
         )}
+        <button type="button" className="room-send-btn" onClick={submit} disabled={!text.trim()}>
+          发送
+        </button>
       </div>
     </div>
   )

@@ -60,6 +60,52 @@ export interface TokenUsage {
   contextBreakdown?: ContextUsageBreakdown
 }
 
+// 逐轮 token 用量日志的单条记录（追加写入 usage-log.jsonl）
+export interface UsageLogEntry {
+  ts: number
+  profileId: string
+  model: string
+  kind: ProviderKind
+  inputTokens: number
+  outputTokens: number
+  apiInputTokens?: number
+  apiOutputTokens?: number
+  cacheReadInputTokens?: number
+  cacheCreationInputTokens?: number
+  sessionId?: string
+  turnId?: string
+}
+
+// 用量统计查询条件（时间窗口为毫秒时间戳，闭区间）
+export interface UsageStatsQuery {
+  from?: number
+  to?: number
+  profileId?: string
+}
+
+// 单个模型配置的用量聚合行
+export interface UsageStatsProfileRow {
+  profileId: string
+  // 展示名：由 handler 关联当前配置补全，配置已删则缺省
+  name?: string
+  model: string
+  kind: ProviderKind
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  turns: number
+}
+
+export interface UsageStatsResult {
+  perProfile: UsageStatsProfileRow[]
+  total: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    turns: number
+  }
+}
+
 
 
 

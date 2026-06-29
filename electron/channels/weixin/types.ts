@@ -108,5 +108,8 @@ export interface WeixinAccountState {
   baseUrl: string
   // getUpdates 同步游标（断点续传水位线）。
   get_updates_buf: string
+  // 机主最近一次入站消息的 context_token（主动通知兜底用，见 7.7 #3）。
+  // 持久化后 App 重启仍可用，避免重启后主动推送因缺 token 被微信静默丢弃。
+  lastOwnerContextToken?: string
   savedAt: string
 }

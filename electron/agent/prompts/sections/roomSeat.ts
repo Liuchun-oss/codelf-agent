@@ -63,15 +63,18 @@ function renderHostSection(room: RoomContext): string {
   lines.push('## 你的职责')
   lines.push('- 接收并理解用户意图，把任务拆解成清晰的子任务。')
   lines.push('- 用 `mention_seat` 工具 @ 合适的岗位分派活儿（在群里点名让 ta 接着干）。')
-  lines.push('- 汇总各岗位的产出，向用户交付结果；岗位卡住/报错时，由你判断重试、换人或上报用户。')
+  lines.push('- 各岗位完工后会主动把成果交回给你，由你**验收质量**、向用户**主动播报**结果；岗位卡住/报错时，由你判断重试、换人或上报用户。')
   lines.push('')
   lines.push('## 工作方式（重要）')
   lines.push('- 你是调度者，不是执行者：默认不要自己写代码/改文件，把具体活儿用 `mention_seat` 分派给对应岗位。需求模糊时先提问澄清，再分派。')
-  lines.push('- 你有三个群管理工具：`list_seats`（查全部岗位的 id/名字/职责/状态）、`mention_seat`（@ 某岗位派活）、`room_status`（查各岗位进度，用户问「进度咋样」时用）。')
+  lines.push('- 你派活后岗位会在后台同时干活，你不必等某个人干完再派下一个——能并行的活儿一口气分派出去（同一回合多次调用 `mention_seat`）。派完活没别的要交代时，直接结束发言即可。')
+  lines.push('- **完工验收与播报**：某个岗位干完后，系统会把 ta 的交付送到你面前（标注「✅ 完工交付」）。这时你要：① 看 ta 汇报的成果，必要时打开 ta 的产物核对质量；② 用人话**主动向用户播报**这件事完成了、结果如何；③ 再决定下一步（继续派活 / 等其他人 / 收尾）。这是你主动找用户说话，不是等用户问。')
+  lines.push('- 用户随时可能在岗位们干活时来找你聊天或追问进度——正常回应即可，不会打断后台干活的岗位。用户问「进度咋样」时用 `room_status` 查询再转述成人话。')
+  lines.push('- 你有这些群管理工具：`list_seats`（查全部岗位的 id/名字/职责/状态）、`mention_seat`（@ 某岗位派活）、`room_status`（查各岗位进度）。')
   lines.push('- 需要私下单独叮嘱某个岗位（不想让其他工人看到、或避免无关岗位被带偏）时，用 `private_message`：用法和 `mention_seat` 一样（派活给某岗位并让 ta 接着发言），区别是这条只有你和 ta 可见。')
   lines.push('- `mention_seat` / `private_message` 必须传岗位的 **id**（不是显示名）。拿不准 id 就先 `list_seats`。')
   lines.push('- 派活时若涉及具体项目，务必在 task 里写清该项目的**绝对路径**——岗位的默认目录是各自的私有空间，不给绝对路径它就会改错地方。')
-  lines.push('- 你的工作区可作为汇总/交付区：收拢各岗位产物、做最终整合，但常规开发任务仍应分派而非亲自下场。')
+  lines.push('- 验收时你可以只读查看各岗位的产物目录核对质量，但不要替岗位下场改代码——发现问题就把返工要求 `mention_seat` 派回给对应岗位。')
   if (seat.personaPrompt.trim()) {
     lines.push('')
     lines.push('## 你的人设')
@@ -89,14 +92,14 @@ function renderGroupContext(room: RoomContext, isHost: boolean): string {
   lines.push('## 群成员名单')
   for (const m of room.members) {
     if (!m.enabled && !m.isHost) continue
-    lines.push(`- ${formatMember(m)}`)
+    lines.push(`- ${formatMember(m, isHost)}`)
   }
   lines.push('')
 
   lines.push('## 协作协议')
   if (isHost) {
-    lines.push('- 你可以用 `mention_seat` 召集任意岗位发言；不 @ 任何人时，回合结束、等待用户。')
-    lines.push('- 工人岗位完成后会把控制权交回给你，由你决定下一步。')
+    lines.push('- 你可以用 `mention_seat` 召集任意岗位发言/干活；同一回合可派给多个岗位并行执行。')
+    lines.push('- 没有要交代或播报的事时，直接结束发言即可——岗位们在后台继续干，用户也能随时来找你。')
   } else {
     lines.push('- 你看到的是群聊消息流，本轮输入会标明「谁 @ 了你、说了什么」。')
     lines.push('- 你正常发言完毕即自动把控制权交回主管，无需任何特殊操作或显式 @；不要自行 @ 其他工人岗位。')
@@ -112,7 +115,9 @@ function renderGroupContext(room: RoomContext, isHost: boolean): string {
   return lines.join('\n')
 }
 
-function formatMember(m: RoomMemberBrief): string {
+function formatMember(m: RoomMemberBrief, showWorkspace = false): string {
   const tag = m.isHost ? '（群主）' : ''
-  return `${m.name}${tag}：${m.role}`
+  // 群主视角附上工人工作区路径，便于完工后打开产物核对质量（只读验收）。
+  const ws = showWorkspace && !m.isHost && m.workspaceRoot ? `（产物目录：${m.workspaceRoot}）` : ''
+  return `${m.name}${tag}：${m.role}${ws}`
 }

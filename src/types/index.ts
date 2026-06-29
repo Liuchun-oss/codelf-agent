@@ -20,7 +20,9 @@ import type {
   FimRequest,
   FimResult,
   InlineEditRequest,
-  InlineEditResult
+  InlineEditResult,
+  UsageStatsQuery,
+  UsageStatsResult
 } from '@shared/agentTypes'
 import type {
   GitStatus,
@@ -403,6 +405,7 @@ export interface LcApi {
   aiSetActiveProfile: (id: string | null) => Promise<AgentOpResult>
   aiSaveProfile: (draft: ProfileDraft) => Promise<SaveProfileResult>
   aiDeleteProfile: (id: string) => Promise<AgentOpResult>
+  aiGetUsageStats: (query: UsageStatsQuery) => Promise<UsageStatsResult>
   aiTestConnection: (draft: ProfileDraft) => Promise<TestConnectionResult>
   aiTestImageGeneration: (draft: ProfileDraft) => Promise<TestImageGenResult>
   aiFimComplete: (req: FimRequest) => Promise<FimResult>

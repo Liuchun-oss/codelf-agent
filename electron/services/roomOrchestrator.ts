@@ -13,6 +13,7 @@ import {
   appendUtterance,
   collectUnseenFor,
   markSeen,
+  markSeenUpTo,
   roomMemberBriefs,
   updateRoom,
   updateSeat,
@@ -60,6 +61,14 @@ const SPIN_LIMIT = 6
 // 绝对硬上限：任何策略下连锁回合超过此值强制停止（防 maxRounds=0 无限循环）。
 const HARD_ROUND_CAP = 200
 
+// ===== 并行协作模型（host-routed）常量 =====
+// 同时后台干活的工人上限（决策：3，平衡吞吐与 API 限流/成本）。超出的派活进等位队列。
+const MAX_PARALLEL_WORKERS = 3
+// 单条用户输入派生的工人派发总数上限（防群主无限派活失控，替代串行模型的 HARD_ROUND_CAP）。
+const MAX_DISPATCHES_PER_INPUT = 60
+// 群主连续空回合（既不派活也不播报）上限：达到则认为收敛，停止 pump。
+const HOST_EMPTY_TURN_LIMIT = 3
+
 // 工人岗位禁用的「全局/跨岗位写」工具集（小写）。这些工具写 userData/家目录/全局队列，
 // 会越过岗位隔离影响全员，归主管/用户级。注意 ModelConfig/MediaConfig/定时任务被标了
 // readOnly:true（为跳过审批），只靠 readOnly 闸门拦不住，必须在此显式 deny。
@@ -86,6 +95,14 @@ interface PendingRelay {
   text: string
   suggestions?: string[]
 }
+
+// 群主待办事件（并行模型）：用户消息 / 工人完工交付 / 工人主动上报，都进 hostQueue，
+// 由群主在空闲时串行消费（保证群主自身上下文一致、不并发）。
+// - user：用户发的新消息/需求，群主需理解+拆解+派活，或直接回答。
+// - delivery：某工人完工，群主需验收并主动播报给用户、再决定下一步。
+type HostEvent =
+  | { kind: 'user' }
+  | { kind: 'delivery'; seatId: string; seatName: string }
 
 type SeatState = 'idle' | 'working' | 'waiting-user' | 'paused' | 'error' | 'done'
 
@@ -137,6 +154,29 @@ interface RoomRuntime {
   // 因报错被自动摘除的岗位（§14.3）。与手动暂停区分：每条新发言循环开始时清空，
   // 让岗位在新任务上有重新尝试的机会，不会被一次偶发故障永久打入冷宫。
   erroredSeats: Set<string>
+  // ===== 并行协作模型（host-routed）运行态 =====
+  // 群主待办队列（用户消息 / 工人交付），群主空闲时串行消费。
+  hostQueue: HostEvent[]
+  // 群主是否正在跑回合（群主自身仍串行，一次只处理一个 HostEvent）。
+  hostBusy: boolean
+  // 正在后台并行干活的工人 seatId（上限 MAX_PARALLEL_WORKERS）。
+  activeWorkers: Set<string>
+  // 等位的工人 seatId（并发已满、或目标正忙需排队补跑）。任务内容已落 transcript，故只需记 id。
+  workerWaitQueue: string[]
+  // 本轮（自上次完全空闲以来）累计派发数，用于 MAX_DISPATCHES_PER_INPUT 失控保护。
+  dispatchCount: number
+  // 群主连续空回合计数（既不派活也不播报），达 HOST_EMPTY_TURN_LIMIT 停止 pump。
+  hostEmptyStreak: number
+  // 本群是否走并行调度（host-routed）。round-robin/free 仍走原串行 runSpeakingLoop。
+  parallelMode: boolean
+  // 用户点了中断：并行调度停摆，新工人/群主回合都不再起，直到下一条用户消息复位。
+  stopping: boolean
+  // 并行模型「完全空闲」一次性通知去重：避免每次 recomputeRunning 都重复推微信完工通知。
+  idleNotified: boolean
+  // 调度世代（epoch）：每次 stop() 自增。后台工人 async 任务记住起跑时的 epoch，
+  // 完工回调若发现 epoch 已变（中途被 stop 过），则丢弃其交付/唤醒动作，避免被中断的
+  // 陈旧任务在新一轮里推送过期交付、错误唤醒群主。
+  schedEpoch: number
 }
 
 class RoomOrchestrator {
@@ -162,7 +202,17 @@ class RoomOrchestrator {
       roundRobinIdx: 0,
       rrClosing: false,
       pausedSeats: new Set(),
-      erroredSeats: new Set()
+      erroredSeats: new Set(),
+      hostQueue: [],
+      hostBusy: false,
+      activeWorkers: new Set(),
+      workerWaitQueue: [],
+      dispatchCount: 0,
+      hostEmptyStreak: 0,
+      parallelMode: room.speakingPolicy === 'host-routed',
+      stopping: false,
+      idleNotified: true,
+      schedEpoch: 0
     }
     this.runtimes.set(roomId, rt)
     return rt
@@ -370,17 +420,33 @@ class RoomOrchestrator {
     const rt = this.getRuntime(roomId)
     if (!rt) throw new Error(`群不存在：${roomId}`)
     if (!fromWeixin) rt.weixinRelay = false
-    // 并发输入：循环跑着时排队，结束后再处理（§11.4，绝不并行启两个循环）。
-    // 注意：排队也要立刻 append+广播用户消息，否则用户这条话在「上一轮还没跑完」时
-    // 发出，会既看不到自己的消息、待 drain 时才补显（顺序也乱）。先落消息流再排队。
+
+    // ===== 并行模型（host-routed）：用户消息不阻塞、不排队等待 =====
+    // 直接落消息流 → 进 hostQueue → 唤醒群主。群主忙就排队等群主下个空档，
+    // 工人在后台并行干活，互不阻塞。用户因此随时能和群主对话（核心诉求）。
+    if (rt.parallelMode) {
+      if (!alreadyPosted) this.appendUserUtterance(roomId, text, mention)
+      // 被 @ 指定某工人：用户想直接找这个工人（等价于一次定向私聊单回合），不打扰群主。
+      if (mention && mention !== rt.room.hostSeatId) {
+        const target = rt.room.seats.find((s) => s.id === mention || s.name === mention)
+        if (target && !target.isHost) { void this.privateChat(roomId, target.id, text, true); return }
+      }
+      // 新的用户输入 = 一段新交互，复位失控计数（群主可以重新放心派活）。
+      rt.dispatchCount = 0
+      rt.hostEmptyStreak = 0
+      rt.stopping = false
+      rt.hostQueue.push({ kind: 'user' })
+      this.pumpHost(rt)
+      return
+    }
+
+    // ===== 串行模型（round-robin / free）：维持原「循环跑着时排队」语义 =====
     if (rt.running) {
       this.appendUserUtterance(roomId, text, mention)
       rt.pendingUserInputs.push({ text, mention, fromWeixin, alreadyPosted: true })
       return
     }
-    // alreadyPosted：drain 时复用本方法但消息早已在入队时落过盘，不重复 append。
     if (!alreadyPosted) this.appendUserUtterance(roomId, text, mention)
-    // 决定首个发言者：被 @ 的岗位，否则主 Agent（§6.1）。
     const host = rt.room.seats.find((s) => s.id === rt.room.hostSeatId)
     const firstSeat = mention ? rt.room.seats.find((s) => s.id === mention || s.name === mention) ?? host : host
     if (!firstSeat) throw new Error('群里没有主 Agent')
@@ -516,6 +582,168 @@ class RoomOrchestrator {
     await this.postUserMessage(rt.room.id, queued.text, queued.mention, queued.fromWeixin ?? false, queued.alreadyPosted ?? false)
   }
 
+  // ============================================================
+  // ===== 并行协作模型（host-routed）调度核心 =====
+  // 设计：群主常驻、串行消费 hostQueue（用户消息/工人交付）；工人在各自 async 任务里后台并行
+  // 干活（上限 MAX_PARALLEL_WORKERS），互不阻塞群主。工人完工 → 写交付 → 唤醒群主验收播报。
+  // ============================================================
+
+  // 群主泵：群主空闲且 hostQueue 有待办时，取一条跑一个群主回合。群主自身永远串行（hostBusy 守卫）。
+  private pumpHost(rt: RoomRuntime): void {
+    if (rt.hostBusy || rt.stopping) return
+    if (rt.hostQueue.length === 0) return
+    if (rt.hostEmptyStreak >= HOST_EMPTY_TURN_LIMIT) {
+      // 群主连续空回合：判定收敛，清空待办避免空转。等下一条用户消息复位再启。
+      rt.hostQueue = []
+      this.systemNote(rt.room.id, '群主连续多轮无新动作，已停下等待你的进一步指示。')
+      this.recomputeRunning(rt)
+      return
+    }
+    const host = rt.room.seats.find((s) => s.id === rt.room.hostSeatId)
+    if (!host) return
+    // 合并消费：把当前 hostQueue 里所有待办一次性吞掉（群主回合会通过 collectUnseenFor
+    // 读到所有未读消息——含多个工人的交付），避免每条交付都单独跑一次群主、重复播报。
+    rt.hostQueue = []
+    rt.hostBusy = true
+    // interrupted 标记由 recomputeRunning 统一管理（运行中置 true、完全空闲清 false）。
+    this.recomputeRunning(rt)
+    void this.runHostTurn(rt, host)
+  }
+
+  // 跑一个群主回合（后台），结束后读 mentionQueue 派活、再尝试继续 pump。
+  private async runHostTurn(rt: RoomRuntime, host: Seat): Promise<void> {
+    let dispatched = 0
+    let spoke = false
+    const epoch = rt.schedEpoch
+    try {
+      const before = getTranscript(rt.room.id).length
+      await this.runSeatTurn(rt, host)
+      // runSeatTurn 内部：非空发言才 append。用 transcript 增量粗判群主本回合是否真的说了话。
+      spoke = getTranscript(rt.room.id).length > before
+      // 中途被 stop（epoch 变）：本回合作废，不派活、不继续 pump。
+      if (epoch !== rt.schedEpoch) return
+      // 读群主本回合积累的派发意图，逐个尝试起工人（受并发上限/失控保护约束）。
+      const mentions = rt.mentionQueue
+      rt.mentionQueue = []
+      for (const m of mentions) {
+        if (rt.stopping) break
+        if (rt.dispatchCount >= MAX_DISPATCHES_PER_INPUT) {
+          this.systemNote(rt.room.id, `本轮派发已达上限（${MAX_DISPATCHES_PER_INPUT}），暂停派活以防失控。`)
+          break
+        }
+        if (this.dispatchToWorker(rt, m)) dispatched++
+      }
+    } catch (e) {
+      this.systemNote(rt.room.id, `群主回合异常：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      // 仅当本回合仍属当前世代时才回写群主忙闲与继续 pump（被 stop 作废的回合不干扰新一轮）。
+      if (epoch === rt.schedEpoch) {
+        rt.hostBusy = false
+        // 空回合检测：群主既没说话也没派活 → 计入空回合 streak（pumpHost 据此熔断空转）。
+        if (!spoke && dispatched === 0) rt.hostEmptyStreak++
+        else rt.hostEmptyStreak = 0
+        this.recomputeRunning(rt)
+        // 群主回合产生了新待办（期间用户又发言/工人又交付）→ 继续 pump。
+        this.pumpHost(rt)
+      }
+    }
+  }
+
+  // 把一条群主派活意图落地为工人任务：写任务消息进 transcript，然后起/排队工人。
+  // 返回是否成功受理（无效目标返回 false）。
+  private dispatchToWorker(rt: RoomRuntime, m: MentionRecord): boolean {
+    const hostId = rt.room.hostSeatId
+    const target = rt.room.seats.find((s) => s.id === m.seatId)
+    if (!target || !target.enabled || this.isUnavailable(rt, target.id) || target.id === hostId) return false
+    // 任务作为定向消息进消息流（私信带 visibility 白名单，仅主管+目标可见）。
+    if (m.task && m.task.trim()) {
+      const u = appendUtterance(rt.room.id, {
+        from: hostId,
+        to: target.id,
+        text: m.task.trim(),
+        ...(m.private ? { visibility: [hostId, target.id] } : {})
+      })
+      sendToRenderer('room:utterance', { roomId: rt.room.id, utterance: u })
+    }
+    const sr = this.getSeatRuntime(rt, target)
+    sr.privateReplyVisibility = m.private ? [hostId, target.id] : undefined
+    rt.dispatchCount++
+    // 目标已在干活（或并发已满）→ 排队补位；否则立即后台起跑。
+    if (rt.activeWorkers.has(target.id) || rt.activeWorkers.size >= MAX_PARALLEL_WORKERS) {
+      if (!rt.workerWaitQueue.includes(target.id)) rt.workerWaitQueue.push(target.id)
+    } else {
+      this.spawnWorker(rt, target)
+    }
+    return true
+  }
+
+  // 后台并行跑一个工人回合（不 await）。完工 → 释放名额 → 唤醒群主验收 → 补位下一个等待者。
+  private spawnWorker(rt: RoomRuntime, seat: Seat): void {
+    if (rt.stopping) return
+    const epoch = rt.schedEpoch
+    rt.activeWorkers.add(seat.id)
+    this.recomputeRunning(rt)
+    void (async () => {
+      try {
+        await this.runSeatTurn(rt, seat)
+      } catch (e) {
+        this.systemNote(rt.room.id, `岗位「${seat.name}」执行异常：${e instanceof Error ? e.message : String(e)}`)
+      } finally {
+        rt.activeWorkers.delete(seat.id)
+        // 世代校验：若起跑后经历过 stop（epoch 变化），本任务已属「上一轮」，丢弃其交付/唤醒/补位，
+        // 避免被中断的陈旧任务污染新一轮调度。仅做名额回收（上面已 delete）。
+        const stale = epoch !== rt.schedEpoch
+        // 完工唤醒群主：工人的发言已由 runSeatTurn 落进 transcript，群主回合会经 collectUnseenFor 读到。
+        // 这里只负责把「该验收了」事件塞进 hostQueue 并 pump（群主空闲则立即起回合，忙则排队）。
+        if (!rt.stopping && !stale) {
+          rt.hostQueue.push({ kind: 'delivery', seatId: seat.id, seatName: seat.name })
+          // 工人交付理应重新激活群主（即便之前判过空回合收敛）：复位 streak，确保播报不被熔断吞掉。
+          rt.hostEmptyStreak = 0
+          this.pumpHost(rt)
+        }
+        // 补位：并发有空档则从等位队列拉下一个（跳过仍在跑的）。
+        if (!stale) this.fillWorkerSlots(rt)
+        this.recomputeRunning(rt)
+      }
+    })()
+  }
+
+  // 并发有空档时，从等位队列依次起下一个工人（跳过已在跑的）。
+  private fillWorkerSlots(rt: RoomRuntime): void {
+    while (!rt.stopping && rt.activeWorkers.size < MAX_PARALLEL_WORKERS && rt.workerWaitQueue.length > 0) {
+      const nextId = rt.workerWaitQueue.shift()!
+      if (rt.activeWorkers.has(nextId)) continue
+      const seat = rt.room.seats.find((s) => s.id === nextId)
+      if (!seat || !seat.enabled || this.isUnavailable(rt, seat.id)) continue
+      this.spawnWorker(rt, seat)
+    }
+  }
+
+  // 重算并广播群级运行态（并行模型）：群主在忙 或 有工人在跑 或 还有待办/等位 → running。
+  // 额外：检测「忙→完全空闲」跃迁，触发一次性收敛动作（微信完工通知 + 清 interrupted 标记）。
+  private recomputeRunning(rt: RoomRuntime): void {
+    if (!rt.parallelMode) return
+    const running = rt.hostBusy || rt.activeWorkers.size > 0 || rt.hostQueue.length > 0 || rt.workerWaitQueue.length > 0
+    this.broadcastRunning(rt.room.id, running)
+    if (running) {
+      // 一进入运行态就标记「未完成」：若 app 在并行干活中途退出，下次启动 UI 可据此提示恢复。
+      if (!rt.room.interrupted) updateRoom(rt.room.id, { interrupted: true })
+      rt.idleNotified = false
+      return
+    }
+    // 完全空闲（一次性，避免每次 recompute 都触发）。
+    if (rt.idleNotified) return
+    rt.idleNotified = true
+    // 收敛：清掉「未完成」标记（本轮已干完，不是半途崩溃）。
+    if (rt.room.interrupted) updateRoom(rt.room.id, { interrupted: false })
+    // 微信遥控：本轮收敛且无挂起交互项 → 推一次最终交付（与串行模型 runSpeakingLoop 的 finally 对齐）。
+    if (rt.weixinRelay && !rt.activeRelay && !rt.stopping) {
+      const delivery = this.lastHostDelivery(rt)
+      void notifyWeixin(delivery ? `✓ 完成：${delivery}` : '✓ 本轮已完成。')
+    }
+  }
+
+
   // ===== 单个岗位发言一回合（§6.2）=====
   // 返回下一个该发言的岗位（host-routed：host 用 mention_seat 指定；工人岗位默认回主管）。
   private async runSeatTurn(rt: RoomRuntime, seat: Seat): Promise<Seat | null> {
@@ -532,7 +760,11 @@ class RoomOrchestrator {
     const effSeat = this.ensureSeatWorktree(rt, seat, effSeat0)
     const sessionId = `room:${rt.room.id}:seat:${seat.id}`
     const incoming = collectUnseenFor(rt.room.id, seat.id)
-    const prompt = renderGroupTranscript(incoming, !!seat.isHost, !!sr.privateReplyVisibility)
+    // 并行安全：记录本回合实际读到的最大 seq。发言期间别的工人可能并发追加更大 seq 的消息，
+    // 回合结束只把游标推进到这个快照点（markSeenUpTo），不会把没读过的并发消息误标已读。
+    const maxSeenSeq = incoming.length ? incoming[incoming.length - 1].seq : 0
+    const nameOf = (id: string): string => rt.room.seats.find((s) => s.id === id)?.name ?? id
+    const prompt = renderGroupTranscript(incoming, !!seat.isHost, !!sr.privateReplyVisibility, nameOf, rt.parallelMode)
 
     // 终端/命令工具的运行根：岗位 workspaceRoot 为空（主管/纯对话岗位 = null）时，
     // 回退到用户家目录，否则 PowerShell/terminal 等工具会一律「未打开工作区」直接失败，
@@ -555,7 +787,9 @@ class RoomOrchestrator {
     }
 
     const finalText = await this.consumeSeatEvents(rt, effSeat, sr, payload)
-    markSeen(rt.room.id, seat.id)
+    // 并行模型用 markSeenUpTo（只推进到本回合读到的快照），串行模型沿用 markSeen（推到最新）。
+    if (rt.parallelMode) markSeenUpTo(rt.room.id, seat.id, maxSeenSeq)
+    else markSeen(rt.room.id, seat.id)
     sr.signals.durationMs += Date.now() - sr.turnStartedAt
     // 私密回合：本回合的最终发言也写成私密（仅主管+本岗位可见），不进公屏。读取后清空（一次性）。
     const replyVisibility = sr.privateReplyVisibility
@@ -574,6 +808,9 @@ class RoomOrchestrator {
       rt.noProgressStreak++
     }
     sr.state = (sr.state as SeatState) === 'error' ? 'error' : 'idle'
+    // 并行模型：下一步由 pumpHost/dispatchToWorker 驱动，不走串行的 resolveNextSpeaker
+    // （否则 host 回合会在这里 dequeueMention，与 runHostTurn 读 mentionQueue 重复消费）。
+    if (rt.parallelMode) return null
     return this.resolveNextSpeaker(rt, seat, trimmed)
   }
 
@@ -836,6 +1073,20 @@ class RoomOrchestrator {
     rt.abort?.abort()
     rt.mentionQueue = []
     rt.pendingUserInputs = []
+    // 并行模型：置 stopping 闸门（阻止 pumpHost/spawnWorker 再起新回合），清空待办/等位，
+    // 并即时清空在跑/待办计数。各工人引擎下面统一 cancel。下条用户消息会复位 stopping。
+    rt.stopping = true
+    rt.schedEpoch++ // 世代+1：在途后台任务完工时据此判定自己已过期，丢弃交付/唤醒
+    rt.hostQueue = []
+    rt.hostBusy = false
+    rt.workerWaitQueue = []
+    rt.activeWorkers.clear()
+    rt.dispatchCount = 0
+    rt.hostEmptyStreak = 0
+    // 中断不是正常收敛：抑制后续在途工人 finally 里 recomputeRunning 误推「✓ 完成」微信通知。
+    rt.idleNotified = true
+    // 中断 = 用户主动停下，本轮视为「已结束」，清掉未完成标记（不是半途崩溃需恢复）。
+    if (rt.room.interrupted) updateRoom(rt.room.id, { interrupted: false })
     // 清微信遥控的挂起交互项：中断后这些 requestId 对应的引擎已被 cancel，
     // 不清的话机主下一条微信会被误当成对「已失效提问/审批」的回答而被静默吞掉。
     rt.activeRelay = null
@@ -1047,11 +1298,15 @@ class RoomOrchestrator {
     const rt = this.getRuntime(roomId)
     if (!rt) return
     rt.pausedSeats.add(seatId)
+    // 并行模型：从等位队列摘除（避免之后被 fillWorkerSlots 误起）；正在跑的实例由 cancel 收尾，
+    // isUnavailable 会在其完工补位时挡住重启。activeWorkers 由该实例 finally 自行 delete。
+    rt.workerWaitQueue = rt.workerWaitQueue.filter((id) => id !== seatId)
     const sr = rt.seats.get(seatId)
     if (sr) {
       try { sr.engine.cancel() } catch { /* ignore */ }
       sr.state = 'paused'
     }
+    this.recomputeRunning(rt)
   }
 
   // 恢复某岗位：重新可被调度。
@@ -1102,11 +1357,29 @@ class RoomOrchestrator {
   }
 
   // 私聊某岗位（§7.2）：只调度该 seat 发言一回合，不触发连锁。把用户的话作为定向输入。
-  async privateChat(roomId: string, seatId: string, text: string): Promise<void> {
+  // silent：来自 postUserMessage 的「用户 @ 工人」路由，消息已落盘，不重复 append。
+  async privateChat(roomId: string, seatId: string, text: string, silent = false): Promise<void> {
     const rt = this.getRuntime(roomId)
     if (!rt) throw new Error(`群不存在：${roomId}`)
     const seat = rt.room.seats.find((s) => s.id === seatId)
     if (!seat) throw new Error(`岗位不存在：${seatId}`)
+
+    // ===== 并行模型：用户私聊工人 = 后台起一个该工人的单回合，不阻塞群主/其他工人 =====
+    if (rt.parallelMode) {
+      rt.stopping = false
+      if (!silent) this.appendUserUtterance(roomId, text, seatId, [seatId])
+      this.getSeatRuntime(rt, seat).privateReplyVisibility = [seatId]
+      // 该工人正忙：消息已落 transcript，它当前回合结束后下次被调度即可读到；这里补一个等位补跑。
+      if (rt.activeWorkers.has(seat.id) || rt.activeWorkers.size >= MAX_PARALLEL_WORKERS) {
+        if (!rt.workerWaitQueue.includes(seat.id)) rt.workerWaitQueue.push(seat.id)
+        this.recomputeRunning(rt)
+      } else {
+        this.spawnWorker(rt, seat)
+      }
+      return
+    }
+
+    // ===== 串行模型：原单回合语义 =====
     if (rt.running) { rt.pendingUserInputs.push({ text, mention: seatId }); return }
     // 用户私聊：消息只对该岗位可见（不进公屏、其他岗位读不到），且该岗位的回复也设为私密。
     this.appendUserUtterance(roomId, text, seatId, [seatId])
@@ -1272,12 +1545,22 @@ function safeHomeDir(): string {
 // 把「未读增量」渲染成岗位本回合的输入文本（§6.2 renderGroupTranscript）。
 // 标注「谁 @ 了你、说了什么」，让岗位知道当前任务来源（§5.4.2 第 4 点）。
 // isHost：主管的职责是「先理解需求、再用 mention_seat 分派」，而非亲自动手（B1-4 决策）。
+// nameOf：把消息里的 seatId 渲染成人话显示名（群主验收时知道是「谁」交付的）。
+// parallel：并行模型下，群主的输入可能混着「用户新需求」和「工人完工交付」，给出验收+播报引导。
 function renderGroupTranscript(
   incoming: Array<{ from: string; to?: string; text: string; visibility?: string[] }>,
   isHost = false,
-  privateReply = false
+  privateReply = false,
+  nameOf: (id: string) => string = (id) => id,
+  parallel = false
 ): string {
-  const hostTail = '请先理解清楚用户的真实需求，再用 mention_seat 把任务分派给最合适的岗位；不要自己动手写代码/改文件。若需求模糊，先提问澄清。'
+  // 群主在并行模型下，输入可能含工人交付：判断是否有「工人发来的（非 user/system）」消息。
+  const hasWorkerDelivery = isHost && incoming.some((u) => u.from !== 'user' && u.from !== 'system')
+  const hostTail = parallel
+    ? (hasWorkerDelivery
+        ? '上面有岗位完工交付（标注「✅ 完工交付」）。请：① 验收 ta 的成果，必要时打开产物核对质量；② 用人话主动向用户播报这件事完成了、结果如何；③ 再决定下一步（继续派活/等其他人/收尾）。同时若有用户的新消息，一并回应。不要自己动手写代码/改文件。'
+        : '请先理解清楚用户的真实需求，再用 mention_seat 把任务分派给最合适的岗位（可一次并行派给多个）；不要自己动手写代码/改文件。若需求模糊，先提问澄清。派完活若无其他事，直接结束发言即可。')
+    : '请先理解清楚用户的真实需求，再用 mention_seat 把任务分派给最合适的岗位；不要自己动手写代码/改文件。若需求模糊，先提问澄清。'
   // 私密回合：被主管私信叫起，本轮发言只回给主管（其他岗位看不到）→ 可放心私下汇报，不会泄露。
   const workerTail = privateReply
     ? '你是被主管私信单独叫起的：本轮发言只有主管和你能看到，其他岗位看不到。请直接、私下地把结果/选择回复给主管，不必担心泄露给其他人。'
@@ -1289,11 +1572,14 @@ function renderGroupTranscript(
       : '（群里暂无新消息。如果你是被点名发言，请基于你的职责主动推进；否则简要说明你在等待什么。）'
   }
   const lines = incoming.map((u) => {
-    const who = u.from === 'user' ? '用户' : u.from === 'system' ? '系统' : u.from
-    const at = u.to ? `（@${u.to}）` : ''
+    const isWorker = u.from !== 'user' && u.from !== 'system'
+    const who = u.from === 'user' ? '用户' : u.from === 'system' ? '系统' : nameOf(u.from)
+    const at = u.to ? `（@${nameOf(u.to)}）` : ''
     // 私信标注：让收信岗位知道这是私下交代，其他岗位看不到，回复时不必复述私信内容。
     const priv = u.visibility && u.visibility.length ? '（🔒私信，仅你可见）' : ''
-    return `【${who}${at}${priv}】：${u.text}`
+    // 群主视角：工人发来的消息标为「完工交付」，提示该验收+播报。
+    const deliver = isHost && isWorker ? '✅ 完工交付 ' : ''
+    return `【${deliver}${who}${at}${priv}】：${u.text}`
   })
   return ['以下是群里自你上次发言以来的新消息：', '', ...lines, '', tail].join('\n')
 }

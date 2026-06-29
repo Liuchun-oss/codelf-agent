@@ -8,6 +8,7 @@ import type {
 } from '@shared/agentTypes'
 import { useAgentStore } from '@/stores/agentStore'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
+import UsageStatsModal from './UsageStatsModal'
 
 const KIND_LABEL: Record<ProviderKind, string> = {
   openai: 'OpenAI',
@@ -132,6 +133,7 @@ export default function AiSettingsSection(): JSX.Element {
   const [imgTesting, setImgTesting] = useState(false)
   const [imgTestResult, setImgTestResult] = useState<TestImageGenResult | null>(null)
   const [secureAvailable, setSecureAvailable] = useState(true)
+  const [showUsage, setShowUsage] = useState(false)
 
   const refresh = useCallback(async (selectId?: string) => {
     const [list, active, secure] = await Promise.all([
@@ -484,6 +486,9 @@ export default function AiSettingsSection(): JSX.Element {
         <span className={`settings-actions-msg ${testResult ? (balanceLow ? 'err' : testResult.ok ? 'ok' : 'err') : ''}`}>
           {resultText}
         </span>
+        <button className="btn-secondary" onClick={() => setShowUsage(true)}>
+          用量统计
+        </button>
         <button className="btn-secondary" onClick={() => void onTest()} disabled={testing}>
           {testing ? '测试中…' : '测试连接'}
         </button>
@@ -524,6 +529,8 @@ export default function AiSettingsSection(): JSX.Element {
           )}
         </div>
       )}
+
+      <UsageStatsModal open={showUsage} onClose={() => setShowUsage(false)} />
     </div>
   )
 }

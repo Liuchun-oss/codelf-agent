@@ -74,6 +74,7 @@ import { runCheckpointWriter, buildRebuildInjection } from '../memory/writer'
 import { detectTaskCompletion, buildNoteReminder } from './taskCompletionDetector'
 import { recordAudit } from './audit'
 import { recordDebugEvent } from './debugLog'
+import { appendUsageLog } from './usageLogStore'
 import { ASK_USER_NAME, askUserSchema } from '../tools/userTools'
 import { ASK_USER_QUESTION_NAME, askUserQuestionSchema } from '../tools/askUserQuestionTool'
 import { resetTasks } from '../tasks/taskStore'
@@ -1814,6 +1815,21 @@ export class QueryEngine {
       label: profile.model,
       detail: `${cancelled ? 'cancelled, ' : ''}steps=${steps}, in=${displayedInputTokens}, out=${hasApiUsage ? apiOutputTokens : estimatedOutputTokens}${usage?.promptCacheHitRate !== undefined ? `, cacheHit=${usage.promptCacheHitRate}%` : ''}${promptCacheStatus ? `, cache=${promptCacheStatus}` : ''}`,
       durationMs: Date.now() - started
+    })
+
+    appendUsageLog({
+      ts: Date.now(),
+      profileId: profile.id,
+      model: profile.model,
+      kind: profile.kind,
+      inputTokens: displayedInputTokens,
+      outputTokens: hasApiUsage ? apiOutputTokens : estimatedOutputTokens,
+      apiInputTokens: hasApiUsage ? apiInputTokens : undefined,
+      apiOutputTokens: hasApiUsage ? apiOutputTokens : undefined,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+      sessionId: payload.sessionId || 'default',
+      turnId
     })
   }
 }
