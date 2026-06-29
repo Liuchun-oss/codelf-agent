@@ -99,6 +99,27 @@ export default function AgentBehaviorSettingsSection(): JSX.Element {
             />
           }
         />
+        <SettingsRow
+          title="工具/子 Agent 并行上限"
+          description={`一轮内可同时执行的并行工具调用数，也决定同时并发运行的子 Agent 数量；范围 ${b.parallelToolLimit.min}-${b.parallelToolLimit.max}。超出部分会自动分批执行。`}
+          control={
+            <input
+              type="number"
+              min={b.parallelToolLimit.min}
+              max={b.parallelToolLimit.max}
+              disabled={saving}
+              value={settings.parallelToolLimit}
+              onChange={(e) =>
+                setSettings((s) =>
+                  s
+                    ? { ...s, parallelToolLimit: clampInt(e.target.value, b.parallelToolLimit.min, b.parallelToolLimit.max, s.parallelToolLimit) }
+                    : s
+                )
+              }
+              onBlur={() => void save({ parallelToolLimit: settings.parallelToolLimit })}
+            />
+          }
+        />
       </SettingsGroup>
 
       <SettingsGroup label="延迟工具">

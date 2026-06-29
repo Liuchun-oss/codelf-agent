@@ -23,6 +23,9 @@ export interface AgentBehaviorSettings {
   // 安装插件时是否允许自动执行 npm install（会运行仓库的 postinstall 等脚本，
   // 属于供应链风险点）。默认关闭：关闭时跳过自动安装，仅提示用户手动安装依赖。
   pluginAllowNpmInstall: boolean
+  // 单批工具调用的最大并行数（同时也决定一轮内并行子 agent 的同时执行上限）。
+  // 超出部分会自动分批：先并行跑满该数量，完成后再跑下一批。
+  parallelToolLimit: number
 }
 
 
@@ -372,7 +375,8 @@ export const DEFAULT_AGENT_BEHAVIOR: AgentBehaviorSettings = {
   knowledgeKbId: '',
   knowledgeTopK: 5,
   knowledgeMinScore: 0.35,
-  pluginAllowNpmInstall: false
+  pluginAllowNpmInstall: false,
+  parallelToolLimit: 10
 }
 
 export const AGENT_BEHAVIOR_BOUNDS = {
@@ -381,7 +385,8 @@ export const AGENT_BEHAVIOR_BOUNDS = {
   acceptEditsAutoApplyDelayMs: { min: 0, max: 60_000 },
   deferredToolAutoThresholdChars: { min: 1_000, max: 200_000 },
   knowledgeTopK: { min: 1, max: 20 },
-  knowledgeMinScore: { min: 0, max: 1 }
+  knowledgeMinScore: { min: 0, max: 1 },
+  parallelToolLimit: { min: 1, max: 50 }
 } as const
 
 
@@ -447,6 +452,12 @@ export function normalizeAgentBehavior(
     pluginAllowNpmInstall:
       typeof partial.pluginAllowNpmInstall === 'boolean'
         ? partial.pluginAllowNpmInstall
-        : DEFAULT_AGENT_BEHAVIOR.pluginAllowNpmInstall
+        : DEFAULT_AGENT_BEHAVIOR.pluginAllowNpmInstall,
+    parallelToolLimit: n(
+      partial.parallelToolLimit,
+      b.parallelToolLimit.min,
+      b.parallelToolLimit.max,
+      DEFAULT_AGENT_BEHAVIOR.parallelToolLimit
+    )
   }
 }

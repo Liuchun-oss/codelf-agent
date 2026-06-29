@@ -1,10 +1,19 @@
 import type { ToolCallRequest, StreamChunk } from '../providers'
 import type { ToolContext, ToolResult } from './types'
 import type { ToolRegistry } from './registry'
+import { getAgentBehaviorSettings } from '../settings/agentSettingsStore'
 
 
 
-const PARALLEL_LIMIT = 10
+const DEFAULT_PARALLEL_LIMIT = 10
+
+function resolveParallelLimit(): number {
+  try {
+    return getAgentBehaviorSettings().parallelToolLimit || DEFAULT_PARALLEL_LIMIT
+  } catch {
+    return DEFAULT_PARALLEL_LIMIT
+  }
+}
 
 interface AccEntry {
   id: string
@@ -88,8 +97,9 @@ export async function executeToolBatch(
   const parallel = calls.filter(canParallel)
   const serial = calls.filter((c) => !canParallel(c))
 
-  for (let i = 0; i < parallel.length; i += PARALLEL_LIMIT) {
-    const chunk = parallel.slice(i, i + PARALLEL_LIMIT)
+  const parallelLimit = resolveParallelLimit()
+  for (let i = 0; i < parallel.length; i += parallelLimit) {
+    const chunk = parallel.slice(i, i + parallelLimit)
     const settled = await Promise.all(chunk.map((c) => runOne(c, registry, ctx)))
     chunk.forEach((c, idx) => results.set(c.id, settled[idx]))
   }
