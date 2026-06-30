@@ -16,6 +16,17 @@ const KIND_COLOR: Record<string, string> = {
   dialog: '#cbd5e1'
 }
 
+const KIND_LABEL: Record<string, string> = {
+  identity: '身份',
+  preference: '偏好',
+  decision: '决策',
+  convention: '约定',
+  todo: '待办',
+  fact: '事实',
+  note: '笔记',
+  dialog: '对话'
+}
+
 function colorOf(kind: string): string {
   return KIND_COLOR[kind] ?? '#94a3b8'
 }
@@ -192,6 +203,10 @@ function MemoryGraph(props: {
 
   const hoverNode = hoverId ? data.nodes.find((n) => n.id === hoverId) : null
   const selected = selectedId ? props.episodes.find((e) => e.id === selectedId) : null
+  // 仅展示当前数据中实际出现的类型，避免图例堆砌用不到的项。
+  const kindsPresent = Array.from(new Set(props.episodes.map((e) => e.kind))).sort(
+    (a, b) => Object.keys(KIND_COLOR).indexOf(a) - Object.keys(KIND_COLOR).indexOf(b)
+  )
 
   const openDetail = (id: string): void => {
     setSelectedId(id)
@@ -270,7 +285,45 @@ function MemoryGraph(props: {
       />
       {hoverNode && !selected && <div className="memory-graph-tip">{hoverNode.full}</div>}
       <div className="memory-graph-legend">
-        点击节点查看/编辑 · 拖动重排 · 滚轮缩放 · 拖空白处平移；节点大小=活跃度，颜色=类型，半透明=休眠
+        <div className="memory-legend-ops">
+          <span className="memory-legend-op">
+            <span className="memory-legend-ico">⊙</span>点击节点 · 查看 / 编辑
+          </span>
+          <span className="memory-legend-op">
+            <span className="memory-legend-ico">✥</span>拖动 · 重排布局
+          </span>
+          <span className="memory-legend-op">
+            <span className="memory-legend-ico">⤢</span>滚轮缩放 · 空白处平移
+          </span>
+        </div>
+        <div className="memory-legend-divider" />
+        <div className="memory-legend-encode">
+          <span className="memory-legend-hint">视觉编码</span>
+          <span className="memory-legend-enc">
+            <span className="memory-legend-size">
+              <i className="memory-legend-dot-sm" />
+              <i className="memory-legend-dot-lg" />
+            </span>
+            大小=活跃度
+          </span>
+          <span className="memory-legend-enc">
+            <i className="memory-legend-fade" />
+            半透明=休眠
+          </span>
+        </div>
+        {kindsPresent.length > 0 && (
+          <>
+            <div className="memory-legend-divider" />
+            <div className="memory-legend-kinds">
+              {kindsPresent.map((k) => (
+                <span key={k} className="memory-legend-kind">
+                  <i className="memory-legend-swatch" style={{ background: colorOf(k) }} />
+                  {KIND_LABEL[k] ?? k}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
       </div>
       {selected && (
         <div className="memory-detail-panel">

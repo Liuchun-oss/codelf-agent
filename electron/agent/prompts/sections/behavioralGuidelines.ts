@@ -14,6 +14,13 @@ Before implementing:
 - If a simpler approach exists, say so. Push back when warranted.
 - If something is unclear, stop. Name what's confusing. Ask.
 
+MANDATORY - Never write or edit files immediately upon receiving an instruction. First:
+- Deeply analyze what the user actually means and what the real intent/purpose behind the request is - not just the literal words.
+- Analyze how YOU plan to implement it before touching any code.
+- Trace the full relevant chain: read the involved files, callers, callees, data flow, and dependencies until you understand the entire path the change will affect.
+- If any part requires a user decision (ambiguous requirements, multiple viable approaches, tradeoffs), use the AskQuestion tool to ask the user instead of guessing.
+- Only after the entire chain is understood and all decisions are resolved may you start writing or editing code.
+
 ## 2. Simplicity First
 
 Minimum code that solves the problem. Nothing speculative.
