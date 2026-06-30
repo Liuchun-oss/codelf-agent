@@ -45,6 +45,23 @@ export interface PromptContext {
    * 与 persona 互斥：岗位会话用 roomContext，微信会话用 persona。
    */
   roomContext?: RoomContext
+
+  /**
+   * 通讯通道上下文。仅经由 IM 通道（如微信）转发进来的轮次会带上，
+   * 桌面端 UI 的 Agent 不带 → 让 agent 知道「自己正在被远程用户通过 IM 聊天」。
+   * 驱动 getChannelSection：注入场景感知（用户大概率不在电脑旁、回复要适配手机阅读）
+   * 与「如何把文件发给用户」的约定（无需工具，按约定格式输出即可）。
+   */
+  channel?: {
+    /** 通道标识，如 'weixin'。 */
+    id: string
+    /** 面向用户的展示名，如 '微信'。 */
+    label: string
+    /** 该通道是否支持把文件发回给用户（决定是否注入发文件说明）。 */
+    canSendFile?: boolean
+    /** 该通道是否支持把图片/截图发回给用户（决定是否注入发截图说明）。 */
+    canSendImage?: boolean
+  }
 }
 
 

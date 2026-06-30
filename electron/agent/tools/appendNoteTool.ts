@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Tool, ToolResult } from './types'
 import { appendNote } from '../memory/store'
+import { encodeEpisode } from '../memory/encoder'
 import { getMemorySettings } from '../settings/agentSettingsStore'
 
 export const APPEND_NOTE_NAME = 'append_note'
@@ -44,6 +45,15 @@ export const appendNoteTool: Tool<AppendNoteInput> = {
     if (!result.ok) {
       return { content: `笔记写入失败：${result.reason ?? '未知原因'}`, isError: true }
     }
+    // 阶段 0 双写：额外异步编码进情景记忆库（轨道 A）。fire-and-forget，
+    // 失败仅记调试日志，不阻塞、不影响 notes.md 写入结果。
+    void encodeEpisode({
+      content: input.note,
+      scope: 'session',
+      workspaceRoot: ctx.memoryWorkspaceRoot ?? ctx.workspaceRoot,
+      sessionId,
+      kind: 'note'
+    }).catch(() => {})
     return { content: '已记入会话草稿纸。' }
   }
 }

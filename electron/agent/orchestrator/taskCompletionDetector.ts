@@ -55,6 +55,34 @@ export function detectTaskCompletion(params: {
   return { shouldRemind: false }
 }
 
+// 个人信息 / 偏好 / 承诺 / 身份等"值得长期记住"的语言信号（用户消息）。
+// 命中任一即认为本回合值得反思提取，避免对纯操作/寒暄回合做无谓的 LLM 调用。
+const MEMORY_WORTHY_CUES = [
+  '我叫', '我是', '我的名字', '称呼我', '记住', '记一下', '别忘', '不要忘',
+  '我喜欢', '我不喜欢', '我讨厌', '我习惯', '我倾向', '我偏好', '我希望', '我想要',
+  '我的', '我在', '我要', '以后', '下次', '记得', '约定', '规定', '务必', '一定要',
+  '不要', '禁止', '生日', '性别', '年龄', '邮箱', '电话',
+  'remember', 'i prefer', 'i like', "i'm ", 'i am ', 'my name', 'always', 'never'
+]
+
+/**
+ * 判断本回合是否含"值得长期记住"的信号：用户消息命中个人信息/偏好/承诺等线索，
+ * 或已构成任务完成。用于门控回合级反思提取，砍掉纯操作/寒暄回合的无谓调用。
+ */
+export function isMemoryWorthyTurn(params: {
+  turnMessages: ChatMessage[]
+  completion: TaskCompletionSignal
+}): boolean {
+  if (params.completion.shouldRemind) return true
+  const userText = params.turnMessages
+    .filter((m) => m.role === 'user')
+    .map((m) => (typeof m.content === 'string' ? m.content : ''))
+    .join('\n')
+    .toLowerCase()
+  if (!userText.trim()) return false
+  return MEMORY_WORTHY_CUES.some((c) => userText.includes(c.toLowerCase()))
+}
+
 /**
  * 生成记笔记提醒文本（中文）。
  */

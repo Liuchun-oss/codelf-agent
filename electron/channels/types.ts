@@ -40,6 +40,14 @@ export interface ChannelAdapter {
   sendMessage(out: OutboundMessage, senderId: string, raw: unknown): Promise<void>
   // 可选（B5）：发送图片。dataUrl 为 data:image/...;base64 形式。仅支持图片的平台实现。
   sendImage?(conversationId: string, senderId: string, dataUrl: string, raw: unknown): Promise<void>
+  // 可选：发送文件（文档/压缩包等）。filePath 为本地绝对路径，fileName 为展示名。仅支持文件的平台实现。
+  sendFile?(
+    conversationId: string,
+    senderId: string,
+    filePath: string,
+    fileName: string,
+    raw: unknown
+  ): Promise<void>
   // 可选：开始/停止"正在输入"状态。raw 用于取 context_token（getConfig 拿 ticket）。
   startTyping?(conversationId: string, senderId: string, contextToken?: string): Promise<void>
   stopTyping?(conversationId: string, senderId: string): void

@@ -578,6 +578,66 @@ export function registerAiIpc(): void {
     }
   )
 
+  // 历史回填：把已有历史会话档案逐个反思提取，沉淀进情景记忆库（幂等 + 单飞）。
+  // 支持进度推送（边处理边广播 ai:backfillProgress），默认处理全部未完成会话。
+  ipcMain.handle(
+    'ai:backfillMemory',
+    async (_e, opts?: { maxSessions?: number }) => {
+      const { backfillMemoryFromHistory } = await import('../agent/memory/backfill')
+      return backfillMemoryFromHistory({
+        maxSessions: opts?.maxSessions ?? 0, // 0 = 处理全部
+        onProgress: (p) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed()) win.webContents.send('ai:backfillProgress', p)
+          }
+        }
+      })
+    }
+  )
+
+  // 记忆库可视化：返回（可按工作区筛选的）记忆条目 + 联想边，供设置面板列表/图谱展示。
+  ipcMain.handle(
+    'ai:listMemoryGraph',
+    async (_e, workspaceRoot?: string | null, limit?: number) => {
+      const { listMemoryGraph } = await import('../agent/memory/episodicStore')
+      const { resolveProjectId } = await import('../agent/memory/paths')
+      const projectId = workspaceRoot ? resolveProjectId(workspaceRoot) : null
+      return listMemoryGraph({ projectId, limit })
+    }
+  )
+
+  // 删除一条记忆（含向量/联想边清理）。
+  ipcMain.handle('ai:deleteMemory', async (_e, id: unknown) => {
+    if (typeof id !== 'string' || !id) return { ok: false }
+    const { deleteEpisode } = await import('../agent/memory/episodicStore')
+    return deleteEpisode(id)
+  })
+
+  // 编辑一条记忆的正文/摘要/类型/显著度；若正文变化则按新内容重建检索向量。
+  ipcMain.handle(
+    'ai:updateMemory',
+    async (
+      _e,
+      params: { id: string; content?: string; summary?: string | null; kind?: string; salience?: number }
+    ) => {
+      if (!params || typeof params.id !== 'string' || !params.id) return { ok: false }
+      const { updateEpisode, updateEpisodeVector } = await import('../agent/memory/episodicStore')
+      const res = updateEpisode(params)
+      if (!res.ok) return res
+      // 正文变化 → re-embed，保证 auto-recall 的语义检索与最新正文一致。
+      if (typeof params.content === 'string' && params.content.trim()) {
+        try {
+          const { embedOne } = await import('../services/knowledge/embedService')
+          const vec = await embedOne(params.content)
+          if (vec && vec.length > 0) updateEpisodeVector(params.id, vec)
+        } catch {
+          // re-embed 失败不影响正文更新，旧向量保留。
+        }
+      }
+      return res
+    }
+  )
+
   ipcMain.handle('browser:readPreview', async (_e, id: unknown) => {
     if (typeof id !== 'string' || !id) return null
     const preview = await readBrowserPreview(id)

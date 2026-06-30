@@ -2,6 +2,8 @@
 // 串起协议层（api/monitor/loginQr/account）与通用通道层。
 // 含 #7 发送队列（保证同一会话出站顺序）、B4 分块、markdown→纯文本。
 
+import { readFile } from 'node:fs/promises'
+
 import type {
   ChannelLoginQr,
   ChannelLoginState,
@@ -9,9 +11,9 @@ import type {
   ChannelConnectionStatus
 } from '@shared/channelTypes'
 import type { ChannelAdapter, ChannelContext, OutboundMessage, ChannelDiagnostics } from '../types'
-import { sendText, sendImageMessage, getConfig, sendTyping } from './api'
+import { sendText, sendImageMessage, sendFileMessage, getConfig, sendTyping, UploadMediaType } from './api'
 import { TypingStatus } from './types'
-import { uploadImageBuffer, dataUrlToBuffer } from './cdn'
+import { uploadImageBuffer, uploadMediaBuffer, dataUrlToBuffer } from './cdn'
 import { isSilkAvailable } from './silkTranscode'
 import { getInboundMediaDir } from './inboundMedia'
 import { WeixinMonitor } from './monitor'
@@ -201,6 +203,46 @@ export class WeixinAdapter implements ChannelAdapter {
         token: this.account.token,
         to: senderId,
         uploaded,
+        contextToken
+      })
+    })
+    this.sendQueues.set(
+      conversationId,
+      next.catch(() => {})
+    )
+    return next
+  }
+
+  // 发送文件到指定接收人。filePath 为本地绝对路径。先读盘→CDN 上传→发文件消息。
+  // 走该会话的串行发送队列，保证与文本块顺序一致。失败抛出由调用方兜底降级。
+  async sendFile(
+    conversationId: string,
+    senderId: string,
+    filePath: string,
+    fileName: string,
+    raw: unknown
+  ): Promise<void> {
+    if (!this.account) throw new Error('微信通道未连接')
+    const contextToken = this.extractContextToken(raw)
+    const prev = this.sendQueues.get(conversationId) ?? Promise.resolve()
+    const next = prev.then(async () => {
+      if (!this.account) return
+      const buf = await readFile(filePath)
+      const uploaded = await uploadMediaBuffer({
+        baseUrl: this.account.baseUrl,
+        token: this.account.token,
+        toUserId: senderId,
+        buf,
+        mediaType: UploadMediaType.FILE,
+        label: '发文件',
+        log: (m) => this.ctx?.log(m)
+      })
+      await sendFileMessage({
+        baseUrl: this.account.baseUrl,
+        token: this.account.token,
+        to: senderId,
+        uploaded,
+        fileName,
         contextToken
       })
     })

@@ -334,6 +334,23 @@ const api = {
     ipcRenderer.invoke('ai:readProjectMemory', workspaceRoot),
   aiWriteProjectMemory: (workspaceRoot: string | null, content: string) =>
     ipcRenderer.invoke('ai:writeProjectMemory', workspaceRoot, content),
+  aiBackfillMemory: (opts?: { maxSessions?: number }) =>
+    ipcRenderer.invoke('ai:backfillMemory', opts),
+  onBackfillProgress: (cb: (p: unknown) => void) => {
+    const listener = (_e: unknown, p: unknown): void => cb(p)
+    ipcRenderer.on('ai:backfillProgress', listener)
+    return () => ipcRenderer.removeListener('ai:backfillProgress', listener)
+  },
+  aiListMemoryGraph: (workspaceRoot?: string | null, limit?: number) =>
+    ipcRenderer.invoke('ai:listMemoryGraph', workspaceRoot, limit),
+  aiDeleteMemory: (id: string) => ipcRenderer.invoke('ai:deleteMemory', id),
+  aiUpdateMemory: (params: {
+    id: string
+    content?: string
+    summary?: string | null
+    kind?: string
+    salience?: number
+  }) => ipcRenderer.invoke('ai:updateMemory', params),
 
   
   secretsIsAvailable: () => ipcRenderer.invoke('secrets:isAvailable'),

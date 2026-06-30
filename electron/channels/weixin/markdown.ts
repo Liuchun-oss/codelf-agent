@@ -5,6 +5,10 @@ export function markdownToPlainText(md: string): string {
   if (!md) return ''
   let text = md
 
+  // 图片/截图会被通道层单独作为图片消息发送，正文里不应再出现内部 URL。
+  // 图片 ![alt](codelf-artifact://...) 或 ![alt](codelf-preview://...) → 整体移除。
+  text = text.replace(/!\[[^\]]*\]\((?:codelf-artifact|codelf-preview):\/\/[^)\s]+\)/g, '')
+
   // 代码块：去掉 ``` 围栏与语言标注，保留内部代码原样。
   text = text.replace(/```[^\n]*\n([\s\S]*?)```/g, (_m, code: string) => code.replace(/\n+$/, ''))
   // 行内代码：去掉反引号。

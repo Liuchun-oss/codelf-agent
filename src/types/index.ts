@@ -465,6 +465,53 @@ export interface LcApi {
     workspaceRoot: string | null,
     content: string
   ) => Promise<{ ok: boolean; reason?: string }>
+  aiBackfillMemory: (opts?: { maxSessions?: number }) => Promise<{
+    scanned: number
+    processed: number
+    skipped: number
+    factsWritten: number
+  }>
+  onBackfillProgress: (
+    cb: (p: {
+      total: number
+      done: number
+      processed: number
+      skipped: number
+      factsWritten: number
+      currentTitle?: string
+    }) => void
+  ) => () => void
+  aiListMemoryGraph: (
+    workspaceRoot?: string | null,
+    limit?: number
+  ) => Promise<{
+    episodes: Array<{
+      id: string
+      scope: 'session' | 'project' | 'global'
+      projectId: string | null
+      sessionId: string | null
+      kind: string
+      content: string
+      summary: string | null
+      anchorFile: string | null
+      salience: number
+      activations: number
+      strength: number
+      state: string
+      consolidated: number
+      createdAt: number
+      lastAccess: number
+    }>
+    edges: Array<{ src: string; dst: string; weight: number }>
+  }>
+  aiDeleteMemory: (id: string) => Promise<{ ok: boolean }>
+  aiUpdateMemory: (params: {
+    id: string
+    content?: string
+    summary?: string | null
+    kind?: string
+    salience?: number
+  }) => Promise<{ ok: boolean }>
 
   
   secretsIsAvailable: () => Promise<boolean>

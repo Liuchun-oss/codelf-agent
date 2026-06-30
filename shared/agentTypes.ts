@@ -672,8 +672,19 @@ export interface AiSendPayload {
    * 与 persona 互斥：岗位会话用 roomContext，微信会话用 persona。
    */
   roomContext?: RoomContext
-}
 
+  /**
+   * 通讯通道上下文。仅经由 IM 通道（如微信）转发进来的轮次会带上。
+   * 桌面/UI 会话不带 → 让 agent 感知「自己正被远程用户通过 IM 聊天」，并知道如何发文件。
+   * 纯增量、向后兼容。
+   */
+  channel?: {
+    id: string
+    label: string
+    canSendFile?: boolean
+    canSendImage?: boolean
+  }
+}
 
 export interface ImageAttachment {
   dataUrl: string

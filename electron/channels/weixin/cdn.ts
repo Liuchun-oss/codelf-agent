@@ -74,18 +74,33 @@ export async function uploadImageBuffer(opts: {
   buf: Buffer
   log?: (m: string) => void
 }): Promise<UploadedImageInfo> {
+  return uploadMediaBuffer({ ...opts, mediaType: UploadMediaType.IMAGE, label: '发图' })
+}
+
+// 上传任意媒体（明文 Buffer）到微信 CDN。图片/文件/视频/语音共用同一套上传流程，
+// 仅 media_type 不同。返回拼装出站消息项所需的 CDN 引用信息。
+export async function uploadMediaBuffer(opts: {
+  baseUrl: string
+  token: string
+  toUserId: string
+  buf: Buffer
+  mediaType: number
+  label?: string
+  log?: (m: string) => void
+}): Promise<UploadedImageInfo> {
+  const tag = opts.label ?? '发送媒体'
   const rawsize = opts.buf.length
   const rawfilemd5 = crypto.createHash('md5').update(opts.buf).digest('hex')
   const filesize = aesEcbPaddedSize(rawsize)
   const filekey = crypto.randomBytes(16).toString('hex')
   const aeskey = crypto.randomBytes(16)
-  opts.log?.(`[发图] 申请上传地址 rawsize=${rawsize} filesize=${filesize} filekey=${filekey.slice(0, 8)}…`)
+  opts.log?.(`[${tag}] 申请上传地址 rawsize=${rawsize} filesize=${filesize} filekey=${filekey.slice(0, 8)}…`)
 
   const resp = await getUploadUrl({
     baseUrl: opts.baseUrl,
     token: opts.token,
     filekey,
-    mediaType: UploadMediaType.IMAGE,
+    mediaType: opts.mediaType,
     toUserId: opts.toUserId,
     rawsize,
     rawfilemd5,
@@ -106,12 +121,14 @@ export async function uploadImageBuffer(opts: {
     uploadParam: uploadParam ?? undefined,
     filekey
   })
-  opts.log?.(`[发图] CDN 上传成功 filekey=${filekey.slice(0, 8)}…`)
+  opts.log?.(`[${tag}] CDN 上传成功 filekey=${filekey.slice(0, 8)}… rawmd5=${rawfilemd5.slice(0, 8)}…`)
 
   return {
     downloadEncryptedQueryParam,
     aeskeyHex: aeskey.toString('hex'),
-    fileSizeCiphertext: filesize
+    fileSizeCiphertext: filesize,
+    rawSize: rawsize,
+    rawMd5Hex: rawfilemd5
   }
 }
 

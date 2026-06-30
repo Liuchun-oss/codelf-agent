@@ -16,6 +16,7 @@ import type { ChannelAdapter, ChannelContext, InboundMessage } from './types'
 import { SessionBridge } from './sessionBridge'
 import { markActive, clearActive, takeStaleActive } from './pendingState'
 import { readArtifactFile } from '../services/artifactFileServer'
+import { readBrowserPreview } from '../services/browserPreviewImage'
 import { processInboundMedia } from './weixin/inboundMedia'
 import type { WeixinMessage } from './weixin/types'
 
@@ -29,6 +30,8 @@ const PROMOTE_EVERY_N_TURNS = 5
 interface SessionState {
   conversationId: string
   senderId: string
+  // 该会话所属通道 id（用于按会话回查 adapter，如延迟工具发文件）。
+  channelId: string
   // 回信用的最近 raw 消息（取 context_token）。
   lastRaw: unknown
   // 引擎是否正在跑一轮。
@@ -119,6 +122,7 @@ export class ChannelManager {
       s = {
         conversationId: msg.conversationId,
         senderId: msg.senderId,
+        channelId: msg.channelId,
         lastRaw: msg.raw,
         busy: false,
         mergeBuffer: [],
@@ -133,6 +137,7 @@ export class ChannelManager {
       this.restoreSessionHistory(s)
     }
     s.senderId = msg.senderId
+    s.channelId = msg.channelId
     s.lastRaw = msg.raw
     return s
   }
@@ -701,6 +706,8 @@ export class ChannelManager {
       permissionMode: getPermissionMode(),
       sessionCwd: session.currentWorkspace,
       ...(session.pendingImages.length ? { images: session.pendingImages.slice() } : {}),
+      // 让 agent 感知「自己正被远程用户通过 IM 聊天」，并知道如何发文件（无需工具）。
+      channel: this.describeChannel(adapter),
       persona: activation
         ? { activationMode: true }
         : {
@@ -735,17 +742,20 @@ export class ChannelManager {
           void adapter.startTyping?.(session.conversationId, session.senderId, contextToken)
         }
         // B5：从文本增量里提取生成图片的 artifact 链接，留到轮末发图。
+        // 正文里开启 preview 协议：agent 把截图放进回复 = 有意发给用户。
         if (ev.type === 'text_delta' && typeof ev.content === 'string') {
-          this.collectImageUrls(ev.content, imageUrls)
+          this.collectImageUrls(ev.content, imageUrls, true)
         }
-        // B5：生图工具(GenerateImage/EditImage)把图片 markdown 放在工具结果里，
-        // 且明示模型不要在正文复述 URL——所以必须扫工具结果，否则抓不到。
+        // 生图工具(GenerateImage/EditImage)与截图工具(DesktopScreenshot/Screen)把图片 markdown
+        // 放在工具结果里。这里同时采集 artifact(生成图) 与 preview(截图) 协议：
+        // 点击/输入后的"自动截图"只在 images 字段、结果文本里不含 preview 链接，不会被误采，
+        // 因此只会抓到「用户显式要的截图」，不会因多步操作刷屏。
         if (
           (ev.type === 'tool_call_result' || ev.type === 'subagent_tool_result') &&
           typeof ev.result === 'string' &&
           !ev.isError
         ) {
-          this.collectImageUrls(ev.result, imageUrls)
+          this.collectImageUrls(ev.result, imageUrls, true)
         }
         // 阶段2：拦截需要等待用户回复的事件，记录 pending 并发微信询问。
         if (ev.type === 'permission_request') {
@@ -868,12 +878,48 @@ export class ChannelManager {
     this.reply(adapter, session, '出厂设置完成，我已经记住了自己的身份。以后就这样陪着你。')
   }
 
-  // B5：从一段文本里抽取生成图片的 markdown 链接（codelf-artifact:// 协议）。
-  private collectImageUrls(text: string, sink: Set<string>): void {
-    const re = /!\[[^\]]*\]\((codelf-artifact:\/\/[^)\s]+)\)/g
+  // 把适配器映射成 prompt 用的通道场景描述。canSendFile 取决于适配器是否实现 sendFile。
+  private describeChannel(adapter: ChannelAdapter): AiSendPayload['channel'] {
+    const labels: Record<string, string> = { weixin: '微信' }
+    return {
+      id: adapter.channelId,
+      label: labels[adapter.channelId] ?? adapter.channelId,
+      canSendFile: typeof adapter.sendFile === 'function',
+      canSendImage: typeof adapter.sendImage === 'function'
+    }
+  }
+
+  // B5：从一段文本里抽取图片 markdown 链接。
+  // includePreview=true 时同时捕获 codelf-preview://（截图等临时预览）——仅用于 agent 正文，
+  // 表示「有意发给用户」；工具结果不开启，避免把每张内部导航截图都推给用户造成刷屏。
+  private collectImageUrls(text: string, sink: Set<string>, includePreview = false): void {
+    const scheme = includePreview ? '(?:codelf-artifact|codelf-preview)' : 'codelf-artifact'
+    const re = new RegExp(`!\\[[^\\]]*\\]\\((${scheme}:\\/\\/[^)\\s]+)\\)`, 'g')
     let m: RegExpExecArray | null
     while ((m = re.exec(text)) !== null) {
       sink.add(m[1])
+    }
+  }
+
+  // 供延迟工具（SendWeixinFile）调用：把一个本地文件发给指定会话的用户。
+  // 按 sessionId 回查会话与所属 adapter，复用其 sendFile（CDN 上传 + 文件消息 + 串行队列）。
+  // 返回是否送达；会话不存在或通道不支持发文件时返回 false。
+  async sendFileToConversation(
+    conversationId: string,
+    filePath: string,
+    fileName: string
+  ): Promise<boolean> {
+    const session = this.sessions.get(conversationId)
+    if (!session) return false
+    const adapter = this.adapters.get(session.channelId)
+    if (!adapter?.sendFile) return false
+    try {
+      await adapter.sendFile(conversationId, session.senderId, filePath, fileName, session.lastRaw)
+      console.log(`[channel:${adapter.channelId}] 已发文件回 IM ${fileName}`)
+      return true
+    } catch (e) {
+      console.error(`[channel] 发文件失败：${String(e)}`)
+      return false
     }
   }
 
@@ -886,7 +932,9 @@ export class ChannelManager {
     if (urls.size === 0 || !adapter.sendImage) return
     for (const url of urls) {
       try {
-        const file = await readArtifactFile(url)
+        const file = url.startsWith('codelf-preview://')
+          ? await this.readPreviewFile(url)
+          : await readArtifactFile(url)
         if (!file || !file.mime.startsWith('image/')) continue
         const dataUrl = `data:${file.mime};base64,${file.data.toString('base64')}`
         await adapter.sendImage(session.conversationId, session.senderId, dataUrl, session.lastRaw)
@@ -895,6 +943,13 @@ export class ChannelManager {
         console.error(`[channel] 发图失败：${String(e)}`)
       }
     }
+  }
+
+  // 读取 codelf-preview://<id> 临时预览图（截图等）。
+  private async readPreviewFile(url: string): Promise<{ data: Buffer; mime: string } | null> {
+    const id = url.slice('codelf-preview://'.length).replace(/[/?#].*$/, '')
+    if (!id) return null
+    return readBrowserPreview(id)
   }
 
   // diff 摘要：取前若干行，过长截断，避免刷屏。

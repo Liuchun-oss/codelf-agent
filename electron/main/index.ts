@@ -159,16 +159,28 @@ function createWindow(): void {
     resumeSchedulesOnStartup()
     // 加载群聊定义（懒加载引擎；半途崩溃的循环不自动续跑，§6.8）。
     resumeRoomsOnStartup()
+    // 情景记忆衰减扫描：仅在库已存在时执行，把久未访问的记忆降级状态（机制 4）。best-effort。
+    void Promise.resolve()
+      .then(async () => {
+        const { sweepDecayIfExists } = await import('../agent/memory/episodicStore')
+        sweepDecayIfExists()
+      })
+      .catch(() => {})
   })
 
   
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     const key = input.key?.toLowerCase()
-    // 屏蔽 F12 / Ctrl+Shift+I 打开调试窗口
-    if (key === 'f12' || (input.control && input.shift && key === 'i')) {
+    const wantsDevtools = key === 'f12' || (input.control && input.shift && key === 'i')
+    if (!wantsDevtools) return
+    // 开发模式（未打包）放开 F12 / Ctrl+Shift+I 以便调试；生产构建仍屏蔽，防止终端用户误开。
+    if (app.isPackaged) {
       event.preventDefault()
+      return
     }
+    event.preventDefault()
+    mainWindow?.webContents.toggleDevTools()
   })
 
   

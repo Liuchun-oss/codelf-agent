@@ -58,6 +58,7 @@ import {
 } from './browserTools'
 import { openInAppBrowserTool } from './openInAppBrowserTool'
 import { generateImageTool, editImageTool } from './generateImageTool'
+import { sendWeixinFileTool } from './sendWeixinFileTool'
 import { generateVideoTool } from './generateVideoTool'
 import { getVideoTaskTool } from './getVideoTaskTool'
 import {
@@ -403,6 +404,7 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...openInAppBrowserTool, deferred: true })
   registry.register({ ...generateImageTool, deferred: true })
   registry.register({ ...editImageTool, deferred: true })
+  registry.register({ ...sendWeixinFileTool, deferred: true })
   registry.register({ ...generateVideoTool, deferred: true })
   registry.register({ ...getVideoTaskTool, deferred: true })
   registry.register({ ...createScheduledTaskTool, deferred: true })

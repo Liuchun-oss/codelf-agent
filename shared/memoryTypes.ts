@@ -9,6 +9,8 @@ export interface MemorySettings {
   enabled: boolean
   /** 新会话首轮在动态段注入项目/全局记忆摘要（不影响静态段缓存）。 */
   injectOnNewSession: boolean
+  /** 每轮用本轮输入做语义召回，自动唤起相关情景记忆（HMS 主动联想召回）。 */
+  autoRecall: boolean
   /** 注入摘要的 token 预算上限（超出按节预算裁剪）。 */
   injectBudgetTokens: number
   /** 压缩时派发 checkpoint-writer，将被丢弃的对话提取为结构化会话记忆。 */
@@ -20,6 +22,7 @@ export interface MemorySettings {
 export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   enabled: true,
   injectOnNewSession: true,
+  autoRecall: true,
   injectBudgetTokens: 4000,
   writerEnabled: true,
   autoNoteReminder: true
@@ -42,6 +45,8 @@ export function normalizeMemorySettings(partial: Partial<MemorySettings> | undef
       typeof p.injectOnNewSession === 'boolean'
         ? p.injectOnNewSession
         : DEFAULT_MEMORY_SETTINGS.injectOnNewSession,
+    autoRecall:
+      typeof p.autoRecall === 'boolean' ? p.autoRecall : DEFAULT_MEMORY_SETTINGS.autoRecall,
     injectBudgetTokens: Math.min(b.max, Math.max(b.min, budgetRaw)),
     writerEnabled:
       typeof p.writerEnabled === 'boolean' ? p.writerEnabled : DEFAULT_MEMORY_SETTINGS.writerEnabled,

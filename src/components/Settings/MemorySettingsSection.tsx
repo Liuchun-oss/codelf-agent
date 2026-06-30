@@ -5,6 +5,7 @@ import { DEFAULT_MEMORY_SETTINGS } from '@shared/memoryTypes'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { useAgentStore } from '@/stores/agentStore'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
+import MemoryViewer from './MemoryViewer'
 
 /** 解析当前可用的工作区根：优先 IDE 已打开的工作区，其次当前会话的 cwd。 */
 function resolveWorkspaceRoot(): string | null {
@@ -25,6 +26,14 @@ export default function MemorySettingsSection(): JSX.Element {
   const [settings, setSettings] = useState<MemorySettings | null>(null)
   const [saving, setSaving] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
+  const [backfilling, setBackfilling] = useState(false)
+  const [progress, setProgress] = useState<{
+    total: number
+    done: number
+    factsWritten: number
+    currentTitle?: string
+  } | null>(null)
+  const [viewerOpen, setViewerOpen] = useState(false)
 
   // 内联编辑器状态
   const [editorOpen, setEditorOpen] = useState(false)
@@ -100,6 +109,32 @@ export default function MemorySettingsSection(): JSX.Element {
     }
   }
 
+  const runBackfill = async (): Promise<void> => {
+    setBackfilling(true)
+    setHint(null)
+    setProgress({ total: 0, done: 0, factsWritten: 0 })
+    const off = window.lc.onBackfillProgress((p) => {
+      setProgress({
+        total: p.total,
+        done: p.done,
+        factsWritten: p.factsWritten,
+        currentTitle: p.currentTitle
+      })
+    })
+    try {
+      const res = await window.lc.aiBackfillMemory({ maxSessions: 0 })
+      setHint(
+        `回填完成：扫描 ${res.scanned} 个会话，处理 ${res.processed} 个，跳过 ${res.skipped} 个，写入 ${res.factsWritten} 条记忆。`
+      )
+    } catch {
+      setHint('回填失败，请稍后重试。')
+    } finally {
+      off()
+      setBackfilling(false)
+      setProgress(null)
+    }
+  }
+
   if (!settings) {
     return (
       <div className="settings-section-page">
@@ -123,13 +158,24 @@ export default function MemorySettingsSection(): JSX.Element {
           }
         />
         <SettingsRow
-          title="新会话自动注入"
-          description="新会话首轮把项目/全局记忆摘要注入上下文（仅放在动态段，不影响提示词缓存命中）。"
+          title="新会话注入项目记忆"
+          description="新会话首轮把项目/全局记忆摘要（MEMORY.md）注入上下文（仅放在动态段，不影响提示词缓存命中）。"
           control={
             <SettingsSwitch
               disabled={saving || !settings.enabled}
               checked={settings.injectOnNewSession}
               onChange={(v) => void save({ injectOnNewSession: v })}
+            />
+          }
+        />
+        <SettingsRow
+          title="自动联想召回"
+          description="每轮根据你的输入做语义检索，自动唤起跨会话/跨项目的相关情景记忆（含联想扩散）。这是记忆系统的核心能力，关闭后 AI 将不再主动回想往事。"
+          control={
+            <SettingsSwitch
+              disabled={saving || !settings.enabled}
+              checked={settings.autoRecall}
+              onChange={(v) => void save({ autoRecall: v })}
             />
           }
         />
@@ -187,6 +233,49 @@ export default function MemorySettingsSection(): JSX.Element {
             </button>
           }
         />
+        <SettingsRow
+          title="查看记忆库"
+          description="浏览 AI 已记住的所有记忆：内容、类型、显著性、强度、状态（活跃/休眠/归档），以及记忆之间的联想图谱。"
+          stacked
+          control={
+            <button type="button" className="btn-secondary" onClick={() => setViewerOpen(true)}>
+              打开记忆库 / 图谱
+            </button>
+          }
+        />
+        <SettingsRow
+          title="回填历史记忆"
+          description="把记忆系统上线前的历史会话逐个反思提取，沉淀进长期记忆，让 AI 继承你过往的对话。会一次性处理全部未完成会话，已处理的自动跳过。"
+          stacked
+          control={
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={backfilling || !settings.enabled}
+              onClick={() => void runBackfill()}
+            >
+              {backfilling ? '回填中…' : '开始回填历史记忆'}
+            </button>
+          }
+        />
+        {backfilling && progress && (
+          <div className="memory-backfill-progress">
+            <div className="memory-backfill-bar">
+              <div
+                className="memory-backfill-bar-fill"
+                style={{
+                  width: `${progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0}%`
+                }}
+              />
+            </div>
+            <div className="memory-backfill-meta">
+              {progress.total > 0
+                ? `处理中 ${progress.done}/${progress.total} · 已写入 ${progress.factsWritten} 条记忆`
+                : '正在扫描会话…'}
+              {progress.currentTitle ? ` · ${progress.currentTitle}` : ''}
+            </div>
+          </div>
+        )}
         {hint && <div className="settings-inline-alert">{hint}</div>}
       </SettingsGroup>
 
@@ -232,6 +321,19 @@ export default function MemorySettingsSection(): JSX.Element {
                   {editorSaving ? '保存中…' : '保存'}
                 </button>
               </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {viewerOpen &&
+        createPortal(
+          <div className="memory-editor-overlay" role="dialog" aria-modal="true">
+            <div className="memory-editor-modal memory-viewer-modal">
+              <MemoryViewer
+                workspaceRoot={resolveWorkspaceRoot()}
+                onClose={() => setViewerOpen(false)}
+              />
             </div>
           </div>,
           document.body

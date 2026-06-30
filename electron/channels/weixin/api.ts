@@ -258,6 +258,10 @@ export interface UploadedImageInfo {
   aeskeyHex: string
   // 密文大小（AES-128-ECB PKCS7 补齐后）。
   fileSizeCiphertext: number
+  // 明文原始大小（字节）。文件/视频消息项需要。
+  rawSize?: number
+  // 明文 MD5 的 hex 串。文件消息项需要。
+  rawMd5Hex?: string
 }
 
 // 发送图片消息（先 CDN 上传得到 UploadedImageInfo，再调本函数）。
@@ -302,6 +306,55 @@ export async function sendImageMessage(opts: {
     token: opts.token,
     timeoutMs: opts.timeoutMs ?? 15000,
     label: 'sendImageMessage'
+  })
+  return { clientId }
+}
+
+// 发送文件消息（先 CDN 上传得到 UploadedImageInfo，再调本函数）。
+// 文件项需要 file_name / md5 / len（明文大小），media 引用与图片一致。
+export async function sendFileMessage(opts: {
+  baseUrl: string
+  token: string
+  to: string
+  uploaded: UploadedImageInfo
+  fileName: string
+  contextToken?: string
+  timeoutMs?: number
+}): Promise<{ clientId: string }> {
+  const clientId = `codelf-wx-${crypto.randomUUID()}`
+  const body = JSON.stringify({
+    msg: {
+      from_user_id: '',
+      to_user_id: opts.to,
+      client_id: clientId,
+      message_type: MessageType.BOT,
+      message_state: MessageState.FINISH,
+      item_list: [
+        {
+          type: MessageItemType.FILE,
+          file_item: {
+            media: {
+              encrypt_query_param: opts.uploaded.downloadEncryptedQueryParam,
+              aes_key: Buffer.from(opts.uploaded.aeskeyHex).toString('base64'),
+              encrypt_type: 1
+            },
+            file_name: opts.fileName,
+            md5: opts.uploaded.rawMd5Hex,
+            len: opts.uploaded.rawSize != null ? String(opts.uploaded.rawSize) : undefined
+          }
+        }
+      ],
+      context_token: opts.contextToken ?? undefined
+    },
+    base_info: buildBaseInfo()
+  })
+  await postFetch({
+    baseUrl: opts.baseUrl,
+    endpoint: 'ilink/bot/sendmessage',
+    body,
+    token: opts.token,
+    timeoutMs: opts.timeoutMs ?? 20000,
+    label: 'sendFileMessage'
   })
   return { clientId }
 }

@@ -25,6 +25,7 @@ import {
 } from '../providers/profileStore'
 import { fetchSystemPromptPartsAsync, assembleSystemMessage, fetchDynamicContextBlock, getStaticSystemCore } from '../prompts/assembler'
 import { buildKnowledgeContextBlock } from '../prompts/context/knowledgeContext'
+import { buildRecallInjection } from '../memory/recall'
 import type { PromptContext } from '../prompts/types'
 import {
   dirtyConflictReminder,
@@ -71,7 +72,7 @@ import { buildContextBreakdown } from '../context/contextBreakdown'
 import { lookupModelMetadata } from '../providers/modelMetadata'
 import { maybeCompactTurns, estimateSystemTokens } from './compact'
 import { runCheckpointWriter, buildRebuildInjection } from '../memory/writer'
-import { detectTaskCompletion, buildNoteReminder } from './taskCompletionDetector'
+import { detectTaskCompletion, buildNoteReminder, isMemoryWorthyTurn } from './taskCompletionDetector'
 import { recordAudit } from './audit'
 import { recordDebugEvent } from './debugLog'
 import { appendUsageLog } from './usageLogStore'
@@ -272,6 +273,7 @@ export class QueryEngine {
   private snippedTurnIds = new Set<string>()
   private contentReplacementState: ContentReplacementState = createContentReplacementState()
   private workspaceRootOverride: string | null = null
+  private lastMemoryRoot: string | null = null
   private lastPromptCacheSnapshot?: { signature: string; hitRate: number }
 
   constructor(registry: ToolRegistry = buildDefaultRegistry()) {
@@ -477,6 +479,30 @@ export class QueryEngine {
         model: params.model
       })
       if (injection) this.injectRebuildIntoSummaryTurn(params.afterTurns, injection)
+      // 方案 D：压缩点对"被丢弃的对话片段"批量反思提取，补全跨会话该留的事实（兜底，防漏记）。
+      // 随后再睡眠巩固——先把新事实落库，巩固时即可一并蒸馏。均 fire-and-forget，失败静默。
+      const memRoot = this.lastMemoryRoot
+      const discardedForReflect = discardedMessages.filter(
+        (m) => (m.role === 'user' || m.role === 'assistant') && (m.content ?? '').trim()
+      )
+      void import('../memory/reflection')
+        .then(({ reflectAndEncode }) =>
+          discardedForReflect.length > 0
+            ? reflectAndEncode({
+                sessionId: params.sessionId,
+                messages: discardedForReflect,
+                workspaceRoot: memRoot
+              })
+            : 0
+        )
+        .then(() => {
+          if (memRoot) {
+            return import('../memory/consolidate').then(({ consolidateProject }) =>
+              consolidateProject(memRoot)
+            )
+          }
+        })
+        .catch(() => {})
     } catch {
       // best-effort
     }
@@ -594,6 +620,7 @@ export class QueryEngine {
       payload.memoryWorkspaceRoot !== undefined
         ? payload.memoryWorkspaceRoot
         : effectiveWorkspaceRoot
+    this.lastMemoryRoot = effectiveMemoryRoot
 
     // profile 优先级：payload 显式指定（群聊岗位按 seat.modelProfileId）> 全局激活 profile。
     // payload.profileId 指向的 profile 不存在时，回退到激活 profile（不硬失败）。
@@ -646,7 +673,8 @@ export class QueryEngine {
       enabledTools: this.registry.availableTools().map((t) => t.name),
       permissionMode: payload.permissionMode ?? 'default',
       ...(payload.persona ? { persona: payload.persona } : {}),
-      ...(payload.roomContext ? { roomContext: payload.roomContext } : {})
+      ...(payload.roomContext ? { roomContext: payload.roomContext } : {}),
+      ...(payload.channel ? { channel: payload.channel } : {})
     }
 
     this.active = new AbortController()
@@ -799,6 +827,18 @@ export class QueryEngine {
     const knowledgeContextBlock = await buildKnowledgeContextBlock(payload.message)
     if (knowledgeContextBlock) {
       userMsg.content = `${knowledgeContextBlock}\n\n---\n\n${userMsg.content}`
+    }
+
+    // 主动联想召回：每轮用本轮输入向量召回相关情景记忆（跨会话/跨项目），合并进当前
+    // 用户消息之前。与知识库 RAG 同构——只在 tail 新增，不进 system、不写历史，故对 prompt
+    // 缓存前缀零破坏（promptCacheKey 只 hash 静态核心，不含召回内容）。best-effort。
+    const recallBlock = await buildRecallInjection({
+      query: payload.message,
+      workspaceRoot: effectiveMemoryRoot,
+      activeFile: payload.editorContext?.activeFilePath
+    })
+    if (recallBlock) {
+      userMsg.content = `${recallBlock}\n\n---\n\n${userMsg.content}`
     }
 
     const staticSystemCore = getStaticSystemCore(ctx)
@@ -1716,6 +1756,30 @@ export class QueryEngine {
           label: 'note-reminder',
           detail: completionSignal.reason ?? 'complex task completed'
         })
+      }
+
+      // 方案 A：回合结束反思提取。仅在"含个人信息/偏好/承诺"或任务完成的回合触发，
+      // 砍掉纯操作/寒暄回合的无谓 LLM 调用。fire-and-forget，独立调用不污染 promptCache，失败静默。
+      const reflectSessionId = payload.sessionId || 'default'
+      const worthy = isMemoryWorthyTurn({ turnMessages, completion: completionSignal })
+      if (reflectSessionId !== 'default' && worthy) {
+        const reflectMsgs = turnMessages.filter(
+          (m) => (m.role === 'user' || m.role === 'assistant') && (m.content ?? '').trim()
+        )
+        if (reflectMsgs.length > 0) {
+          const memRoot = this.lastMemoryRoot
+          const activeFile = payload.editorContext?.activeFilePath
+          void import('../memory/reflection')
+            .then(({ reflectAndEncode }) =>
+              reflectAndEncode({
+                sessionId: reflectSessionId,
+                messages: reflectMsgs,
+                workspaceRoot: memRoot,
+                activeFile
+              })
+            )
+            .catch(() => {})
+        }
       }
     }
 

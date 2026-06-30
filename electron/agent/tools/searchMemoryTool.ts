@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Tool, ToolResult } from './types'
 import { searchMemory } from '../memory/store'
+import { searchEpisodicMemory } from '../memory/recall'
 import { getMemorySettings } from '../settings/agentSettingsStore'
 
 export const SEARCH_MEMORY_NAME = 'search_memory'
@@ -37,18 +38,40 @@ export const searchMemoryTool: Tool<SearchMemoryInput> = {
       scope: input.scope,
       limit: input.limit
     })
-    if (hits.length === 0) {
+    // 情景记忆向量召回：跨会话语义检索（轨道 A）。与上面的关键词检索（MEMORY.md/全局/
+    // checkpoint）互补——前者按语义找历史对话/事件，后者按词命中找结构化文档。
+    const episodic =
+      input.scope === 'all' || input.scope === undefined || input.scope === 'session'
+        ? await searchEpisodicMemory({
+            query: input.query,
+            workspaceRoot: ctx.memoryWorkspaceRoot ?? ctx.workspaceRoot,
+            limit: input.limit
+          })
+        : []
+
+    if (hits.length === 0 && episodic.length === 0) {
       return { content: `长期记忆中未找到与“${input.query}”相关的内容。可尝试更换更独特的关键词，或用 search_history 检索原始对话。` }
     }
     const lines = hits.map(
       (h) => `### [${h.scope}] ${h.source} › ${h.section}\n${h.excerpt}`
     )
-    let body = lines.join('\n\n')
+    const episodicLines = episodic.map(
+      (h) =>
+        `### [情景·${h.scope}] ${h.kind}${h.anchorFile ? ` · ${h.anchorFile}` : ''}${h.createdAt ? ` · ${new Date(h.createdAt).toLocaleString('zh-CN')}` : ''}${h.sessionId ? ` · 来源会话 ${h.sessionId}` : ''}\n${h.content}`
+    )
+    let body = [...episodicLines, ...lines].join('\n\n')
     let truncated = false
     if (body.length > MAX_CONTENT_CHARS) {
       body = body.slice(0, MAX_CONTENT_CHARS) + '\n…(结果已截断)'
       truncated = true
     }
-    return { content: `命中 ${hits.length} 条（按相关度排序）：\n\n${body}`, truncated }
+    const hasSource = episodic.some((h) => h.sessionId)
+    const footer = hasSource
+      ? '\n\n提示：标注了「来源会话」的条目是记忆的提炼版；如需查看当时的完整原话，可用 `read_conversation` 工具传入对应会话 id 读取原始对话。'
+      : ''
+    return {
+      content: `命中 ${hits.length + episodic.length} 条（按相关度排序）：\n\n${body}${footer}`,
+      truncated
+    }
   }
 }
