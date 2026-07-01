@@ -7,7 +7,8 @@ import type {
   TokenUsage,
   UserQuestionResponse,
   ContentReplacementRecord,
-  PersistedChatMessage
+  PersistedChatMessage,
+  PersistedFileChange
 } from '@shared/agentTypes'
 import { APP_NAME } from '@shared/appConfig'
 import {
@@ -376,6 +377,14 @@ export class QueryEngine {
 
   exportDiscoveredDeferredTools(): string[] {
     return this.registry.discoveredDeferredToolNames()
+  }
+
+  exportFileChanges(): PersistedFileChange[] {
+    return this.fileChangeHistory.export()
+  }
+
+  restoreFileChanges(items: readonly PersistedFileChange[] | undefined): void {
+    this.fileChangeHistory.restore(items)
   }
 
   // 导出可持久化的历史消息。供通道层跨重启续接保存。

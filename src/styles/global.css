@@ -6985,7 +6985,7 @@ kbd {
   padding-right: 4px;
 }
 .agent-msg.user {
-  align-items: stretch;
+  align-items: flex-end;
 }
 
 
@@ -6993,7 +6993,9 @@ kbd {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  width: fit-content;
+  max-width: 85%;
+  margin-left: auto;
   min-height: 44px;
   padding: 7px 8px 7px 13px;
   border-radius: 10px;
@@ -7025,18 +7027,15 @@ kbd {
   cursor: text;
   font-family: inherit;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
 }
 .agent-user-bubble-text-inner {
   width: 100%;
-  max-height: calc(1.55em * 3);
-  overflow: hidden;
+  max-height: calc(1.55em * 12);
+  overflow-y: auto;
   word-break: break-word;
   white-space: pre-wrap;
-  display: -webkit-box;
-  line-clamp: 3;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  overscroll-behavior: contain;
 }
 .agent-user-bubble-text:hover:not(:disabled) {
   color: #fff;
@@ -7861,6 +7860,12 @@ kbd {
   max-height: 160px;
   border-radius: 8px;
   border: 1px solid var(--border);
+  cursor: zoom-in;
+  transition: border-color 120ms var(--ease), opacity 120ms var(--ease);
+}
+.agent-user-image:hover {
+  border-color: var(--accent-soft);
+  opacity: 0.9;
 }
 .agent-attachment-chip {
   display: inline-flex;

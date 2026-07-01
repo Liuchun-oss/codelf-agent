@@ -196,11 +196,13 @@ export function registerAiIpc(): void {
     if (session && typeof session.id === 'string') {
       const engine = getExistingQueryEngine(session.id)
       const engineRecords = engine?.exportContentReplacementRecords() ?? []
+      const engineFileChanges = engine?.exportFileChanges() ?? []
       saveSession({
         ...session,
         tasks: listTasks(session.id),
         replacementRecords: engineRecords.length > 0 ? engineRecords : session.replacementRecords,
-        discoveredDeferredTools: engine?.exportDiscoveredDeferredTools() ?? session.discoveredDeferredTools
+        discoveredDeferredTools: engine?.exportDiscoveredDeferredTools() ?? session.discoveredDeferredTools,
+        fileChanges: engineFileChanges.length > 0 ? engineFileChanges : session.fileChanges
       })
     }
     return true
@@ -212,11 +214,13 @@ export function registerAiIpc(): void {
     async (_e, sessionId: string): Promise<PersistedSession | null> => {
       const session = loadSession(sessionId)
       if (session) {
-        getQueryEngine(sessionId).restoreHistory(
+        const engine = getQueryEngine(sessionId)
+        engine.restoreHistory(
           session.history.map((m) => ({ role: m.role, content: m.content })),
           session.replacementRecords,
           session.discoveredDeferredTools
         )
+        engine.restoreFileChanges(session.fileChanges)
         replaceTasks(sessionId, session.tasks ?? [])
       }
       return session

@@ -3,6 +3,7 @@ import type { ChatMessageView } from '@/stores/agentStore'
 import { useAgentStore } from '@/stores/agentStore'
 import { stripForcedInstruction } from './slashCommand'
 import ForcedRefsBadge from './ForcedRefsBadge'
+import ImageLightbox from './ImageLightbox'
 
 interface Props {
   msg: ChatMessageView
@@ -18,7 +19,18 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
   )
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(displayText)
+  const [zoomImage, setZoomImage] = useState<string | null>(null)
+  const [lockedWidth, setLockedWidth] = useState<number | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const bubbleRef = useRef<HTMLDivElement>(null)
+
+  const enterEdit = (): void => {
+    // 进入编辑前先锁定气泡当前真实宽度：否则 textarea 的窄固有宽度会让
+    // fit-content 气泡骤然缩窄，视觉上与展示态不一致。
+    const w = bubbleRef.current?.getBoundingClientRect().width
+    if (w) setLockedWidth(w)
+    setEditing(true)
+  }
 
   useEffect(() => {
     if (!editing) setDraft(displayText)
@@ -44,6 +56,7 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
     if (!text || streaming) return
     void editAndResend(msg.id, text)
     setEditing(false)
+    setLockedWidth(null)
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -51,6 +64,7 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
       e.preventDefault()
       setDraft(displayText)
       setEditing(false)
+      setLockedWidth(null)
       return
     }
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -62,6 +76,7 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
   const onBlur = (): void => {
     setDraft(displayText)
     setEditing(false)
+    setLockedWidth(null)
   }
 
   return (
@@ -74,11 +89,18 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
               src={img.dataUrl}
               alt={img.name ?? '附图'}
               className="agent-user-image"
+              loading="lazy"
+              title="点击查看大图"
+              onClick={() => setZoomImage(img.dataUrl)}
             />
           ))}
         </div>
       )}
-      <div className="agent-user-bubble">
+      <div
+        className="agent-user-bubble"
+        ref={bubbleRef}
+        style={editing && lockedWidth != null ? { width: lockedWidth } : undefined}
+      >
         {editing ? (
           <textarea
             ref={inputRef}
@@ -95,7 +117,7 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
             type="button"
             className="agent-user-bubble-text"
             disabled={streaming}
-            onClick={() => setEditing(true)}
+            onClick={enterEdit}
             title="点击编辑"
           >
             <span className="agent-user-bubble-text-inner">{displayText}</span>
@@ -118,6 +140,9 @@ export default function UserMessageBubble({ msg }: Props): JSX.Element {
         </button>
       </div>
       <ForcedRefsBadge refs={forced} />
+      {zoomImage && (
+        <ImageLightbox src={zoomImage} alt="附图" onClose={() => setZoomImage(null)} />
+      )}
     </div>
   )
 }

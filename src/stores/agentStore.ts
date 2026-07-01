@@ -1041,6 +1041,18 @@ export const useAgentStore = create<AgentState>((set, get) => {
   }
 
   
+  // 确保后端引擎已加载该会话（含文件变更快照）。重启后首次撤销/取消撤销前必须调用，
+  // 否则后端 fileChangeHistory 为空，会返回 not_found。
+  const ensureSessionHydrated = async (sessionId: string): Promise<void> => {
+    if (hydratedMain.has(sessionId)) return
+    hydratedMain.add(sessionId)
+    try {
+      await window.lc.aiLoadSession(sessionId)
+    } catch {
+      hydratedMain.delete(sessionId)
+    }
+  }
+
   const persistCurrent = (): void => {
     const s = get()
     const meta = s.sessions.find((m) => m.id === s.currentSessionId)
@@ -1124,12 +1136,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     })
     
     if (!hydratedMain.has(sessionId)) {
-      hydratedMain.add(sessionId)
-      try {
-        await window.lc.aiLoadSession(sessionId)
-      } catch {
-        
-      }
+      await ensureSessionHydrated(sessionId)
     }
     syncEditorDirtyPaths()
     // editorContext.workspaceRoot 与会话 cwd 对齐：纯对话不携带 IDE 工作区，避免泄漏
@@ -1911,10 +1918,13 @@ export const useAgentStore = create<AgentState>((set, get) => {
       fileChangeInFlight.add(changeId)
       setStatus('reverted')
       try {
+        await ensureSessionHydrated(get().currentSessionId)
         const { ok, reason } = await window.lc.aiRevertFileChange(get().currentSessionId, changeId)
         if (!ok) {
           setStatus('applied')
           toast.warn(revertFailMessage(reason))
+        } else {
+          persistCurrent()
         }
       } catch {
         setStatus('applied')
@@ -1937,10 +1947,13 @@ export const useAgentStore = create<AgentState>((set, get) => {
       fileChangeInFlight.add(changeId)
       setStatus('applied')
       try {
+        await ensureSessionHydrated(get().currentSessionId)
         const { ok, reason } = await window.lc.aiRedoFileChange(get().currentSessionId, changeId)
         if (!ok) {
           setStatus('reverted')
           toast.warn(revertFailMessage(reason))
+        } else {
+          persistCurrent()
         }
       } catch {
         setStatus('reverted')

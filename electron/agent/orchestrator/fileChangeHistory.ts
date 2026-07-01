@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs'
 import { writeFileAtomic, writeTextFile, type FileEncoding } from '../../services/fsService'
 import { noteAgentWrite } from '../../services/localWriteRegistry'
+import type { PersistedFileChange } from '@shared/agentTypes'
 
 interface FileChangeRecord {
   changeId: string
@@ -106,5 +107,39 @@ export class FileChangeHistory {
   clear(): void {
     this.records.clear()
     this.locks.clear()
+  }
+
+  /** 导出全部记录为可持久化快照（供跨重启保存）。 */
+  export(): PersistedFileChange[] {
+    const out: PersistedFileChange[] = []
+    for (const rec of this.records.values()) {
+      out.push({
+        changeId: rec.changeId,
+        path: rec.path,
+        encoding: rec.encoding,
+        oldExisted: rec.oldExisted,
+        oldDataBase64: rec.oldData.toString('base64'),
+        newContent: rec.newContent,
+        state: rec.state
+      })
+    }
+    return out
+  }
+
+  /** 从持久化快照重建记录（会话加载时调用）。已存在的 changeId 不覆盖。 */
+  restore(items: readonly PersistedFileChange[] | undefined): void {
+    if (!items?.length) return
+    for (const item of items) {
+      if (!item || typeof item.changeId !== 'string' || this.records.has(item.changeId)) continue
+      this.records.set(item.changeId, {
+        changeId: item.changeId,
+        path: item.path,
+        encoding: item.encoding,
+        oldExisted: item.oldExisted,
+        oldData: Buffer.from(item.oldDataBase64 ?? '', 'base64'),
+        newContent: item.newContent ?? '',
+        state: item.state === 'reverted' ? 'reverted' : 'applied'
+      })
+    }
   }
 }

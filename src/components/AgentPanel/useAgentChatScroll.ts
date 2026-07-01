@@ -25,6 +25,23 @@ export function useAgentChatScroll(
   const frameRef = useRef<number | null>(null)
   const firstLayoutRef = useRef(true)
   const settleFrameRef = useRef<number | null>(null)
+  // 用户主动滚动的抑制截止时间：在此之前禁止任何自动贴底，彻底避免
+  // 高频 pin() 与用户滚轮抢夺 scrollTop 导致“滚不动”。
+  const suppressUntilRef = useRef(0)
+  const SUPPRESS_MS = 600
+
+  // 取消所有进行中的自动贴底 rAF。用户一旦上滚，必须立刻停掉这些回调，
+  // 否则残留的 pin() 会与用户滚动抢夺 scrollTop，表现为“滚不动/被拽回底部”。
+  const cancelAutoScroll = (): void => {
+    if (frameRef.current != null) {
+      cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
+    }
+    if (settleFrameRef.current != null) {
+      cancelAnimationFrame(settleFrameRef.current)
+      settleFrameRef.current = null
+    }
+  }
 
   const pin = (): void => {
     const el = scrollRef.current
@@ -35,6 +52,8 @@ export function useAgentChatScroll(
   // 跟随式补滚：每一帧都重新校验 followRef，一旦用户手动上滚立即停止。
   const scheduleFollow = (): void => {
     if (!followRef.current) return
+    // 用户正在主动滚动的抑制窗口内：不抢 scrollTop。
+    if (performance.now() < suppressUntilRef.current) return
     pin()
     if (frameRef.current != null) cancelAnimationFrame(frameRef.current)
     frameRef.current = requestAnimationFrame(() => {
@@ -55,6 +74,7 @@ export function useAgentChatScroll(
   const forceToBottom = (): void => {
     followRef.current = true
     userIntentRef.current = false
+    suppressUntilRef.current = 0
     pin()
     if (settleFrameRef.current != null) cancelAnimationFrame(settleFrameRef.current)
     const deadline = performance.now() + SETTLE_MS
@@ -87,24 +107,30 @@ export function useAgentChatScroll(
       // 离开底部但无用户手势 = 布局抖动（clamp / 异步内容撑高），
       // 保持跟随，交给 ResizeObserver 的下一次 scheduleFollow 重新贴底。
     }
-    // 滚轮上滚 / 上翻按键是明确的离开意图，立即生效（流式输出时内容被
-    // 持续钉在底部，scroll 距离可能还没拉开，不能只依赖 scroll 事件）。
+    // 滚轮是明确的用户操作。任意方向的滚轮都进入“用户主动滚动”抑制窗口，
+    // 期间不做自动贴底，避免流式高频 pin() 与用户滚轮抢 scrollTop（表现为滚不动）。
+    // 向上滚（deltaY<0）额外立即关闭跟随并取消进行中的补滚 rAF。
     const onWheel = (e: WheelEvent): void => {
+      suppressUntilRef.current = performance.now() + SUPPRESS_MS
       if (e.deltaY < 0) {
         userIntentRef.current = true
         followRef.current = false
+        cancelAutoScroll()
       }
     }
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') {
         userIntentRef.current = true
         followRef.current = false
+        suppressUntilRef.current = performance.now() + SUPPRESS_MS
+        cancelAutoScroll()
       }
     }
-    // 触摸拖动 / 按住滚动条（pointerdown 落在容器上）只标记意图，
+    // 触摸拖动 / 按住滚动条（pointerdown 落在容器上）标记意图并进入抑制窗口，
     // 是否真的离开底部交由后续 scroll 事件判定。
     const markIntent = (): void => {
       userIntentRef.current = true
+      suppressUntilRef.current = performance.now() + SUPPRESS_MS
     }
     el.addEventListener('scroll', onScroll, { passive: true })
     el.addEventListener('wheel', onWheel, { passive: true })

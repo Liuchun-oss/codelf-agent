@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { readFileSync, writeFileSync, renameSync, rmSync, existsSync, mkdirSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
-import type { AgentTask, ContentReplacementRecord, PersistedSession, PersistedChatMessage, TokenUsage } from '@shared/agentTypes'
+import type { AgentTask, ContentReplacementRecord, PersistedSession, PersistedChatMessage, PersistedFileChange, TokenUsage } from '@shared/agentTypes'
 
 
 
@@ -42,6 +42,7 @@ function serialize(session: PersistedSession): string {
   for (const task of session.tasks ?? []) lines.push(JSON.stringify({ t: 'task', m: task }))
   for (const r of session.replacementRecords ?? []) lines.push(JSON.stringify({ t: 'repl', m: r }))
   for (const name of session.discoveredDeferredTools ?? []) lines.push(JSON.stringify({ t: 'deferred_tool', m: name }))
+  for (const fc of session.fileChanges ?? []) lines.push(JSON.stringify({ t: 'filechange', m: fc }))
   return lines.join('\n') + '\n'
 }
 
@@ -84,12 +85,31 @@ function parseAgentTask(value: unknown): AgentTask | null {
   }
 }
 
+function parseFileChange(value: unknown): PersistedFileChange | null {
+  if (!value || typeof value !== 'object') return null
+  const fc = value as Partial<PersistedFileChange>
+  if (typeof fc.changeId !== 'string' || !fc.changeId) return null
+  if (typeof fc.path !== 'string' || !fc.path) return null
+  const enc = fc.encoding
+  if (enc !== 'utf8' && enc !== 'utf8bom' && enc !== 'utf16le' && enc !== 'utf16be') return null
+  return {
+    changeId: fc.changeId,
+    path: fc.path,
+    encoding: enc,
+    oldExisted: fc.oldExisted === true,
+    oldDataBase64: typeof fc.oldDataBase64 === 'string' ? fc.oldDataBase64 : '',
+    newContent: typeof fc.newContent === 'string' ? fc.newContent : '',
+    state: fc.state === 'reverted' ? 'reverted' : 'applied'
+  }
+}
+
 function parseFile(raw: string): PersistedSession | null {
   const messages: unknown[] = []
   const history: PersistedChatMessage[] = []
   const tasks: AgentTask[] = []
   const replacementRecords: ContentReplacementRecord[] = []
   const discoveredDeferredTools: string[] = []
+  const fileChanges: PersistedFileChange[] = []
   let meta: { id: string; title: string; createdAt: number; updatedAt: number; workspaceId: string | null; tokenUsage: TokenUsage | null } | null = null
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue
@@ -124,10 +144,13 @@ function parseFile(raw: string): PersistedSession | null {
       if (record) replacementRecords.push(record)
     } else if (obj.t === 'deferred_tool' && typeof obj.m === 'string' && obj.m.trim()) {
       discoveredDeferredTools.push(obj.m.trim())
+    } else if (obj.t === 'filechange') {
+      const fc = parseFileChange(obj.m)
+      if (fc) fileChanges.push(fc)
     }
   }
   if (!meta) return null
-  return { ...meta, messages, history, tasks, replacementRecords, discoveredDeferredTools }
+  return { ...meta, messages, history, tasks, replacementRecords, discoveredDeferredTools, fileChanges }
 }
 
 

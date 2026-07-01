@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
-
+import { type CSSProperties, type ReactNode, type RefObject } from 'react'
 
 export interface LazyRowProps {
   scrollRef: RefObject<HTMLDivElement | null>
@@ -8,55 +7,29 @@ export interface LazyRowProps {
   children: ReactNode
 }
 
-const ROOT_MARGIN = '800px 0px'
 const DEFAULT_ESTIMATED_HEIGHT = 120
 
+/**
+ * 懒渲染行。用 CSS content-visibility 而非「卸载再重挂 + 手动量高度」：
+ * 内容始终保留在 DOM 中，浏览器只跳过视口外子树的布局与绘制，用
+ * contain-intrinsic-size 的 auto 关键字自动记住上一次真实渲染高度作为占位尺寸。
+ *
+ * 旧实现滚出视口即卸载子内容、换成固定 minHeight 占位，滚回再重挂并异步重排
+ * （markdown 高亮、图片、diff 编辑器）。两个后果：
+ *   1) 记下的 minHeight 常与真实内容对不上 → 气泡上方/中间出现空白；
+ *   2) 重挂到异步内容排版完之间有若干空帧 → 上滑时内容「没渲染」、要再滑一下才冒出。
+ * content-visibility 不卸载、不重排，滚回即从既有 DOM 复用，彻底消除这两类空白/跳动。
+ */
 export default function LazyRow({
-  scrollRef,
   forceMounted = false,
   estimatedHeight = DEFAULT_ESTIMATED_HEIGHT,
   children
 }: LazyRowProps): JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  const [visible, setVisible] = useState(true)
-  const heightRef = useRef<number>(estimatedHeight)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const root = scrollRef.current ?? null
-    const io = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0]
-        if (!entry) return
-        if (entry.isIntersecting) {
-          setVisible(true)
-        } else {
-          
-          const h = el.getBoundingClientRect().height
-          if (h > 0) heightRef.current = h
-          setVisible(false)
-        }
-      },
-      { root, rootMargin: ROOT_MARGIN, threshold: 0 }
-    )
-    io.observe(el)
-    return () => io.disconnect()
-  }, [scrollRef])
-
-  
-  useEffect(() => {
-    if (!visible) return
-    const el = ref.current
-    if (!el) return
-    const h = el.getBoundingClientRect().height
-    if (h > 0) heightRef.current = h
-  })
-
-  const mounted = forceMounted || visible
-  return (
-    <div ref={ref} style={mounted ? undefined : { minHeight: heightRef.current }}>
-      {mounted ? children : null}
-    </div>
-  )
+  const style: CSSProperties | undefined = forceMounted
+    ? undefined
+    : ({
+        contentVisibility: 'auto',
+        containIntrinsicSize: `auto ${estimatedHeight}px`
+      } as CSSProperties)
+  return <div style={style}>{children}</div>
 }

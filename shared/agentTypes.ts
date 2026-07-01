@@ -487,6 +487,18 @@ export interface ContentReplacementRecord {
   replacement?: string
 }
 
+// 可持久化的单个文件变更快照。跨重启保留后，撤销/取消撤销才能继续生效。
+// oldData 为写盘前原始字节的 base64；newContent 为 AI 写入的新文本。
+export interface PersistedFileChange {
+  changeId: string
+  path: string
+  encoding: 'utf8' | 'utf8bom' | 'utf16le' | 'utf16be'
+  oldExisted: boolean
+  oldDataBase64: string
+  newContent: string
+  state: 'applied' | 'reverted'
+}
+
 
 export interface RuleSummary {
   name: string
@@ -508,6 +520,7 @@ export interface PersistedSession {
   tasks?: AgentTask[]
   replacementRecords?: ContentReplacementRecord[]
   discoveredDeferredTools?: string[]
+  fileChanges?: PersistedFileChange[]
   tokenUsage?: TokenUsage | null
 }
 
