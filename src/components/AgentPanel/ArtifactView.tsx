@@ -4,6 +4,7 @@ import type { Artifact } from './artifacts'
 import { useRunStore } from '@/stores/runStore'
 import { usePythonStore } from '@/stores/pythonStore'
 import { ARTIFACT_FILE_SCHEME } from '@shared/appConfig'
+import MarkdownView from './MarkdownView'
 
 /** Build an artifact-scheme URL the in-app iframe can load (file:// is blocked). */
 function toArtifactUrl(path: string): string {
@@ -361,11 +362,14 @@ function ImageView({ artifact }: { artifact: Artifact }): JSX.Element {
   )
 }
 
-/** Text-like artifact (markdown/json/csv/...): render raw content. */
+/** Text-like artifact (markdown/json/csv/...): render raw content. Markdown
+ *  files render rich by default with a toggle back to source. */
 function TextView({ artifact }: { artifact: Artifact }): JSX.Element {
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const writeTick = useArtifactWriteSignal(artifact.path)
+  const isMarkdown = artifact.language === 'markdown'
+  const [showSource, setShowSource] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -384,12 +388,28 @@ function TextView({ artifact }: { artifact: Artifact }): JSX.Element {
     <div className="artifact-view text">
       <div className="artifact-view-bar">
         <span className="artifact-view-spacer" aria-hidden />
+        {isMarkdown && (
+          <button
+            type="button"
+            className="artifact-view-btn"
+            title={showSource ? '渲染 Markdown' : '查看源码'}
+            onClick={() => setShowSource((v) => !v)}
+          >
+            {showSource ? '渲染' : '源码'}
+          </button>
+        )}
         <button type="button" className="artifact-view-btn" onClick={() => openExternal(artifact.path)}>
           默认应用打开
         </button>
       </div>
       {content != null ? (
-        <pre className="artifact-view-textbody">{content}</pre>
+        isMarkdown && !showSource ? (
+          <div className="artifact-view-markdown">
+            <MarkdownView text={content} />
+          </div>
+        ) : (
+          <pre className="artifact-view-textbody">{content}</pre>
+        )
       ) : (
         <div className="artifact-view-empty">{error ?? '加载中…'}</div>
       )}

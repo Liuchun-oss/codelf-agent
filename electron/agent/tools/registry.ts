@@ -100,6 +100,7 @@ const CORE_TOOL_NAMES = new Set<string>([
   'codebase_search',
   'write_file',
   'edit_file',
+  'multi_edit',
   'delete_file',
   'run_terminal_cmd',
   'PowerShell',
@@ -433,7 +434,7 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...exitDesktopTakeoverTool, deferred: true, permissionGroup: 'desktop' })
   registry.register(writeFileTool)
   registry.register(editFileTool)
-  registry.register({ ...multiEditTool, deferred: true })
+  registry.register(multiEditTool)
   registry.register(deleteFileTool)
   return registry
 }

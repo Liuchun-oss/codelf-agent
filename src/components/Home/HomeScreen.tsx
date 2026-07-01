@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useUiStore } from '@/stores/uiStore'
 import { useAgentStore } from '@/stores/agentStore'
 import { useVideoQueueStore } from '@/stores/videoQueueStore'
@@ -8,7 +8,6 @@ import { toast } from '@/stores/toastStore'
 import { addRecentWorkspace } from '@/utils/session'
 import ConversationView from '@/components/AgentPanel/ConversationView'
 import ArtifactPanel from '@/components/AgentPanel/ArtifactPanel'
-import { deriveArtifacts } from '@/components/AgentPanel/artifacts'
 import { fileToImageAttachment, appendImage } from '@/components/AgentPanel/imageAttachment'
 import SlashPicker from '@/components/AgentPanel/SlashPicker'
 import SlashRefChips from '@/components/AgentPanel/SlashRefChips'
@@ -71,8 +70,6 @@ export default function HomeScreen(): JSX.Element {
   const setArtifactOpen = useUiStore((s) => s.setHomeArtifactOpen)
   const artifactWidth = useUiStore((s) => s.homeArtifactWidth)
   const setArtifactWidth = useUiStore((s) => s.setHomeArtifactWidth)
-  const browserOpen = useUiStore((s) => s.homeBrowserOpen)
-  const openHomeBrowser = useUiStore((s) => s.openHomeBrowser)
   const pickedWs = useUiStore((s) => s.homePickedWorkspace)
   const setPickedWs = useUiStore((s) => s.setHomePickedWorkspace)
   const [draft, setDraft] = useState('')
@@ -106,22 +103,10 @@ export default function HomeScreen(): JSX.Element {
   // 视频队列里有任务（哪怕只提交还在后台生成）也算可预览产物，否则
   // 只生成视频时右上角不会出现「产物预览」入口。仅统计归属于当前对话的视频任务，
   // 避免历史上其它对话提交过的视频导致无关对话也自动弹出右侧面板。
-  const videoTasks = useVideoQueueStore((s) => s.tasks)
   const loadVideoTasks = useVideoQueueStore((s) => s.load)
-  const dismissedArtifacts = useUiStore((s) => s.dismissedArtifacts)
   useEffect(() => {
     void loadVideoTasks()
   }, [loadVideoTasks])
-  const sessionVideoTaskCount = useMemo(
-    () => videoTasks.filter((t) => t.sessionId === currentSessionId).length,
-    [videoTasks, currentSessionId]
-  )
-  const hasArtifacts = useMemo(
-    () =>
-      deriveArtifacts(messages).some((a) => dismissedArtifacts[a.path] !== a.sig) ||
-      sessionVideoTaskCount > 0,
-    [messages, sessionVideoTaskCount, dismissedArtifacts]
-  )
 
   // 是否存在“有内容”的历史对话（判定口径与左侧 RecentConversations 一致）
   const hasAnyConversation = sessions.some((m) => {
@@ -398,41 +383,26 @@ export default function HomeScreen(): JSX.Element {
                     </svg>
                     {sessionCwd ?? '纯对话'}
                   </span>
-                  {hasArtifacts && !artifactOpen && (
+                  {!artifactOpen && (
                     <button
                       type="button"
                       className="home-artifact-toggle home-artifact-toggle--enter"
-                      title="展开产物预览"
+                      aria-label="打开工作台"
                       onClick={openArtifact}
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
                         <rect x="3" y="4" width="18" height="16" rx="1.5" />
                         <path d="M14 4v16" />
+                        <path d="M6.5 8.5h4M6.5 12h4" strokeLinecap="round" />
                       </svg>
-                      产物预览
                     </button>
                   )}
-                  <button
-                    type="button"
-                    className="home-artifact-toggle"
-                    title="打开内置浏览器"
-                    onClick={() => {
-                      openHomeBrowser()
-                      openArtifact()
-                    }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
-                      <circle cx="12" cy="12" r="9" />
-                      <path d="M3 12h18M12 3c2.6 2.4 4 5.6 4 9s-1.4 6.6-4 9c-2.6-2.4-4-5.6-4-9s1.4-6.6 4-9z" />
-                    </svg>
-                    浏览器
-                  </button>
                 </div>
                 <div className="home-chat-body agent-panel" key={currentSessionId}>
                   <ConversationView cwd={sessionCwd} autoFocus />
                 </div>
               </div>
-              {(hasArtifacts || browserOpen) && artifactOpen && (
+              {artifactOpen && (
                 <div
                   className={`home-artifact-pane${artifactClosing ? ' closing' : ''}`}
                   style={{ flex: `0 0 ${artifactWidth}px`, width: artifactWidth, ['--artifact-w' as string]: `${artifactWidth}px` }}

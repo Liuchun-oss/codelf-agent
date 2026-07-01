@@ -2061,6 +2061,13 @@ body.resizing-x .sidebar-dock {
   min-height: 0;
   display: flex;
 }
+.artifact-panel-body > .xterm-host {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg-elevated);
+  padding: 4px 6px;
+  box-sizing: border-box;
+}
 
 /* 视频队列面板 */
 .video-queue {
@@ -2239,6 +2246,44 @@ body.resizing-x .sidebar-dock {
 .artifact-tab-close:hover {
   opacity: 1;
 }
+.artifact-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.artifact-tab-add:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+.artifact-panel-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 24px 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+.artifact-panel-empty p {
+  margin: 0;
+}
 .artifact-view {
   flex: 1 1 auto;
   min-height: 0;
@@ -2357,6 +2402,13 @@ body.resizing-x .sidebar-dock {
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
+}
+.artifact-view-markdown {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+  color: var(--text);
 }
 .artifact-view-fallback {
   flex: 1 1 auto;
