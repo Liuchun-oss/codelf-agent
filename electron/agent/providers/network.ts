@@ -65,3 +65,18 @@ export function getFetchOptions(): { dispatcher: Dispatcher } | undefined {
 export function resetOutboundDispatcher(): void {
   cached = null
 }
+
+// 瞬断（other side closed / socket hang up 等）后调用：销毁当前 keep-alive 连接池，
+// 强制下一次请求新建 TCP 连接。否则极快的自动重试会从池中复用同一条已被对端关闭的
+// “僵尸 socket”，导致连续重试全部命中坏连接而失败（表现为自动重试没用、手点重试却能接上）。
+export function recycleOutboundDispatcher(): void {
+  const prev = cached?.dispatcher
+  cached = null
+  if (prev) {
+    try {
+      void (prev as unknown as { destroy?: () => Promise<void> }).destroy?.()
+    } catch {
+      /* 销毁失败无妨，置空缓存已能让下次请求重建 */
+    }
+  }
+}

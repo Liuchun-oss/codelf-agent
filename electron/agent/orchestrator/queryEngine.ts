@@ -24,6 +24,7 @@ import {
   getProfileRaw,
   getActiveProfileApiKey
 } from '../providers/profileStore'
+import { recycleOutboundDispatcher } from '../providers/network'
 import { fetchSystemPromptPartsAsync, assembleSystemMessage, fetchDynamicContextBlock, getStaticSystemCore } from '../prompts/assembler'
 import { buildKnowledgeContextBlock } from '../prompts/context/knowledgeContext'
 import { buildRecallInjection } from '../memory/recall'
@@ -1061,7 +1062,7 @@ export class QueryEngine {
         let lastFinishReason: string | undefined
         const roundUsage = createRoundUsageAcc()
 
-        const MAX_STREAM_RETRIES = 3
+        const MAX_STREAM_RETRIES = 5
         let streamRetryCount = 0
         let streamDone = false
 
@@ -1144,7 +1145,11 @@ export class QueryEngine {
                 isTransientNetworkError(retryErr)
               ) {
                 streamRetryCount++
-                const delayMs = Math.min(1000 * streamRetryCount, 3000)
+                // 关键：瞬断多是 keep-alive 连接池里的“僵尸 socket”被对端关闭。
+                // 重试前销毁旧连接池，强制下一次请求新建 TCP 连接，避免反复命中坏连接。
+                recycleOutboundDispatcher()
+                // 首次退避就给足时间让坏连接被淘汰：3s / 5s / 7s（封顶 8s）。
+                const delayMs = Math.min(2000 + 2000 * streamRetryCount, 8000)
                 recordDebugEvent({
                   kind: 'request_error',
                   sessionId: payload.sessionId || 'default',
