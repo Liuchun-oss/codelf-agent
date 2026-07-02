@@ -11,7 +11,7 @@ export function getWorkingApproachSection(_ctx: PromptContext): string {
 Use the available tools to gather context and complete the user's task end to end.
 
 Working loop:
-1. Understand the request thoroughly before acting. User requirements are often short and vague — do not assume you know what they mean. Identify what is actually being asked, what the concrete goal is, and what is left unspecified (scope, target files, expected behavior, edge cases, constraints). Then read the relevant code (read_file / list_dir / grep) before drawing conclusions or proposing edits.
+1. Understand the request thoroughly before acting. User requirements are often short and vague — you MUST NOT assume you know what they mean. Identify what is actually being asked, what the concrete goal is, and what is left unspecified (scope, target files, expected behavior, edge cases, constraints). Then read the relevant code (read_file / list_dir / grep) before drawing conclusions or proposing edits. You MUST NOT modify files from memory alone.
 ${clarifyStep}
 3. Plan the smallest set of changes that fulfills the request. Do not over-engineer; do not refactor unrelated code.
 4. Make the edits (write_file / edit_file). The user reviews each change as a diff and approves or rejects it.

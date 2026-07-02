@@ -12,6 +12,7 @@ function basename(p: string): string {
 }
 
 const MENUS = ['文件', '编辑', '视图', '构建', '终端', '帮助'] as const
+const CHAT_MENU_LABELS = ['对话', '视图', '终端', '帮助'] as const
 
 function MaximizeIcon({ restored }: { restored: boolean }): JSX.Element {
   if (restored) {
@@ -42,9 +43,13 @@ export default function TitleBar(): JSX.Element {
     null
   )
 
-  // IDE 菜单（文件/编辑/视图…）只在工作台视图有意义，非 IDE 模式整排隐藏
+  // IDE 菜单（文件/编辑/视图…）只在工作台视图有意义；对话类视图（home/room）显示对话模式菜单
   const appView = useUiStore((s) => s.appView)
+  const isChatView = appView !== 'workspace'
   const showMenus = appView === 'workspace'
+  const showChatMenus = isChatView
+  const menuLabels = showChatMenus ? CHAT_MENU_LABELS : MENUS
+  const menusVisible = showMenus || showChatMenus
 
   // 全局视图切换：进 IDE 时若尚未打开工作区，自动以当前会话 cwd 打开
   const goIde = async (): Promise<void> => {
@@ -79,13 +84,14 @@ export default function TitleBar(): JSX.Element {
     return window.lc.onWindowMaximized(setMaximized)
   }, [])
 
-  // 切出 IDE 视图时收起可能展开的菜单面板
+  // 切换视图（IDE↔对话）时，两套菜单项数不同，收起面板并复位高亮，避免 activeMenu 越界
   useEffect(() => {
-    if (!showMenus && menuOpen) {
+    if (menuOpen) {
       setMenuHighlight(false)
       setMenuOpen(false)
     }
-  }, [showMenus, menuOpen])
+    setActiveMenu(0)
+  }, [appView])
 
   const openMenu = (index: number): void => {
     setActiveMenu(index)
@@ -137,11 +143,11 @@ export default function TitleBar(): JSX.Element {
             <img className="titlebar-mark" src={appIcon} alt="" aria-hidden />
           </div>
 
-          {!showMenus && <span className="titlebar-app-name">{APP_NAME}</span>}
+          {!menusVisible && <span className="titlebar-app-name">{APP_NAME}</span>}
 
-          {showMenus && (
+          {menusVisible && (
             <nav className="titlebar-menus" aria-label="应用菜单">
-              {MENUS.map((label, index) => (
+              {menuLabels.map((label, index) => (
                 <button
                   key={label}
                   ref={(el) => {
@@ -226,10 +232,11 @@ export default function TitleBar(): JSX.Element {
         </div>
       </header>
 
-      {showMenus && menuOpen && (
+      {menusVisible && menuOpen && (
         <AppMenubarPanel
           activeIndex={activeMenu}
           buttonRefs={menuBtnRefs}
+          chat={showChatMenus}
           requestCloseRef={requestMenuCloseRef}
           onClosing={() => setMenuHighlight(false)}
           onClose={() => setMenuOpen(false)}

@@ -8,7 +8,7 @@ import ArtifactView from './ArtifactView'
 import VideoQueueView from './VideoQueueView'
 import BrowserView from '@/components/common/BrowserView'
 import XtermView from '@/components/Terminal/XtermView'
-import PopoverMenu, { type MenuItem } from '@/components/common/PopoverMenu'
+import PopoverMenu, { type PopoverMenuItem } from '@/components/common/PopoverMenu'
 
 const KIND_LABEL: Record<ArtifactKind, string> = {
   web: '网页',
@@ -121,7 +121,7 @@ export default function ArtifactPanel({ onClose }: Props): JSX.Element | null {
     if (id) setActiveTab(terminalPath(id))
   }
 
-  const addMenuItems: MenuItem[] = [
+  const addMenuItems: PopoverMenuItem[] = [
     { label: '打开浏览器', onClick: openBrowserTab },
     { label: '打开终端', onClick: () => void openTerminalTab() }
   ]

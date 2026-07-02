@@ -13,6 +13,14 @@ export function getRoomSeatSection(ctx: PromptContext): string | null {
   return room.isHost ? renderHostSection(room) : renderSeatSection(room)
 }
 
+// 仅「群协作上下文」段（成员名单 + 协作协议 + 发言纪律），供「绕过内置提示词」模式复用：
+// 该模式下 system 只保留人设 + 本段群协作说明，不注入其它内置身份/工作方式段。
+export function getRoomCollabSection(ctx: PromptContext): string | null {
+  const room = ctx.roomContext
+  if (!room) return null
+  return renderGroupContext(room, room.isHost)
+}
+
 // ① + ② 工人岗位：身份段 + 群上下文段。
 function renderSeatSection(room: RoomContext): string {
   const { seat, roomTitle } = room

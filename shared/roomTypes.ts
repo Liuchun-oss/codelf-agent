@@ -26,6 +26,12 @@ export interface Seat {
   avatar?: string
   // 是否主 Agent（群主）。
   isHost?: boolean
+  // 仅主管有效：只负责调度、不亲自干活。开启后工具层强制禁掉写文件/改代码/跑命令等「动手」工具，
+  // 只保留调度（mention_seat 等）+ 只读排查 + 记笔记。默认视为开启（undefined = 开启）。
+  dispatchOnly?: boolean
+  // 是否禁用 Codelf 内置系统提示词：开启后该岗位的 system prompt 只用下方人设（personaPrompt），
+  // 不注入内置的身份/工作方式/群协作等段落。默认 false（用内置提示词）。给需要完全自定义人格的岗位用。
+  rawSystemPrompt?: boolean
   // 绑定的模型 profile（复用现有 provider profile）。
   modelProfileId?: string
   // 工作区根：userData/codelf/rooms/<roomId>/seats/<id>。null = 纯对话岗位（不碰文件）。

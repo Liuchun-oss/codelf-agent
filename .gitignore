@@ -47,3 +47,6 @@ scripts/weixin-probe/.probe-state.json
 /scripts/weixin-probe/package.json
 /scripts/weixin-probe
 /docs
+/scripts
+/ai-request-dump.txt
+/ai-request-dump.zh.md

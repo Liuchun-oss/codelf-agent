@@ -3,6 +3,10 @@ import { runEditorAction, getEditorInstance } from '@/components/Editor/editorBr
 import { useDialogStore } from '@/stores/dialogStore'
 import { useBuildStore } from '@/stores/buildStore'
 import { useEditorStore } from '@/stores/editorStore'
+import { useUiStore } from '@/stores/uiStore'
+import { useAgentStore } from '@/stores/agentStore'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { useTerminalStore } from '@/stores/terminalStore'
 import { runBuildPlan } from '@/components/Editor/buildSystem'
 import { runActiveFile } from '@/components/Editor/runFile'
 import { isRunnable, BROWSER_LANGUAGES } from '@/components/Editor/runners'
@@ -43,7 +47,101 @@ async function showAbout(): Promise<void> {
   })
 }
 
+function basename(p: string): string {
+  const parts = p.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? p
+}
+
+/** 对话模式下切到 IDE 工作台（尽力用当前会话 / 已选工作区打开）后执行回调 */
+async function gotoIde(then?: () => void): Promise<void> {
+  const ws = useWorkspaceStore.getState()
+  const pickedWs = useUiStore.getState().homePickedWorkspace
+  if (pickedWs) {
+    if (ws.workspace?.path !== pickedWs.path) await ws.openWorkspacePath(pickedWs)
+  } else if (!ws.workspace) {
+    if (ws.lastWorkspace) {
+      await ws.activateWorkspace()
+    } else {
+      const ag = useAgentStore.getState()
+      const cwd = ag.sessions.find((m) => m.id === ag.currentSessionId)?.cwd ?? null
+      if (cwd) await ws.openWorkspacePath({ path: cwd, name: basename(cwd) })
+    }
+  }
+  useUiStore.getState().setAppView('workspace')
+  then?.()
+}
+
+/** 对话模式：新建终端需要切到 IDE 工作台（终端 UI 只挂载在工作台里）后打开 */
+async function newTerminalFromChat(): Promise<void> {
+  await gotoIde()
+  const ws = useWorkspaceStore.getState()
+  await useTerminalStore.getState().createSession(ws.workspace?.path)
+}
+
 export const RUN_MENU_INDEX = 3
+
+/** 对话模式顶部菜单：对话 / 视图 / 终端 / 帮助 */
+export const CHAT_MENUS: PopoverMenuItem[][] = [
+  [
+    {
+      label: '新建对话',
+      onClick: () => {
+        const ui = useUiStore.getState()
+        ui.setAppView('home')
+        ui.setHomeChatOpen(false)
+      }
+    },
+    {
+      label: '对话首页',
+      onClick: () => useUiStore.getState().setAppView('home')
+    },
+    { separator: true },
+    {
+      label: '群聊',
+      onClick: () => useUiStore.getState().setAppView('room')
+    },
+    {
+      label: '打开 IDE 工作台',
+      onClick: () => void gotoIde()
+    },
+    { separator: true },
+    { label: '退出', onClick: () => window.lc.appQuit() }
+  ],
+  [
+    {
+      label: '切换会话侧栏',
+      onClick: () => {
+        const ui = useUiStore.getState()
+        ui.setHomeSidebarOpen(!ui.homeSidebarOpen)
+      }
+    },
+    {
+      label: '产物预览',
+      onClick: () => {
+        const ui = useUiStore.getState()
+        ui.setHomeArtifactOpen(!ui.homeArtifactOpen)
+      }
+    },
+    {
+      label: '内置浏览器',
+      onClick: () => useUiStore.getState().openHomeBrowser()
+    },
+    { separator: true },
+    { label: '设置', onClick: () => useUiStore.getState().setShowSettings(true) },
+    { separator: true },
+    { label: '重新加载', onClick: () => window.lc.appReload() },
+    { label: '实际大小', onClick: () => void window.lc.appResetZoom() },
+    { label: '放大', onClick: () => void window.lc.appZoomIn() },
+    { label: '缩小', onClick: () => void window.lc.appZoomOut() },
+    { label: '全屏', onClick: () => void window.lc.appToggleFullscreen() }
+  ],
+  [
+    { label: '新建终端', onClick: () => void newTerminalFromChat() },
+    { label: '在 IDE 中打开终端', onClick: () => void gotoIde(() => void useTerminalStore.getState().toggle()) }
+  ],
+  [{ label: `关于 ${APP_NAME}`, onClick: () => void showAbout() }]
+]
+
 
 export const APP_MENUS: PopoverMenuItem[][] = [
   [

@@ -23,6 +23,10 @@ export default function SeatEditorDialog({
   const [model, setModel] = useState(seat?.modelProfileId ?? '')
   const [readOnly, setReadOnly] = useState(!!seat?.readOnly)
   const [isolateWorktree, setIsolateWorktree] = useState(!!seat?.isolateWorktree)
+  // 主管「只负责调度」：默认开启（undefined 视为 true），仅显式 false 才放开。
+  const [dispatchOnly, setDispatchOnly] = useState(seat?.dispatchOnly !== false)
+  // 是否禁用内置系统提示词（只用下方人设）。默认关闭。
+  const [rawSystemPrompt, setRawSystemPrompt] = useState(!!seat?.rawSystemPrompt)
   const [profiles, setProfiles] = useState<ProviderProfileSummary[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -44,7 +48,9 @@ export default function SeatEditorDialog({
           personaPrompt: persona.trim(),
           readOnly,
           isolateWorktree,
-          modelProfileId: model || undefined
+          rawSystemPrompt,
+          modelProfileId: model || undefined,
+          ...(seat.isHost ? { dispatchOnly } : {})
         })
       } else {
         const draft: SeatDraft = {
@@ -53,6 +59,7 @@ export default function SeatEditorDialog({
           personaPrompt: persona.trim(),
           readOnly,
           isolateWorktree,
+          rawSystemPrompt,
           enabled: true,
           ...(model ? { modelProfileId: model } : {})
         }
@@ -88,6 +95,10 @@ export default function SeatEditorDialog({
             onChange={(e) => setPersona(e.target.value)}
             placeholder="岗位说明书 / 人设（可选）"
           />
+          <label className="room-seat-readonly" title="开启后该岗位不使用 Codelf 内置系统提示词（通用身份/工作方式等），system prompt 只保留上方人设 + 群协作说明（成员名单/协作协议/发言纪律）。适合需要完全自定义人格、但仍要遵守群协作规则的岗位。">
+            <input type="checkbox" checked={rawSystemPrompt} onChange={(e) => setRawSystemPrompt(e.target.checked)} />
+            不使用内置提示词，仅遵循上方人设（保留群协作说明）
+          </label>
           <div className="room-seat-card-row">
             <RoomSelect
               className="room-seat-model-select"
@@ -104,6 +115,12 @@ export default function SeatEditorDialog({
               防冲突隔离（高级）
             </label>
           </div>
+          {seat?.isHost && (
+            <label className="room-seat-readonly" title="开启后主管只负责理解需求、分派任务、验收播报，工具层会禁掉它写文件/改代码/跑命令，杜绝主管自己动手。关掉则允许主管也能亲自干活。">
+              <input type="checkbox" checked={dispatchOnly} onChange={(e) => setDispatchOnly(e.target.checked)} />
+              只负责调度，不亲自干活（推荐）
+            </label>
+          )}
           {error && <div className="room-dialog-error">{error}</div>}
         </div>
         <div className="room-dialog-footer">

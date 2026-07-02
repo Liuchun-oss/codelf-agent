@@ -86,6 +86,29 @@ const WORKER_DENIED_GLOBAL_TOOLS = new Set(
   ].map((n) => n.toLowerCase())
 )
 
+// 「只负责调度」的主管额外禁用的「动手」工具集（小写）：写文件/改代码/删文件/跑命令/终端任务。
+// 主管只应理解需求、用 mention_seat 派活、验收播报，不该自己写代码改文件。开启 dispatchOnly（默认）时生效。
+// 保留：只读排查（read_file/list_dir/grep/codebase_search/get_diagnostics 等）、记笔记（append_note）、调度工具。
+const HOST_DISPATCH_ONLY_DENIED_TOOLS = new Set(
+  [
+    'write_file',
+    'edit_file',
+    'multi_edit',
+    'delete_file',
+    'run_terminal_cmd',
+    'PowerShell',
+    'StartTerminalTask',
+    'ReadTerminalTask',
+    'StopTerminalTask',
+    'WriteTerminalTask'
+  ].map((n) => n.toLowerCase())
+)
+
+// 主管是否「只负责调度」：默认开启（undefined = 开启），仅显式设为 false 才放开让主管能动手。
+function isDispatchOnlyHost(seat: Seat): boolean {
+  return !!seat.isHost && seat.dispatchOnly !== false
+}
+
 // 一条待机主（微信）回应的交互项（host-merge：串行抛给微信，§8.4）。
 interface PendingRelay {
   seatId: string
@@ -129,6 +152,9 @@ interface SeatRuntime {
   // 私密回合（被 private_message 私密派活叫起）：本回合的最终发言也写成私密，
   // 仅 visibility 白名单内可见（= [主管, 本岗位]），不进公屏。下个回合开始时清空。
   privateReplyVisibility?: string[]
+  // 私密回合的来源：'host'=主管私信派活；'user'=用户直接私聊该岗位。
+  // 决定本回合提示词口吻（对主管私下汇报 vs 直接回复用户），避免用户私聊时工人误把用户当主管。
+  privateReplySource?: 'host' | 'user'
 }
 
 interface RoomRuntime {
@@ -232,6 +258,9 @@ class RoomOrchestrator {
       // plugin/MCP/模型/媒体配置写 userData、定时任务进全局队列——这些都会越过岗位隔离影响全员。
       // 这类操作归主管/用户级，工人专心干活（决策：全部收口）。
       for (const n of WORKER_DENIED_GLOBAL_TOOLS) denied.add(n)
+    } else if (isDispatchOnlyHost(seat)) {
+      // 「只负责调度」的主管：工具层强制禁掉动手类工具，从根上杜绝主管自己写代码/改文件/跑命令。
+      for (const n of HOST_DISPATCH_ONLY_DENIED_TOOLS) denied.add(n)
     }
     // 发现工具（SearchExtraTools/ExecuteExtraTool）的闭包必须绑定本岗位 registry，
     // 否则 deferred/MCP 工具的发现与执行会落到源 registry 上，绕开本岗位的 readOnly/denied
@@ -372,20 +401,18 @@ class RoomOrchestrator {
     return { ...eff, workspaceRoot: res.worktreePath }
   }
 
-  // §6.6 权限自动裁决（自由放行策略）：岗位可读写工作区以外的任意路径（含用户现有项目），
-  // 只保留两道硬红线 + 危险命令把关：
-  // - 写类（带 path）：命中密钥文件 / 系统目录 → deny（红线，谁都不能碰）；否则 allow。
-  // - 终端命令（带 command）：危险命令 → ask（交用户拍板）；引用密钥/系统路径 → deny；否则 allow。
+  // §6.6 权限自动裁决（全放行策略）：不再弹授权横幅打断用户——危险命令也自动放行。
+  // 仅保留一道静默红线：密钥文件 / 系统目录 → deny（谁都不能碰，安全网，不弹窗）。
+  // - 写类（带 path）：命中密钥文件 / 系统目录 → deny；否则 allow。
+  // - 终端命令（带 command）：引用密钥/系统路径 → deny；否则一律 allow（含 rm -rf、git push 等）。
   // - 相对路径按岗位工作区解析后再判红线（与 resolveAnyPath 同口径）。
-  // - 既无 path 也无 command（如 append_note/todo_write 等纯应用内工具）：不碰文件、不跑命令，
-  //   无任何外部副作用 → allow。这类工具不应打断用户（修复：旧版回退 ask 导致每条笔记都弹审批）。
+  // - 既无 path 也无 command（如 append_note/todo_write 等纯应用内工具）：无副作用 → allow。
   private autoResolvePermission(seat: Seat, ev: Extract<AgentEvent, { type: 'permission_request' }>): 'allow' | 'deny' | 'ask' {
     const d = ev.details
     if (d?.path) {
       return this.crossesRedline(seat, d.path) ? 'deny' : 'allow'
     }
     if (d?.command) {
-      if (isDangerousCommand(d.command)) return 'ask'
       if (commandReferencesSensitivePath(d.command)) return 'deny'
       const paths = [...absolutePathsIn(d.command), ...relativePathsIn(d.command)]
       if (paths.some((p) => this.crossesRedline(seat, p))) return 'deny'
@@ -667,6 +694,7 @@ class RoomOrchestrator {
     }
     const sr = this.getSeatRuntime(rt, target)
     sr.privateReplyVisibility = m.private ? [hostId, target.id] : undefined
+    sr.privateReplySource = m.private ? 'host' : undefined
     rt.dispatchCount++
     // 目标已在干活（或并发已满）→ 排队补位；否则立即后台起跑。
     if (rt.activeWorkers.has(target.id) || rt.activeWorkers.size >= MAX_PARALLEL_WORKERS) {
@@ -764,7 +792,7 @@ class RoomOrchestrator {
     // 回合结束只把游标推进到这个快照点（markSeenUpTo），不会把没读过的并发消息误标已读。
     const maxSeenSeq = incoming.length ? incoming[incoming.length - 1].seq : 0
     const nameOf = (id: string): string => rt.room.seats.find((s) => s.id === id)?.name ?? id
-    const prompt = renderGroupTranscript(incoming, !!seat.isHost, !!sr.privateReplyVisibility, nameOf, rt.parallelMode)
+    const prompt = renderGroupTranscript(incoming, !!seat.isHost, sr.privateReplyVisibility ? (sr.privateReplySource ?? 'host') : false, nameOf, rt.parallelMode)
 
     // 终端/命令工具的运行根：岗位 workspaceRoot 为空（主管/纯对话岗位 = null）时，
     // 回退到用户家目录，否则 PowerShell/terminal 等工具会一律「未打开工作区」直接失败，
@@ -794,6 +822,7 @@ class RoomOrchestrator {
     // 私密回合：本回合的最终发言也写成私密（仅主管+本岗位可见），不进公屏。读取后清空（一次性）。
     const replyVisibility = sr.privateReplyVisibility
     sr.privateReplyVisibility = undefined
+    sr.privateReplySource = undefined
     // 空发言不写 transcript（§11.6）；非空才进事实源。
     const trimmed = finalText.trim()
     if (trimmed) {
@@ -1018,6 +1047,7 @@ class RoomOrchestrator {
       // 用 getSeatRuntime 确保运行态存在（目标可能从未发言、尚无 runtime）。
       const sr = this.getSeatRuntime(rt, target)
       sr.privateReplyVisibility = m.private ? [hostId, target.id] : undefined
+      sr.privateReplySource = m.private ? 'host' : undefined
       return target
     }
     return null
@@ -1347,7 +1377,8 @@ class RoomOrchestrator {
       const sr = rt.seats.get(seatId)
       const affectsEngine =
         'readOnly' in patch || 'allowedTools' in patch || 'deniedTools' in patch ||
-        'personaPrompt' in patch || 'isolateWorktree' in patch || 'modelProfileId' in patch
+        'personaPrompt' in patch || 'isolateWorktree' in patch || 'modelProfileId' in patch ||
+        'dispatchOnly' in patch || 'rawSystemPrompt' in patch
       if (sr && affectsEngine && sr.state !== 'working' && sr.state !== 'waiting-user') {
         try { sr.engine.cancel() } catch { /* ignore */ }
         rt.seats.delete(seatId) // 下次发言时按新配置懒重建
@@ -1368,7 +1399,9 @@ class RoomOrchestrator {
     if (rt.parallelMode) {
       rt.stopping = false
       if (!silent) this.appendUserUtterance(roomId, text, seatId, [seatId])
-      this.getSeatRuntime(rt, seat).privateReplyVisibility = [seatId]
+      const psr = this.getSeatRuntime(rt, seat)
+      psr.privateReplyVisibility = [seatId]
+      psr.privateReplySource = 'user'
       // 该工人正忙：消息已落 transcript，它当前回合结束后下次被调度即可读到；这里补一个等位补跑。
       if (rt.activeWorkers.has(seat.id) || rt.activeWorkers.size >= MAX_PARALLEL_WORKERS) {
         if (!rt.workerWaitQueue.includes(seat.id)) rt.workerWaitQueue.push(seat.id)
@@ -1383,7 +1416,9 @@ class RoomOrchestrator {
     if (rt.running) { rt.pendingUserInputs.push({ text, mention: seatId }); return }
     // 用户私聊：消息只对该岗位可见（不进公屏、其他岗位读不到），且该岗位的回复也设为私密。
     this.appendUserUtterance(roomId, text, seatId, [seatId])
-    this.getSeatRuntime(rt, seat).privateReplyVisibility = [seatId]
+    const psr = this.getSeatRuntime(rt, seat)
+    psr.privateReplyVisibility = [seatId]
+    psr.privateReplySource = 'user'
     rt.running = true
     rt.abort = new AbortController()
     this.broadcastRunning(roomId, true)
@@ -1472,8 +1507,10 @@ function parsePermissionReply(text: string): 'allow_once' | 'deny' | null {
   return null
 }
 
-// §6.6 危险命令检测：删除/格式化/权限/管道执行远端脚本等高破坏操作 → 交用户把关。
-function isDangerousCommand(command: string): boolean {
+// §6.6 危险命令检测：删除/格式化/权限/管道执行远端脚本等高破坏操作。
+// 注意：当前策略为「全放行」，autoResolvePermission 已不再调用本函数（不再弹授权横幅）。
+// 导出保留定义，以便日后需要恢复「危险命令交用户拍板」时直接接回。
+export function isDangerousCommand(command: string): boolean {
   const c = command.toLowerCase()
   const patterns = [
     /\brm\s+(-[a-z]*\s+)*(-rf|-fr|-r\b|-f\b)/, // rm -rf 等
@@ -1550,7 +1587,7 @@ function safeHomeDir(): string {
 function renderGroupTranscript(
   incoming: Array<{ from: string; to?: string; text: string; visibility?: string[] }>,
   isHost = false,
-  privateReply = false,
+  privateReply: false | 'host' | 'user' = false,
   nameOf: (id: string) => string = (id) => id,
   parallel = false
 ): string {
@@ -1561,10 +1598,14 @@ function renderGroupTranscript(
         ? '上面有岗位完工交付（标注「✅ 完工交付」）。请：① 验收 ta 的成果，必要时打开产物核对质量；② 用人话主动向用户播报这件事完成了、结果如何；③ 再决定下一步（继续派活/等其他人/收尾）。同时若有用户的新消息，一并回应。不要自己动手写代码/改文件。'
         : '请先理解清楚用户的真实需求，再用 mention_seat 把任务分派给最合适的岗位（可一次并行派给多个）；不要自己动手写代码/改文件。若需求模糊，先提问澄清。派完活若无其他事，直接结束发言即可。')
     : '请先理解清楚用户的真实需求，再用 mention_seat 把任务分派给最合适的岗位；不要自己动手写代码/改文件。若需求模糊，先提问澄清。'
-  // 私密回合：被主管私信叫起，本轮发言只回给主管（其他岗位看不到）→ 可放心私下汇报，不会泄露。
-  const workerTail = privateReply
-    ? '你是被主管私信单独叫起的：本轮发言只有主管和你能看到，其他岗位看不到。请直接、私下地把结果/选择回复给主管，不必担心泄露给其他人。'
-    : '请基于以上内容，完成属于你职责范围内的事，并在群里简洁汇报结果。'
+  // 私密回合分两种来源：
+  // - 'user'：用户直接私聊该岗位，本轮只回给用户（其他岗位/主管不介入），口吻是直接回复用户本人。
+  // - 'host'：被主管私信单独叫起，本轮只回给主管，可放心私下汇报。
+  const workerTail = privateReply === 'user'
+    ? '这是用户私下直接找你单聊：本轮发言只有你和用户能看到，其他岗位和主管都看不到。请以「你自己这个岗位」的身份，直接、清楚地回答用户本人——用户就是发起私聊的人，不是主管，别把 ta 当主管，也别说「汇报给主管」之类的话。'
+    : privateReply === 'host'
+      ? '你是被主管私信单独叫起的：本轮发言只有主管和你能看到，其他岗位看不到。请直接、私下地把结果/选择回复给主管，不必担心泄露给其他人。'
+      : '请基于以上内容，完成属于你职责范围内的事，并在群里简洁汇报结果。'
   const tail = isHost ? hostTail : workerTail
   if (incoming.length === 0) {
     return isHost

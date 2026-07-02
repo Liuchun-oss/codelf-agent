@@ -18,6 +18,8 @@ export default function RoomPanel(): JSX.Element {
   const [showKpi, setShowKpi] = useState(false)
   const [showTask, setShowTask] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
+  // 消息视图：'public'=公屏（只看公开发言）；'all'=全部（上帝视角，含所有私聊/私信/私语并标注可见范围）。
+  const [msgView, setMsgView] = useState<'public' | 'all'>('public')
   // 成员栏宽度（可左右拖拽调整，持久化到 localStorage）。
   const [memberWidth, setMemberWidth] = useState<number>(() => {
     const saved = Number(localStorage.getItem('room.memberWidth'))
@@ -117,7 +119,21 @@ export default function RoomPanel(): JSX.Element {
           <>
             <main className="room-main">
               <PendingBanner prompts={pend} room={room} />
-              <RoomMessageList messages={msgs} roomId={currentRoomId ?? undefined} />
+              <div className="room-view-switch">
+                <button
+                  type="button"
+                  className={`room-view-tab${msgView === 'public' ? ' active' : ''}`}
+                  onClick={() => setMsgView('public')}
+                  title="只看公屏上的公开发言"
+                >公屏</button>
+                <button
+                  type="button"
+                  className={`room-view-tab${msgView === 'all' ? ' active' : ''}`}
+                  onClick={() => setMsgView('all')}
+                  title="上帝视角：按时间线显示全部消息，含私聊/私信/队友私语，并标注每条的可见范围"
+                >全部</button>
+              </div>
+              <RoomMessageList messages={msgs} roomId={currentRoomId ?? undefined} room={room} mode={msgView} />
               <RoomComposer
                 room={room}
                 busy={busy}

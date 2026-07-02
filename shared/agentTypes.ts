@@ -515,6 +515,7 @@ export interface PersistedSession {
   updatedAt: number
   
   workspaceId?: string | null
+  archived?: boolean
   messages: unknown[]
   history: PersistedChatMessage[]
   tasks?: AgentTask[]

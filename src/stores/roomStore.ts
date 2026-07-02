@@ -13,6 +13,8 @@ export interface ToolActivity {
   name: string
   status: 'running' | 'done' | 'error'
   summary: string
+  // 完整入参（格式化后的字符串），用于鼠标悬浮在工具行上时展示。
+  argsText?: string
 }
 
 // 交互类挂起项（提问/审批，§7.4 第二类事件）。
@@ -114,6 +116,17 @@ function summarizeArgs(args: Record<string, unknown> | undefined): string {
   return ''
 }
 
+// 完整入参格式化（用于工具行的悬浮提示 title）。截断到合理长度，避免超长参数撑爆 tooltip。
+function formatArgs(args: Record<string, unknown> | undefined): string {
+  if (!args || Object.keys(args).length === 0) return ''
+  try {
+    const text = JSON.stringify(args, null, 2)
+    return text.length > 2000 ? text.slice(0, 2000) + '\n… (已截断)' : text
+  } catch {
+    return ''
+  }
+}
+
 // 把一个岗位的 AgentEvent 折叠进它的「当前回合气泡」。无气泡则新建。
 // visibility：私密回合的可见性白名单，新建气泡时打上，使其只进私聊框、不进公屏。
 // 返回更新后的消息数组。
@@ -146,7 +159,7 @@ function foldSeatEvent(msgs: RoomMessageView[], seatId: string, seatName: string
     }
     case 'tool_call_start': {
       const { list, i } = ensure()
-      const act: ToolActivity = { callId: ev.callId, name: ev.name, status: 'running', summary: summarizeArgs(ev.args) }
+      const act: ToolActivity = { callId: ev.callId, name: ev.name, status: 'running', summary: summarizeArgs(ev.args), argsText: formatArgs(ev.args) }
       return patch(i, list, { activities: [...list[i].activities, act] })
     }
     case 'tool_call_result': {

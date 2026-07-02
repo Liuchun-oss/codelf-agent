@@ -13,6 +13,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { useUiStore } from '@/stores/uiStore'
 import { toast } from '@/stores/toastStore'
 import { basename, getSep } from '@/utils/path'
+import { ARTIFACT_FILE_SCHEME } from '@shared/appConfig'
 import { useTypewriterText } from './useTypewriterText'
 import BrowserPreviewImage, { parseBrowserPreviewId } from './BrowserPreviewImage'
 import AudioPlayer from './AudioPlayer'
@@ -289,12 +290,39 @@ function TableBlock({ children }: { children: ReactNode }): JSX.Element {
   )
 }
 
+// 把本地文件路径 / file:// URL 转成内置的 codelf-artifact:// 协议，使 <img>/<video>/<audio>
+// 能加载本地文件（Electron 渲染进程默认禁止 file://）。已是 http(s)/data:/blob: 或自定义协议
+// 的地址原样返回。用于工人产出的截图/生成图片以本地绝对路径内联显示。
+const WEB_SCHEME_RE = /^(https?:|data:|blob:|[a-z][a-z0-9+.-]*-artifact:|[a-z][a-z0-9+.-]*-preview:)/i
+
+function resolveMediaSrc(src: string): string {
+  const s = src.trim()
+  if (!s) return s
+  if (WEB_SCHEME_RE.test(s)) return s
+  let p = s
+  if (/^file:\/\//i.test(s)) {
+    try {
+      p = decodeURIComponent(new URL(s).pathname)
+      // Windows: "/D:/a/b.png" → "D:/a/b.png"
+      if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1)
+    } catch {
+      return s
+    }
+  }
+  // 仅对看起来像本地绝对路径的地址走 artifact 协议（Windows 盘符 / POSIX 绝对路径）。
+  const isAbsolute = /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('/') || p.startsWith('\\')
+  if (!isAbsolute) return s
+  const normalized = p.replace(/\\/g, '/')
+  const withLeadingSlash = normalized.startsWith('/') ? normalized : `/${normalized}`
+  return `${ARTIFACT_FILE_SCHEME}://local${encodeURI(withLeadingSlash)}`
+}
+
 // 普通 markdown 图片：加载失败时自动隐藏，避免显示损坏图标。
 // （模型有时会在正文里重复嵌入一张它记不全 URL 的图，导致坏图标。）
 function MarkdownImage({ src, alt, ...rest }: { src?: string; alt?: string }): JSX.Element | null {
   const [failed, setFailed] = useState(false)
   if (!src || failed) return null
-  return <img className="cm-md-img" src={src} alt={alt ?? ''} loading="lazy" onError={() => setFailed(true)} {...rest} />
+  return <img className="cm-md-img" src={resolveMediaSrc(src)} alt={alt ?? ''} loading="lazy" onError={() => setFailed(true)} {...rest} />
 }
 
 // 生成的视频以 markdown 图片语法承载（![video](url)）。通过 alt=video 或视频扩展名识别，
@@ -312,7 +340,7 @@ function MarkdownVideo({ src }: { src: string }): JSX.Element | null {
   return (
     <video
       className="cm-md-video"
-      src={src}
+      src={resolveMediaSrc(src)}
       controls
       playsInline
       preload="metadata"
@@ -331,7 +359,7 @@ function isAudioSource(src: string, alt: string): boolean {
 }
 
 function MarkdownAudio({ src }: { src: string }): JSX.Element | null {
-  return <AudioPlayer src={src} className="cm-md-audio" />
+  return <AudioPlayer src={resolveMediaSrc(src)} className="cm-md-audio" />
 }
 
 // 识别 inline code 是否像一个文件路径（保守判断，避免把普通代码片段当文件）。

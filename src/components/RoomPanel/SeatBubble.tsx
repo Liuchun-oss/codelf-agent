@@ -15,7 +15,7 @@ function formatTime(ts: number): string {
   }
 }
 
-export default function SeatBubble({ msg }: { msg: RoomMessageView }): JSX.Element {
+export default function SeatBubble({ msg, visibilityLabel }: { msg: RoomMessageView; visibilityLabel?: string }): JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const isUser = msg.from === 'user'
   const isSystem = msg.from === 'system'
@@ -40,7 +40,7 @@ export default function SeatBubble({ msg }: { msg: RoomMessageView }): JSX.Eleme
         {!isUser && <div className="room-msg-name">{msg.seatName}</div>}
         <div className="room-msg-bubble">
           {msg.visibility && msg.visibility.length > 0 && (
-            <div className="room-msg-private" title="私信：仅主管与该岗位可见，其他岗位看不到">🔒 私信</div>
+            <div className="room-msg-private" title="私密消息：仅特定成员可见，不在公屏显示">{visibilityLabel ?? '🔒 私信'}</div>
           )}
           {hasProcess && (
             <div className="room-msg-process">
@@ -51,7 +51,11 @@ export default function SeatBubble({ msg }: { msg: RoomMessageView }): JSX.Eleme
                 {msg.thinking && <div className="room-process-thinking">{msg.thinking}</div>}
                 <ul className="room-process-acts">
                   {msg.activities.map((a) => (
-                    <li key={a.callId} className={`room-act room-act--${a.status}`}>
+                    <li
+                      key={a.callId}
+                      className={`room-act room-act--${a.status}`}
+                      title={a.argsText ? `${a.name}\n\n${a.argsText}` : a.name}
+                    >
                       <span className="room-act-name">{a.name}</span>
                       {a.summary && <span className="room-act-sum">{a.summary}</span>}
                     </li>

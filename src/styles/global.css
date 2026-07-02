@@ -9010,13 +9010,13 @@ kbd {
   }
   to {
     opacity: 1;
-    max-width: 240px;
+    max-width: 300px;
   }
 }
 @keyframes home-recent-actions-out {
   from {
     opacity: 1;
-    max-width: 240px;
+    max-width: 300px;
   }
   to {
     opacity: 0;
@@ -9231,6 +9231,50 @@ body.resizing-x .home-chat-sidebar {
   padding-bottom: 0;
 }
 
+.home-recent-search {
+  padding: 0 2px 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.home-recent-search input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-bright);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+}
+.home-recent-search input:focus {
+  border-color: var(--accent, var(--border-strong, var(--border)));
+}
+.home-recent-search input::placeholder {
+  color: var(--text-dim);
+}
+.home-recent-archived-toggle {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 5px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.home-recent-archived-toggle:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+.home-recent-archived-toggle.active {
+  color: var(--text-bright);
+  border-color: var(--accent, var(--border-strong, var(--border)));
+}
+
 .home-recent-item--sidebar {
   padding: 7px 9px;
   border: none;
@@ -9250,6 +9294,76 @@ body.resizing-x .home-chat-sidebar {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 工作区折叠分组 */
+.home-recent-ws-group {
+  margin-bottom: 2px;
+}
+.home-recent-ws-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+}
+.home-recent-ws-header:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+.home-recent-ws-caret {
+  flex: none;
+  transition: transform var(--tree-expand-duration, 180ms) var(--panel-slide-ease, ease);
+}
+.home-recent-ws-caret.expanded {
+  transform: rotate(90deg);
+}
+.home-recent-ws-icon {
+  flex: none;
+  opacity: 0.8;
+}
+.home-recent-ws-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
+.home-recent-ws-count {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--bg-overlay);
+  border-radius: 8px;
+  padding: 1px 6px;
+  min-width: 16px;
+  text-align: center;
+}
+.home-recent-ws-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 10px;
+}
+
+/* 操作菜单展开时隐藏标题/目录，把整行让给按钮，避免窄侧栏里重叠 */
+.home-recent-item:has(.home-recent-actions) .home-recent-main {
+  display: none;
+}
+.home-recent-actions {
+  margin-left: auto;
+}
+.home-recent-item--sidebar .home-recent-action-btn {
+  font-size: 11px;
+  padding: 2px 5px;
 }
 .home-recent-item--active,
 .home-recent-item--active:hover {

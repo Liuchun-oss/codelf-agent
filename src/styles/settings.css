@@ -336,6 +336,22 @@
   align-items: center;
   gap: 6px 16px;
 }
+/* 开关行统一右对齐：短标题行用网格会把开关停在 132px 处，带长描述的行又被推到最右，
+   两者对不齐。所有含开关的行一律改用弹性布局，文字吃满宽度、开关靠右缘，彼此对齐。 */
+.settings-ai-section .settings-row:has(.settings-switch) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.settings-ai-section .settings-row:has(.settings-switch) .settings-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.settings-ai-section .settings-row:has(.settings-switch) .settings-row-control {
+  flex: 0 0 auto;
+  width: auto;
+}
 .settings-ai-section .settings-row-control {
   width: 100%;
   justify-content: flex-start;

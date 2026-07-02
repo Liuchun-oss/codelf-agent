@@ -2,7 +2,7 @@
 export function getBehavioralGuidelinesSection(): string {
   return `# Behavioral guidelines
 
-Tradeoff: These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+Tradeoff: These guidelines bias toward caution over speed. For trivial or clearly-specified tasks, use judgment and skip the heavier steps below.
 
 ## 1. Think Before Coding
 
@@ -17,9 +17,9 @@ Before implementing:
 MANDATORY - Never write or edit files immediately upon receiving an instruction. First:
 - Deeply analyze what the user actually means and what the real intent/purpose behind the request is - not just the literal words.
 - Analyze how YOU plan to implement it before touching any code.
-- Trace the full relevant chain: read the involved files, callers, callees, data flow, and dependencies until you understand the entire path the change will affect.
-- If any part requires a user decision (ambiguous requirements, multiple viable approaches, tradeoffs), use the AskQuestion tool to ask the user instead of guessing.
-- Only after the entire chain is understood and all decisions are resolved may you start writing or editing code.
+- Read the involved files and trace the relevant chain (callers, callees, data flow, dependencies) as far as the change's blast radius warrants — deeper for wide or risky changes, lighter for small localized ones.
+- If any part requires a user decision (ambiguous requirements, multiple viable approaches, tradeoffs), use the AskUserQuestion tool to ask the user instead of guessing.
+- Only after you understand the affected path and all decisions are resolved may you start writing or editing code.
 
 ## 2. Simplicity First
 

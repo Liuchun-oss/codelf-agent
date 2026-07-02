@@ -13,7 +13,7 @@ import { getLanguageSection, getEnvSection } from './sections/language'
 import { getWorkingApproachSection } from './sections/workingApproach'
 import { getProjectLayoutSection } from './sections/projectLayout'
 import { getPersonaSection } from './sections/persona'
-import { getRoomSeatSection } from './sections/roomSeat'
+import { getRoomSeatSection, getRoomCollabSection } from './sections/roomSeat'
 import { getChannelSection } from './sections/channel'
 import { collectUserContext, renderUserContext } from './context/userContext'
 import { collectSystemContext, renderSystemContext } from './context/systemContext'
@@ -25,6 +25,21 @@ import { loadApplicableSkills, renderAvailableSkillsSection, summarizeSkill } fr
 function permissionModeMarker(mode: PromptContext['permissionMode']): string {
   const label = mode === 'acceptEdits' ? '**Accept Edits**' : '**Default**'
   return `# Runtime context\nActive permission mode: ${label}.`
+}
+
+// 该岗位是否绕过内置系统提示词：仅群聊岗位且显式开启 rawSystemPrompt 时为真。
+// 开启后 system prompt 只用岗位人设（personaPrompt），不注入任何 Codelf 内置段落。
+function usesRawSystemPrompt(ctx: PromptContext): boolean {
+  return !!ctx.roomContext?.seat.rawSystemPrompt
+}
+
+// 绕过模式下的裸 system prompt：岗位人设正文 + 群协作说明段（保留成员名单/协作协议/发言纪律），
+// 不注入其它 Codelf 内置段。人设为空则仅保留群协作说明。
+function rawSystemPromptText(ctx: PromptContext): string {
+  return filterEmpty([
+    (ctx.roomContext?.seat.personaPrompt ?? '').trim(),
+    getRoomCollabSection(ctx)
+  ]).join('\n\n')
 }
 
 /**
@@ -42,6 +57,8 @@ export function fetchDynamicContextBlock(ctx: PromptContext): string | null {
  * 同时也是 messages 数组的第一条独立 system 消息，内容不变 → 缓存前缀恒命中。
  */
 export function getStaticSystemCore(ctx: PromptContext): string {
+  // 绕过内置提示词：静态核心即裸人设，保证 promptCacheKey 与实际 system 前缀一致。
+  if (usesRawSystemPrompt(ctx)) return rawSystemPromptText(ctx)
   return filterEmpty([
     getIntroSection(ctx),
     getSystemSection(ctx),
@@ -64,6 +81,10 @@ export async function fetchSystemPromptPartsAsync(
   ctx: PromptContext,
   signal?: AbortSignal
 ): Promise<SystemPromptParts> {
+  // 绕过内置提示词：只用岗位人设作为唯一 system 内容，不加载技能/记忆/上下文等任何内置段。
+  if (usesRawSystemPrompt(ctx)) {
+    return { systemPrompt: filterEmpty([rawSystemPromptText(ctx)]) }
+  }
   const [userCtxSnap, sysCtxSnap, memCtxSnap, skills] = await Promise.all([
     collectUserContext(ctx),
     collectSystemContext(ctx, signal),
@@ -110,6 +131,9 @@ export async function fetchSystemPromptPartsAsync(
 
 
 export function fetchSystemPromptParts(ctx: PromptContext): SystemPromptParts {
+  if (usesRawSystemPrompt(ctx)) {
+    return { systemPrompt: filterEmpty([rawSystemPromptText(ctx)]) }
+  }
   const staticSections: string[] = filterEmpty([
     getIntroSection(ctx),
     getSystemSection(ctx),

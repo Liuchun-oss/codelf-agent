@@ -993,7 +993,13 @@ export class QueryEngine {
         })
         if (compacted) {
           this.compactFailureCount = 0
-          await this.runCheckpointWriterFor({
+          // 先落地压缩后的历史，让本轮请求立即可以继续，不被 writer 阻塞。
+          this.replaceHistoryAfterCompact(turns)
+          // checkpoint writer（8192 token 输出，含 rebuild 注入）是压缩链路里最慢的一环。
+          // 改为后台异步执行：它与本轮主对话并行跑，不再让用户在“发消息触发压缩”时卡住。
+          // writer 完成后仍就地改 turns（此时 === this.historyTurns 引用）里的 summary turn，
+          // rebuild 注入块在下一轮生效；best-effort，失败静默。
+          void this.runCheckpointWriterFor({
             sessionId: payload.sessionId || 'default',
             turnId,
             model: profile.model,
@@ -1001,7 +1007,6 @@ export class QueryEngine {
             afterTurns: turns,
             summarize: writerComplete
           })
-          this.replaceHistoryAfterCompact(turns)
           recordDebugEvent({
             kind: 'compact',
             sessionId: payload.sessionId || 'default',
@@ -1014,8 +1019,8 @@ export class QueryEngine {
             turnId,
             message:
               reason === 'predictive'
-                ? '上下文可能在本轮继续增长后接近上限，已提前压缩早期对话以释放空间（完整历史仍可通过 search_history 检索）。'
-                : '上下文较长，已自动压缩早期对话以释放空间（完整历史仍可通过 search_history 检索）。'
+                ? '上下文可能在本轮继续增长后接近上限，已提前压缩早期对话以释放空间，'
+                : '上下文较长，已自动压缩早期对话以释放空间，'
           }
         }
       } catch {
@@ -1201,7 +1206,10 @@ export class QueryEngine {
                 keepRecentTurns: Math.min(4, Math.max(1, this.historyTurns.length - 1))
               })
               if (compacted) {
-                await this.runCheckpointWriterFor({
+                // 同上：先落地压缩结果并立即重试本轮，writer 丢后台，不阻塞重试。
+                this.replaceHistoryAfterCompact(turns)
+                this.compactFailureCount = 0
+                void this.runCheckpointWriterFor({
                   sessionId: payload.sessionId || 'default',
                   turnId,
                   model: profile.model,
@@ -1209,8 +1217,6 @@ export class QueryEngine {
                   afterTurns: turns,
                   summarize: writerComplete
                 })
-                this.replaceHistoryAfterCompact(turns)
-                this.compactFailureCount = 0
                 recordDebugEvent({
                   kind: 'compact',
                   sessionId: payload.sessionId || 'default',

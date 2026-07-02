@@ -97,6 +97,30 @@
   color: var(--text-dim);
   font-size: 13px;
 }
+.room-view-switch {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px 0;
+  flex: 0 0 auto;
+}
+.room-view-tab {
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.room-view-tab:hover {
+  color: var(--text);
+  background: rgba(127, 127, 127, 0.1);
+}
+.room-view-tab.active {
+  color: var(--accent);
+  background: rgba(90, 150, 214, 0.14);
+  border-color: rgba(90, 150, 214, 0.35);
+}
 .room-messages {
   flex: 1;
   overflow-y: auto;
@@ -212,10 +236,19 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.room-process-acts { list-style: none; margin: 4px 0 0; padding: 0; }
+.room-process-acts {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  /* 与思考内容一致：超过约 20 行后内部滚动，不再撑高整个气泡 */
+  max-height: calc(30em + 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .room-act {
   display: flex; gap: 8px; align-items: baseline;
   font-size: 12px; padding: 2px 0;
+  cursor: default;
 }
 .room-act-name { color: var(--text); font-family: ui-monospace, monospace; }
 .room-act-sum { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

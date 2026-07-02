@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { APP_MENUS, RUN_MENU_INDEX, getRunMenuItems } from '@/menus/appMenus'
+import { APP_MENUS, CHAT_MENUS, RUN_MENU_INDEX, getRunMenuItems } from '@/menus/appMenus'
 import { useBuildStore } from '@/stores/buildStore'
 import type { PopoverMenuItem } from '@/components/common/PopoverMenu'
 
 interface AppMenubarPanelProps {
   activeIndex: number
   buttonRefs: React.MutableRefObject<(HTMLButtonElement | null)[]>
-  
+  /** true = 对话模式菜单（对话/视图/终端/帮助）；false/缺省 = IDE 菜单 */
+  chat?: boolean
+
   requestCloseRef?: React.MutableRefObject<(() => void) | null>
   
   onClosing?: () => void
@@ -68,6 +70,7 @@ function MenuItems({
 export default function AppMenubarPanel({
   activeIndex,
   buttonRefs,
+  chat,
   requestCloseRef,
   onClosing,
   onClose
@@ -150,7 +153,7 @@ export default function AppMenubarPanel({
 
   
   useLayoutEffect(() => {
-    if (activeIndex === RUN_MENU_INDEX) {
+    if (!chat && activeIndex === RUN_MENU_INDEX) {
       requestAnimationFrame(() => syncLayout(activeIndex))
     }
     
@@ -199,7 +202,11 @@ export default function AppMenubarPanel({
     ? { width: dims.w, height: dims.h }
     : undefined
 
-  const items = activeIndex === RUN_MENU_INDEX ? getRunMenuItems() : APP_MENUS[activeIndex] ?? []
+  const items = chat
+    ? CHAT_MENUS[activeIndex] ?? []
+    : activeIndex === RUN_MENU_INDEX
+      ? getRunMenuItems()
+      : APP_MENUS[activeIndex] ?? []
 
   return (
     <div

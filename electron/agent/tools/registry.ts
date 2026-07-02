@@ -370,7 +370,7 @@ export function buildDefaultRegistry(): ToolRegistry {
   registry.register({ ...webFetchTool, deferred: true, supportsBackgroundExecution: true })
   registry.register({ ...webSearchTool, deferred: true, supportsBackgroundExecution: true })
   registry.register(askUserTool)
-  registry.register({ ...askUserQuestionTool, deferred: true })
+  registry.register({ ...askUserQuestionTool, alwaysLoad: true })
   registry.register({ ...enterWorktreeTool, deferred: true })
   registry.register({ ...exitWorktreeTool, deferred: true })
   registry.register({ ...contextInspectTool, deferred: true })

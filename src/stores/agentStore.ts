@@ -32,6 +32,7 @@ export interface SessionMeta {
   updatedAt: number
 
   cwd: string | null
+  archived?: boolean
 }
 
 const DEFAULT_SESSION_TITLE = '新对话'
@@ -226,6 +227,7 @@ interface AgentState {
   newSession: (cwd?: string | null) => void
   switchSession: (id: string) => void
   deleteSession: (id: string) => void
+  archiveSession: (id: string, archived: boolean) => void
   
   openSessionTab: (id: string) => void
   
@@ -1063,6 +1065,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
       createdAt: meta.createdAt,
       updatedAt: meta.updatedAt,
       workspaceId: meta.cwd ?? null,
+      archived: meta.archived ?? false,
       messages: s.messages,
       history: reconstructHistory(s.messages),
       tasks: s.tasks,
@@ -1088,6 +1091,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
       createdAt: meta.createdAt,
       updatedAt: meta.updatedAt,
       workspaceId: meta.cwd ?? null,
+      archived: meta.archived ?? false,
       messages,
       history: reconstructHistory(messages),
       tasks,
@@ -1497,7 +1501,8 @@ export const useAgentStore = create<AgentState>((set, get) => {
         title: p.title,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
-        cwd: p.workspaceId ?? null
+        cwd: p.workspaceId ?? null,
+        archived: p.archived ?? false
       }))
       const sessionMessages: Record<string, ChatMessageView[]> = {}
       const sessionTasks: Record<string, AgentTask[]> = {}
@@ -1683,6 +1688,15 @@ export const useAgentStore = create<AgentState>((set, get) => {
       if (!s.sessions.some((m) => m.id === id)) return
       if (s.openTabs.includes(id)) return
       set({ openTabs: [...s.openTabs, id] })
+    },
+
+    archiveSession: (id, archived) => {
+      const s = get()
+      if (!s.sessions.some((m) => m.id === id)) return
+      set({
+        sessions: s.sessions.map((m) => (m.id === id ? { ...m, archived } : m))
+      })
+      persistSessionById(id)
     },
 
     closeSessionTab: (id) => {

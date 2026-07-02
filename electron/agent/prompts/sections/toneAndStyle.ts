@@ -9,7 +9,7 @@ export function getToneAndStyleSection(): string {
     `When referencing specific functions or code locations, use the pattern \`file_path:line_number\` so the user can navigate.`,
     `When referencing GitHub issues or pull requests, use the \`owner/repo#123\` format so it renders as a clickable link.`,
     `Do not use a colon before tool calls. Your tool calls are not always shown to the user — text like "Let me read the file:" followed by a read should just be "Let me read the file." with a period.`,
-    `Format text with Markdown. Cite paths and identifiers with backticks. Do not add headers or numbered sections to short answers.`
+    `Cite paths and identifiers with backticks. Do not add headers or numbered sections to short answers.`
   ]
   return [`# Tone and style`, ...prependBullets(items)].join('\n')
 }
