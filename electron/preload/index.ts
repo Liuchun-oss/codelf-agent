@@ -590,6 +590,20 @@ const api = {
   getPlatform: () => process.platform,
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
 
+  update: {
+    status: () =>
+      ipcRenderer.invoke('update:status') as Promise<import('@shared/updateTypes').UpdateStatus>,
+    check: () =>
+      ipcRenderer.invoke('update:check') as Promise<import('@shared/updateTypes').UpdateStatus>,
+    openDownloadPage: () => ipcRenderer.invoke('update:openDownloadPage') as Promise<void>,
+    install: () => ipcRenderer.invoke('update:install') as Promise<void>,
+    onStatus: (cb: (status: import('@shared/updateTypes').UpdateStatus) => void) => {
+      const listener = (_e: IpcRendererEvent, s: import('@shared/updateTypes').UpdateStatus) => cb(s)
+      ipcRenderer.on('update:status', listener)
+      return () => ipcRenderer.removeListener('update:status', listener)
+    }
+  },
+
   
   
   onCloseRequest: (cb: () => void) => {

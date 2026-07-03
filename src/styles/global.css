@@ -5516,6 +5516,39 @@ kbd {
   color: var(--text);
   white-space: pre-line;
 }
+.update-line {
+  margin-bottom: 6px;
+}
+.update-sub {
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  margin-top: 4px;
+}
+.update-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border, #333);
+  overflow: hidden;
+  margin: 8px 0 2px;
+}
+.update-progress-bar {
+  height: 100%;
+  background: var(--accent, #4c8bf5);
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+.update-notes {
+  margin-top: 10px;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted, #aaa);
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+  border-radius: 6px;
+  white-space: pre-line;
+}
 .modal-input {
   width: 100%;
   background: var(--bg-inset);

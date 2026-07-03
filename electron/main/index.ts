@@ -31,6 +31,7 @@ import { BROWSER_PREVIEW_SCHEME, readBrowserPreview } from '../services/browserP
 import { ARTIFACT_FILE_SCHEME, readArtifactFile } from '../services/artifactFileServer'
 import { cleanupRendererBoundResources } from '../services/appLifecycle'
 import { migrateUserDataDir } from '../services/brandMigration'
+import { initUpdater, checkForUpdates } from '../services/updater'
 import { APP_NAME } from '@shared/appConfig'
 
 protocol.registerSchemesAsPrivileged([
@@ -153,6 +154,10 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+    // 启动后延迟静默检查更新（仅打包环境），避开冷启动高峰，不打断用户。
+    if (app.isPackaged) {
+      setTimeout(() => void checkForUpdates(true), 30_000)
+    }
     // 恢复上次未完成的视频生成任务，继续后台轮询。
     resumeVideoTasksOnStartup()
     // 恢复定时任务调度：清残留 running、补跑错过的任务、重算下次执行并启动循环。
@@ -236,6 +241,11 @@ function createWindow(): void {
 // 供其他主进程模块（如接管控制器）访问主窗口引用。
 export function getMainWindow(): BrowserWindow | null {
   return mainWindow
+}
+
+// 安装更新前放行窗口关闭：否则 close 拦截会挡住 quitAndInstall 触发的退出，导致装不上。
+export function allowAppCloseForUpdate(): void {
+  allowClose = true
 }
 
 // 把主窗口收进托盘（隐藏但不退出）。接管模式进入时调用，复用微信「最小化到托盘」逻辑。
@@ -327,6 +337,7 @@ app.whenReady().then(() => {
   registerRoomIpc()
   registerTakeoverIpc()
 
+  initUpdater()
   buildAppMenu()
   createWindow()
 

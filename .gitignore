@@ -28,6 +28,9 @@ node_modules/.cache/
 coverage/
 .vitest/
 
+# 自动更新开发调试配置（本地用，含仓库指向，不纳入 Git）
+dev-app-update.yml
+
 .vs/
 docs/workflow-system-proposal.md
 

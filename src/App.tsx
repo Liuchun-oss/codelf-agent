@@ -9,10 +9,12 @@ import Dialogs from '@/components/common/Dialogs'
 import QuickPalette from '@/components/Palette/QuickPalette'
 import SettingsPanel from '@/components/Settings/SettingsPanel'
 import Toasts from '@/components/common/Toasts'
+import UpdateDialog from '@/components/common/UpdateDialog'
 import TitleBar from '@/components/TitleBar/TitleBar'
 import HomeScreen from '@/components/Home/HomeScreen'
 import RoomPanel from '@/components/RoomPanel/RoomPanel'
 import { useUiStore } from '@/stores/uiStore'
+import { useUpdateStore } from '@/stores/updateStore'
 import { useThemeStore, applyTheme, onThemeChange } from '@/stores/themeStore'
 import { refreshEditorTheme } from '@/highlight'
 import { useEditorStore, isRestoringSession } from '@/stores/editorStore'
@@ -211,6 +213,10 @@ export default function App(): JSX.Element {
     initRunStoreListeners()
   }, [])
 
+  useEffect(() => {
+    useUpdateStore.getState().init()
+  }, [])
+
   
   useEffect(() => {
     const onResize = (): void => {
@@ -265,6 +271,7 @@ export default function App(): JSX.Element {
       <Dialogs />
       <QuickPalette />
       <SettingsPanel />
+      <UpdateDialog />
       <Toasts />
     </div>
   )

@@ -11,7 +11,8 @@ import { runBuildPlan } from '@/components/Editor/buildSystem'
 import { runActiveFile } from '@/components/Editor/runFile'
 import { isRunnable, BROWSER_LANGUAGES } from '@/components/Editor/runners'
 import type { PopoverMenuItem } from '@/components/common/PopoverMenu'
-import { APP_NAME, APP_TAGLINE } from '@shared/appConfig'
+import { APP_NAME, APP_TAGLINE, APP_WEBSITE } from '@shared/appConfig'
+import { useUpdateStore } from '@/stores/updateStore'
 
 async function runMonacoOrExec(role: string, actionId?: string): Promise<void> {
   const ed = getEditorInstance()
@@ -139,7 +140,12 @@ export const CHAT_MENUS: PopoverMenuItem[][] = [
     { label: '新建终端', onClick: () => void newTerminalFromChat() },
     { label: '在 IDE 中打开终端', onClick: () => void gotoIde(() => void useTerminalStore.getState().toggle()) }
   ],
-  [{ label: `关于 ${APP_NAME}`, onClick: () => void showAbout() }]
+  [
+    { label: '检查更新…', onClick: () => void useUpdateStore.getState().checkNow() },
+    { label: '访问 Codelf 官网', onClick: () => void window.lc.openExternal(APP_WEBSITE) },
+    { separator: true },
+    { label: `关于 ${APP_NAME}`, onClick: () => void showAbout() }
+  ]
 ]
 
 
@@ -195,7 +201,12 @@ export const APP_MENUS: PopoverMenuItem[][] = [
   ],
   [cmd('build.project', '构建项目…', 'Ctrl+Shift+B')],
   [cmd('terminal.new', '新建终端')],
-  [{ label: `关于 ${APP_NAME}`, onClick: () => void showAbout() }]
+  [
+    { label: '检查更新…', onClick: () => void useUpdateStore.getState().checkNow() },
+    { label: '访问 Codelf 官网', onClick: () => void window.lc.openExternal(APP_WEBSITE) },
+    { separator: true },
+    { label: `关于 ${APP_NAME}`, onClick: () => void showAbout() }
+  ]
 ]
 
 

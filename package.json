@@ -1,6 +1,6 @@
 {
   "name": "codelf",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Codelf（码灵）- 轻量级 Agent 辅助编程 IDE",
   "main": "./out/main/index.js",
   "author": "巫枫",
@@ -20,6 +20,7 @@
     "rebuild:native": "electron-rebuild -f -w better-sqlite3",
     "package": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --win --dir",
     "dist": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --win",
+    "release": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --win --publish always",
     "dist:mac": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --mac",
     "package:mac": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --mac --dir"
   },
@@ -42,6 +43,8 @@
     "better-sqlite3": "^12.11.1",
     "croner": "^9.1.0",
     "d3-force": "^3.0.0",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.9",
     "ignore": "^7.0.5",
     "katex": "^0.17.0",
     "mammoth": "^1.12.0",

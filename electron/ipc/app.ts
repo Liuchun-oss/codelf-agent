@@ -1,5 +1,11 @@
 import { ipcMain, BrowserWindow, app } from 'electron'
 import { cleanupRendererBoundResources } from '../services/appLifecycle'
+import {
+  checkForUpdates,
+  getUpdateStatus,
+  openDownloadPage,
+  quitAndInstall
+} from '../services/updater'
 
 export function registerAppIpc(): void {
   ipcMain.on('app:quit', () => {
@@ -32,4 +38,9 @@ export function registerAppIpc(): void {
   })
 
   ipcMain.handle('app:getVersion', () => app.getVersion())
+
+  ipcMain.handle('update:status', () => getUpdateStatus())
+  ipcMain.handle('update:check', () => checkForUpdates(false))
+  ipcMain.handle('update:openDownloadPage', () => openDownloadPage())
+  ipcMain.handle('update:install', () => quitAndInstall())
 }

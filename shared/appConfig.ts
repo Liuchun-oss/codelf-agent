@@ -6,6 +6,7 @@ export const APP_CONFIG = {
   slug: brand.slug,
   version: brand.version,
   description: brand.description,
+  website: brand.website,
   appId: brand.appId,
   copyright: brand.copyright,
   author: brand.author
@@ -15,6 +16,7 @@ export type AppConfig = typeof APP_CONFIG
 
 export const APP_NAME = APP_CONFIG.name
 export const APP_TAGLINE = APP_CONFIG.tagline
+export const APP_WEBSITE = APP_CONFIG.website
 export const APP_SLUG = APP_CONFIG.slug
 export const APP_VERSION = APP_CONFIG.version
 

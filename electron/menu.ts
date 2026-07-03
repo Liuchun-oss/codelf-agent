@@ -1,5 +1,6 @@
-import { Menu, BrowserWindow, app, type MenuItemConstructorOptions } from 'electron'
+import { Menu, BrowserWindow, app, shell, type MenuItemConstructorOptions } from 'electron'
 import { cleanupRendererBoundResources } from './services/appLifecycle'
+import { APP_NAME, APP_WEBSITE } from '@shared/appConfig'
 
 let appMenu: Menu | null = null
 
@@ -87,7 +88,11 @@ export function buildAppMenu(): void {
     },
     {
       label: '帮助(&H)',
-      submenu: [{ label: `关于 ${app.getName()}`, role: 'about' }]
+      submenu: [
+        { label: `访问 ${APP_NAME} 官网`, click: () => void shell.openExternal(APP_WEBSITE) },
+        { type: 'separator' },
+        { label: `关于 ${app.getName()}`, role: 'about' }
+      ]
     }
   ]
 

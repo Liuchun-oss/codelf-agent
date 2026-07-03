@@ -693,6 +693,14 @@ export interface LcApi {
   getPlatform: () => NodeJS.Platform
   getAppVersion: () => Promise<string>
 
+  update: {
+    status: () => Promise<import('@shared/updateTypes').UpdateStatus>
+    check: () => Promise<import('@shared/updateTypes').UpdateStatus>
+    openDownloadPage: () => Promise<void>
+    install: () => Promise<void>
+    onStatus: (cb: (status: import('@shared/updateTypes').UpdateStatus) => void) => () => void
+  }
+
   
   onCloseRequest: (cb: () => void) => () => void
   confirmClose: () => void

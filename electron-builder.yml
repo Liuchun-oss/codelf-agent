@@ -7,6 +7,18 @@ directories:
   output: release
   buildResources: resources
 
+publish:
+  - provider: github
+    owner: Liuchun-oss
+    repo: codelf-agent
+    # release = 直接发布正式版（无需手动点 Publish）；draft = 生成草稿需手动发布。
+    releaseType: release
+
+# 更新说明来源：打包时读取 release-notes.md 写入 latest.yml，
+# 用户“检查更新”弹窗即显示此内容，同时作为 GitHub Release 正文。
+releaseInfo:
+  releaseNotesFile: release-notes.md
+
 files:
   - out/**/*
   - package.json
