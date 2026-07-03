@@ -234,6 +234,12 @@ export interface RecallParams {
   projectId?: string | null
   /** 仅召回 active/dormant，不含 archived。 */
   includeDormant?: boolean
+  /**
+   * 会话隔离：传入后，非 global 的记忆只保留 sessionId 严格匹配本会话的，
+   * 排除同工作区里「其他会话」写入的项目记忆（如群聊主管往共享工作区写的 note/todo）。
+   * 用于微信这类线性对话，避免旧项目/多岗位记忆串味。global（身份/偏好）不受影响。
+   */
+  isolateSessionId?: string | null
 }
 
 /**
@@ -267,8 +273,11 @@ export function recallEpisodes(p: RecallParams): EpisodicHit[] {
     tau: number; state: string; createdAt: number; distance: number
   }>
   const wantProject = p.projectId ?? null
+  const isolateSid = p.isolateSessionId ?? null
   return rows
     .filter((r) => r.scope === 'global' || (r.projectId ?? null) === wantProject)
+    // 会话隔离：非 global 记忆必须来自本会话，杜绝共享工作区里其他会话（群聊主管等）串味。
+    .filter((r) => !isolateSid || r.scope === 'global' || r.sessionId === isolateSid)
     .map((r) => {
       const sim = 1 - r.distance / 2
       const live = liveStrength(r.strength, r.lastAccess, r.tau, now)
@@ -331,7 +340,7 @@ export function addEdges(srcId: string, dstIds: string[], weight = 1.0): void {
  * 模式完成（联想扩散，机制 1）：给定一批已命中记忆 id，沿 episodic_edges 扩一跳，
  * 召回强关联的邻居记忆（排除已命中的、已 supersede/archived 的）。best-effort。
  */
-export function expandByEdges(seedIds: string[], limit = 3, projectId?: string | null): EpisodicHit[] {
+export function expandByEdges(seedIds: string[], limit = 3, projectId?: string | null, isolateSessionId?: string | null): EpisodicHit[] {
   if (seedIds.length === 0) return []
   try {
     const d = getDb()
@@ -359,9 +368,12 @@ export function expandByEdges(seedIds: string[], limit = 3, projectId?: string |
       tau: number; edgeWeight: number
     }>
     const wantProject = projectId ?? null
+    const isolateSid = isolateSessionId ?? null
     return rows
       // 联想扩散同样受工作区隔离：只接受本项目或 global 的邻居，杜绝跨工作区串记忆。
       .filter((r) => r.scope === 'global' || (r.projectId ?? null) === wantProject)
+      // 会话隔离：非 global 邻居必须来自本会话，防止沿边扩散把其他会话记忆带回来。
+      .filter((r) => !isolateSid || r.scope === 'global' || r.sessionId === isolateSid)
       .slice(0, limit)
       .map((r) => {
       const live = liveStrength(r.strength, r.lastAccess, r.tau, now)

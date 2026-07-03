@@ -27,7 +27,7 @@ function AssistantPart({
   msg: ChatMessageView
   onTypingDone?: (done: boolean) => void
 }): JSX.Element | null {
-  const { body, thinking } = normalizeAssistantMessage(msg.content, msg.thinking)
+  const { body, thinking } = normalizeAssistantMessage(msg.content, msg.thinking, msg.streaming)
   const visible = isAssistantVisible(msg.content, msg.thinking, msg.streaming)
 
   const hasBody = body.trim().length > 0

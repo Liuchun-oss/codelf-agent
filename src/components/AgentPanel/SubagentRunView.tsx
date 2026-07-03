@@ -28,7 +28,7 @@ function formatDuration(ms: number | undefined): string | null {
 }
 
 function AssistantPart({ msg }: { msg: ChatMessageView }): JSX.Element | null {
-  const { body, thinking } = normalizeAssistantMessage(msg.content, msg.thinking)
+  const { body, thinking } = normalizeAssistantMessage(msg.content, msg.thinking, msg.streaming)
   if (!isAssistantVisible(msg.content, msg.thinking, msg.streaming)) return null
 
   const hasBody = body.trim().length > 0

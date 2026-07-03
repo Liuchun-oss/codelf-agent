@@ -28,6 +28,12 @@ export interface RecallInjectionParams {
   /** 当前打开/正在编辑的文件，用于代码空间锚定加分（位置细胞）。 */
   activeFile?: string | null
   topK?: number
+  /**
+   * 会话隔离 id：传入后，项目类记忆只召回本会话自己写的，排除共享同一工作区的其他会话
+   * （如群聊主管往微信工作区写的项目待办）。global 身份/偏好不受影响。
+   * 用于微信等线性对话，避免旧项目/多岗位记忆污染。不传 = 保持原跨会话召回行为。
+   */
+  isolateSessionId?: string | null
 }
 
 /** 代码空间邻近加分：命中记忆锚定的文件 = 当前文件时显著加权。 */
@@ -52,7 +58,8 @@ export async function buildRecallInjection(p: RecallInjectionParams): Promise<st
     if (!queryVec || queryVec.length === 0) return null
 
     const projectId = p.workspaceRoot ? resolveProjectId(p.workspaceRoot) : null
-    const raw = recallEpisodes({ queryVec, topK: p.topK ?? 8, projectId })
+    const isolateSessionId = p.isolateSessionId ?? null
+    const raw = recallEpisodes({ queryVec, topK: p.topK ?? 8, projectId, isolateSessionId })
     if (raw.length === 0) return null
 
     const hits = applyCodeAnchorBoost(raw, p.activeFile).slice(0, 5)
@@ -60,7 +67,7 @@ export async function buildRecallInjection(p: RecallInjectionParams): Promise<st
 
     // 模式完成：沿联想边扩散一跳，带出与命中记忆强关联的邻居（机制 1）。去重后合并。
     const seedIds = hits.map((h) => h.id)
-    const neighbors = expandByEdges(seedIds, 2, projectId).filter((n) => !seedIds.includes(n.id))
+    const neighbors = expandByEdges(seedIds, 2, projectId, isolateSessionId).filter((n) => !seedIds.includes(n.id))
     const merged = [...hits, ...neighbors]
 
     const lines: string[] = [

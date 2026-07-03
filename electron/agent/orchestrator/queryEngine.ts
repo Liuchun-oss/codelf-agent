@@ -842,10 +842,15 @@ export class QueryEngine {
     // 主动联想召回：每轮用本轮输入向量召回相关情景记忆（跨会话/跨项目），合并进当前
     // 用户消息之前。与知识库 RAG 同构——只在 tail 新增，不进 system、不写历史，故对 prompt
     // 缓存前缀零破坏（promptCacheKey 只 hash 静态核心，不含召回内容）。best-effort。
+    // 会话隔离：IM 通道（如微信）是线性一对一对话，且其专属工作区常与群聊主管共享
+    // （记忆同源设计），若不隔离，群聊里其他会话往同一工作区写的项目待办/多岗位记忆
+    // 会被无差别召回、污染微信对话。故微信轮次只召回「本会话自写的项目记忆 + 全局身份/偏好」。
+    // 桌面端不带 channel → isolateSessionId 为 null，保持原跨会话召回行为不变。
     const recallBlock = await buildRecallInjection({
       query: payload.message,
       workspaceRoot: effectiveMemoryRoot,
-      activeFile: payload.editorContext?.activeFilePath
+      activeFile: payload.editorContext?.activeFilePath,
+      isolateSessionId: payload.channel ? (payload.sessionId || null) : null
     })
     if (recallBlock) {
       userMsg.content = `${recallBlock}\n\n---\n\n${userMsg.content}`
