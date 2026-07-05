@@ -144,6 +144,7 @@ export interface PermissionDetails {
 
 export type AgentEvent =
   | { type: 'turn_start'; turnId: string; profileId: string }
+  | { type: 'context_estimate'; turnId: string; usage: TokenUsage }
   | { type: 'turn_end'; turnId: string; usage?: TokenUsage }
   | { type: 'workspace_root_changed'; turnId: string; workspaceRoot: string | null; reason?: string }
   | { type: 'text_delta'; turnId: string; content: string }

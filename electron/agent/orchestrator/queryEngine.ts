@@ -227,6 +227,19 @@ function extractPathLikeValues(value: unknown, out: string[]): void {
   }
 }
 
+// 主动剥离所有消息中的图片：当前模型不支持视觉时，把历史里残留的图片块（可能是
+// 上一轮换用支持图片的模型时存入的）全部去掉，避免整段历史因带 image_url 而被 400
+// 拒绝。不依赖错误字符串匹配（中转站的 400 文案千差万别），从源头保证外发消息干净。
+function stripImagesForNonVision(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) => {
+    if (!m.images?.length) return m
+    const note = `（图片已省略：当前模型不支持图片输入，共 ${m.images.length} 张）`
+    const content = m.content ? `${m.content}\n${note}` : note
+    const { images: _drop, ...rest } = m
+    return { ...rest, content }
+  })
+}
+
 function buildCompactRestoreHints(params: {
   historyTurns: HistoryTurn[]
   activeFilePath?: string
@@ -1033,6 +1046,35 @@ export class QueryEngine {
       }
     }
 
+    // 发送前预估：本轮请求真正发出去之前先算一次上下文用量，让 UI 的圆环立刻刷新，
+    // 不必等整轮 turn_end。turn_end 会用带 API 真实 token 的值覆盖这里的预估。best-effort。
+    try {
+      const priorHistory = this.flattenModelHistory()
+      const preBreakdown = await buildContextBreakdown({
+        ctx,
+        toolDefs: currentToolDefs,
+        history: priorHistory,
+        fullUserContent: userMsg.content,
+        rawUserMessage: payload.message,
+        model: profile.model,
+        kind: profile.kind,
+        contextWindow,
+        signal
+      })
+      yield {
+        type: 'context_estimate',
+        turnId,
+        usage: {
+          inputTokens: preBreakdown.totalTokens,
+          outputTokens: 0,
+          estimatedPromptTokens: preBreakdown.totalTokens,
+          contextBreakdown: preBreakdown
+        }
+      }
+    } catch {
+      
+    }
+
     try {
       
       while (true) {
@@ -1057,7 +1099,7 @@ export class QueryEngine {
               '下面 user 消息中的内容是用户当前轮的最新指令，是你此刻唯一要优先完成的任务。如果它与历史对话中尚未收尾的工作不同，以最新指令为准，不要默认延续上一轮未完成的任务——除非用户明确说"继续"。开始前先确认清楚当前要做的是哪件事。'
             )
           : undefined
-        const messages: ChatMessage[] = [
+        const assembledMessages: ChatMessage[] = [
           { role: 'system', content: systemText },
           ...this.flattenModelHistory(),
           ...(dynamicContextBlock ? [{ role: 'system' as const, content: dynamicContextBlock }] : []),
@@ -1065,6 +1107,11 @@ export class QueryEngine {
           ...(focusBoundaryBlock ? [{ role: 'system' as const, content: focusBoundaryBlock }] : []),
           ...turnMessages
         ]
+        // 当前模型明确不支持视觉时，主动剥掉历史里残留的图片块（如上一轮用视觉模型
+        // 粘图后切到纯文本模型），从源头避免带 image_url 触发 400。supportsVision 为
+        // undefined 的旧配置不动，仍走 provider 层的错误自愈。
+        const messages: ChatMessage[] =
+          profile.supportsVision === false ? stripImagesForNonVision(assembledMessages) : assembledMessages
         let acc = new ToolCallAccumulator()
         let roundText = ''
         let roundThinking = ''

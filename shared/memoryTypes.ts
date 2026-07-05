@@ -13,6 +13,12 @@ export interface MemorySettings {
   autoRecall: boolean
   /** 注入摘要的 token 预算上限（超出按节预算裁剪）。 */
   injectBudgetTokens: number
+  /**
+   * 自动召回的语义相似度下限（0–1）。低于此值的命中视为"不够相关"直接丢弃，
+   * 避免 `1`、`啊` 等无意义短输入把无关旧记忆全捞上来。仅过滤语义相似度，
+   * 不受记忆强度/salience 衰减影响，故"久未提及但确实相关"的记忆不会被误杀。
+   */
+  recallMinSimilarity: number
   /** 压缩时派发 checkpoint-writer，将被丢弃的对话提取为结构化会话记忆。 */
   writerEnabled: boolean
   /** 任务完成后自动提醒 Agent 记笔记（复杂任务检测）。 */
@@ -25,11 +31,13 @@ export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   autoRecall: true,
   injectBudgetTokens: 4000,
   writerEnabled: true,
-  autoNoteReminder: true
+  autoNoteReminder: true,
+  recallMinSimilarity: 0.35
 }
 
 export const MEMORY_SETTINGS_BOUNDS = {
-  injectBudgetTokens: { min: 500, max: 32_000 }
+  injectBudgetTokens: { min: 500, max: 32_000 },
+  recallMinSimilarity: { min: 0, max: 1 }
 } as const
 
 export function normalizeMemorySettings(partial: Partial<MemorySettings> | undefined): MemorySettings {
@@ -51,6 +59,14 @@ export function normalizeMemorySettings(partial: Partial<MemorySettings> | undef
     writerEnabled:
       typeof p.writerEnabled === 'boolean' ? p.writerEnabled : DEFAULT_MEMORY_SETTINGS.writerEnabled,
     autoNoteReminder:
-      typeof p.autoNoteReminder === 'boolean' ? p.autoNoteReminder : DEFAULT_MEMORY_SETTINGS.autoNoteReminder
+      typeof p.autoNoteReminder === 'boolean' ? p.autoNoteReminder : DEFAULT_MEMORY_SETTINGS.autoNoteReminder,
+    recallMinSimilarity: normalizeSimilarity(p.recallMinSimilarity)
   }
+}
+
+/** 把相似度阈值夹到 [0,1]，非法值回退默认。 */
+function normalizeSimilarity(v: unknown): number {
+  const s = MEMORY_SETTINGS_BOUNDS.recallMinSimilarity
+  if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_MEMORY_SETTINGS.recallMinSimilarity
+  return Math.min(s.max, Math.max(s.min, v))
 }

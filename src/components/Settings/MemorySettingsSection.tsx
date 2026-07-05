@@ -180,6 +180,33 @@ export default function MemorySettingsSection(): JSX.Element {
           }
         />
         <SettingsRow
+          title="召回相关性阈值"
+          description="自动召回的语义相似度下限（0-1）。命中相似度低于此值即丢弃，避免「1」「啊」等无意义短输入把无关旧记忆全部翻出。默认 0.35，调高更严格、调低更宽松。"
+          control={
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              disabled={saving || !settings.enabled || !settings.autoRecall}
+              value={settings.recallMinSimilarity}
+              onChange={(e) =>
+                setSettings((s) =>
+                  s
+                    ? {
+                        ...s,
+                        recallMinSimilarity: Number.isFinite(Number(e.target.value))
+                          ? Number(e.target.value)
+                          : s.recallMinSimilarity
+                      }
+                    : s
+                )
+              }
+              onBlur={() => void save({ recallMinSimilarity: settings.recallMinSimilarity })}
+            />
+          }
+        />
+        <SettingsRow
           title="注入预算（token）"
           description="注入记忆摘要的 token 上限，范围 500-32000，超出按节裁剪。"
           control={

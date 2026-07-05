@@ -62,7 +62,14 @@ export async function buildRecallInjection(p: RecallInjectionParams): Promise<st
     const raw = recallEpisodes({ queryVec, topK: p.topK ?? 8, projectId, isolateSessionId })
     if (raw.length === 0) return null
 
-    const hits = applyCodeAnchorBoost(raw, p.activeFile).slice(0, 5)
+    // 相关性阈值：丢弃语义相似度不足的命中，避免 `1`、`啊` 等无意义短输入
+    // 把无关旧记忆全捞上来。只卡纯语义 sim，不受强度/salience 衰减影响，
+    // 故"久未提及但确实相关"的记忆不会被误杀。
+    const minSim = settings.recallMinSimilarity
+    const relevant = raw.filter((h) => h.sim >= minSim)
+    if (relevant.length === 0) return null
+
+    const hits = applyCodeAnchorBoost(relevant, p.activeFile).slice(0, 5)
     if (hits.length === 0) return null
 
     // 模式完成：沿联想边扩散一跳，带出与命中记忆强关联的邻居（机制 1）。去重后合并。

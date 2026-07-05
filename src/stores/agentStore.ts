@@ -3,7 +3,6 @@ import { appStorageKey } from '@shared/appConfig'
 import type {
   AgentEvent,
   ContextAttachment,
-  EditorContextSnapshot,
   FileChangeDecision,
   ImageAttachment,
   PermissionDecision,
@@ -15,11 +14,9 @@ import type {
   TokenUsage,
   AgentTask
 } from '@shared/agentTypes'
-import { useEditorStore } from '@/stores/editorStore'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { useInlineDiffStore } from '@/stores/inlineDiffStore'
 import { toast } from '@/stores/toastStore'
-import { getEditorInstance } from '@/components/Editor/editorBridge'
 import { syncEditorDirtyPaths } from '@/utils/syncEditorSnapshot'
 import { pathsEqual } from '@/utils/path'
 import { stripForcedInstruction } from '@/components/AgentPanel/slashCommand'
@@ -952,38 +949,6 @@ function reduceSessionEvent(rt: SessionRuntime, event: AgentEvent): SessionRunti
 }
 
 
-function collectEditorContext(): EditorContextSnapshot {
-  const st = useEditorStore.getState()
-  const tab = st.tabs.find((t) => t.path === st.activeTabPath) ?? null
-  const dirtyPaths = st.tabs.filter((t) => t.dirty).map((t) => t.path)
-
-  let selection: string | undefined
-  let selectionStartLine: number | undefined
-  let selectionEndLine: number | undefined
-  const ed = getEditorInstance()
-  if (ed) {
-    const sel = ed.getSelection()
-    const model = ed.getModel()
-    if (sel && model && !sel.isEmpty()) {
-      selection = model.getValueInRange(sel)
-      selectionStartLine = sel.startLineNumber
-      selectionEndLine = sel.endLineNumber
-    }
-  }
-
-  return {
-    workspaceRoot: useWorkspaceStore.getState().workspace?.path,
-    activeFilePath: tab && tab.kind === 'text' && !tab.untitled ? tab.path : undefined,
-    selection,
-    selectionStartLine,
-    selectionEndLine,
-    cursorLine: tab?.cursorLine,
-    cursorCol: tab?.cursorCol,
-    dirtyPaths
-  }
-}
-
-
 function reconstructHistory(messages: ChatMessageView[]): PersistedChatMessage[] {
   const out: PersistedChatMessage[] = []
   for (const m of messages) {
@@ -1142,13 +1107,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     if (!hydratedMain.has(sessionId)) {
       await ensureSessionHydrated(sessionId)
     }
-    syncEditorDirtyPaths()
-    // editorContext.workspaceRoot 与会话 cwd 对齐：纯对话不携带 IDE 工作区，避免泄漏
     const sessionCwd = get().sessions.find((m) => m.id === sessionId)?.cwd ?? null
-    const editorContext = {
-      ...collectEditorContext(),
-      workspaceRoot: sessionCwd ?? undefined
-    }
     const att =
       options?.attachments && options.attachments.length > 0
         ? options.attachments.filter(
@@ -1163,7 +1122,6 @@ export const useAgentStore = create<AgentState>((set, get) => {
         sessionId,
         turnId,
         message: text,
-        editorContext,
         sessionCwd,
         permissionMode: get().permissionMode,
         ...(options?.resendOfTurnId ? { resendOfTurnId: options.resendOfTurnId } : {}),
@@ -1294,7 +1252,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
       sessionMessages: { ...s.sessionMessages, [targetSession]: next.messages },
       sessionCanRevert: { ...s.sessionCanRevert, [targetSession]: next.canRevert },
       sessionStreaming: nextStreamingMap,
-      ...(event.type === 'turn_end' && event.usage
+      ...((event.type === 'turn_end' || event.type === 'context_estimate') && event.usage
         ? { sessionTokenUsage: { ...s.sessionTokenUsage, [targetSession]: event.usage } }
         : {})
     }
@@ -1312,6 +1270,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
         currentAssistantId: next.assistantId,
         canRevert: next.canRevert,
         ...(event.type === 'turn_end' ? { lastTokenUsage: event.usage ?? s.lastTokenUsage } : {}),
+        ...(event.type === 'context_estimate' ? { lastTokenUsage: event.usage } : {}),
         ...mapPatch,
         ...attentionPatch
       }

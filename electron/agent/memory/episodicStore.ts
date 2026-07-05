@@ -42,6 +42,8 @@ export interface EpisodicHit {
   salience: number
   strength: number
   score: number
+  /** 纯语义相似度（0–1），不含强度/salience 衰减，用于相关性阈值过滤。 */
+  sim: number
   createdAt?: number
 }
 
@@ -285,7 +287,7 @@ export function recallEpisodes(p: RecallParams): EpisodicHit[] {
       return {
         id: r.id, scope: r.scope, projectId: r.projectId, sessionId: r.sessionId, kind: r.kind,
         content: r.content, summary: r.summary, anchorFile: r.anchorFile, anchorSymbol: r.anchorSymbol,
-        salience: r.salience, strength: live, score, createdAt: r.createdAt
+        salience: r.salience, strength: live, score, sim, createdAt: r.createdAt
       } as EpisodicHit
     })
     .sort((a, b) => b.score - a.score)
@@ -380,7 +382,8 @@ export function expandByEdges(seedIds: string[], limit = 3, projectId?: string |
       return {
         id: r.id, scope: r.scope, projectId: r.projectId, sessionId: r.sessionId, kind: r.kind,
         content: r.content, summary: r.summary, anchorFile: r.anchorFile, anchorSymbol: r.anchorSymbol,
-        salience: r.salience, strength: live, score: live * (0.5 + r.salience)
+        // 邻居靠联想边扩散而来，无语义距离；只从已过阈值的种子扩散，故 sim 记为 1，不参与相似度过滤。
+        salience: r.salience, strength: live, score: live * (0.5 + r.salience), sim: 1
       } as EpisodicHit
     })
   } catch {
@@ -441,7 +444,8 @@ export function consolidationCandidates(projectId: string, limit = 12): Episodic
         return {
           id: r.id, scope: r.scope, projectId: r.projectId, sessionId: r.sessionId, kind: r.kind,
           content: r.content, summary: r.summary, anchorFile: r.anchorFile, anchorSymbol: r.anchorSymbol,
-          salience: r.salience, strength: live, score: live * (0.5 + r.salience)
+          // 巩固候选按强度×salience 选取，非语义召回；sim 记为 1 占位。
+          salience: r.salience, strength: live, score: live * (0.5 + r.salience), sim: 1
         } as EpisodicHit
       })
       .sort((a, b) => b.score - a.score)
