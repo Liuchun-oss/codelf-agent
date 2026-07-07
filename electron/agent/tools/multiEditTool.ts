@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { readFileSafe, errMessage, type FileEncoding } from '../../services/fsService'
+import { readFileSafe, errMessage, encodeTextStrict, type FileEncoding } from '../../services/fsService'
 import { computeLineDiff, diffHasChanges } from './diff'
 import { resolveAnyPath } from './paths'
 import type { Tool, ToolResult } from './types'
@@ -126,6 +126,16 @@ export const multiEditTool: Tool<MultiEditInput> = {
 
     const diff = computeLineDiff(current.content, nextContent)
     if (!diffHasChanges(diff)) return { content: '内容无变化，未发起写入' }
+
+    // 编码一致性闸门：新内容必须能用原文件编码无损表示，否则拒绝写入以避免乱码。
+    if (!encodeTextStrict(nextContent, current.encoding).ok) {
+      return {
+        content:
+          `写入被拒绝：新内容包含无法用原文件编码（${current.encoding}）表示的字符，强行写入会导致乱码。` +
+          `如确需这些字符，请先征得用户同意将文件转为 UTF-8 后再改。（本次未做任何写入）`,
+        isError: true
+      }
+    }
 
     return {
       content: `准备对 ${input.path} 应用 ${input.edits.length} 个编辑`,

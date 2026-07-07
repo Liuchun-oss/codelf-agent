@@ -1,13 +1,28 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import type { Ignore } from 'ignore'
-import { IGNORED_DIRS, buildIgnore, toRel } from './fsService'
+import { IGNORED_DIRS, buildIgnore, toRel, detectEncoding, decodeText } from './fsService'
 
 
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024
+// 单文件搜索上限：从 5MB 提到 32MB。超过此值仍会跳过（避免一次性读入超大日志/数据文件
+// 拖垮内存），但会通过 skippedLargeFiles 明确告知模型，不再静默"假装无匹配"。
+const MAX_FILE_BYTES = 32 * 1024 * 1024
 const MAX_TOTAL_MATCHES = 5000
 const MAX_MATCHES_PER_FILE = 300
+// 超长行截断上限：压缩/minified 文件常有几十万字符的单行，正则在其上回溯可能卡死。
+// 超过此长度的行按固定窗口切片后逐段匹配，兼顾命中率与性能。
+const MAX_LINE_SCAN_CHARS = 20_000
+// 全局搜索时间上限：防止灾难性回溯的正则（如 (a+)+）在大代码库上无限期占用主进程。
+const SEARCH_DEADLINE_MS = 15_000
+
+// 智能解码：统一走 detectEncoding + decodeText（已支持 BOM / UTF-16 / GBK），
+// 与读文件、编辑落盘共用同一套编码判定，避免两处逻辑漂移导致搜索与编辑对同一文件
+// 判定不一致。
+function decodeSmart(buf: Buffer): string {
+  const { encoding } = detectEncoding(buf)
+  return decodeText(buf, encoding)
+}
 
 export interface SearchOptions {
   caseSensitive?: boolean
@@ -32,6 +47,10 @@ export interface SearchResponse {
   results: SearchFileResult[]
   truncated: boolean
   error?: string
+  // 因超过 MAX_FILE_BYTES 被跳过的文件数（相对路径），供上层明确提示模型而非静默丢结果。
+  skippedLargeFiles?: string[]
+  // 是否因达到全局时间上限提前结束（结果可能不完整）。
+  timedOut?: boolean
 }
 
 export function buildRegex(query: string, opts: SearchOptions): RegExp {
@@ -54,10 +73,22 @@ interface Ctx {
   results: SearchFileResult[]
   total: number
   truncated: boolean
+  deadline: number
+  timedOut: boolean
+  skippedLargeFiles: string[]
+}
+
+function stopScanning(ctx: Ctx): boolean {
+  if (ctx.truncated) return true
+  if (Date.now() >= ctx.deadline) {
+    ctx.timedOut = true
+    return true
+  }
+  return false
 }
 
 async function walk(ctx: Ctx, dir: string, depth = 0): Promise<void> {
-  if (depth > 40 || ctx.truncated) return
+  if (depth > 40 || stopScanning(ctx)) return
   let entries
   try {
     entries = await fs.readdir(dir, { withFileTypes: true })
@@ -65,7 +96,7 @@ async function walk(ctx: Ctx, dir: string, depth = 0): Promise<void> {
     return
   }
   for (const entry of entries) {
-    if (ctx.truncated) return
+    if (stopScanning(ctx)) return
     if (IGNORED_DIRS.has(entry.name)) continue
     const fullPath = join(dir, entry.name)
     const isDir = entry.isDirectory()
@@ -81,40 +112,79 @@ async function walk(ctx: Ctx, dir: string, depth = 0): Promise<void> {
   }
 }
 
+// 在单行上执行正则匹配。超长行按固定窗口切片逐段扫描（窗口间保留重叠，
+// 避免跨边界的匹配被漏掉），把每段匹配的列号换算回原始行内绝对列号。
+function collectLineMatches(
+  ctx: Ctx,
+  line: number,
+  text: string,
+  matches: SearchMatch[]
+): boolean {
+  const runOnSegment = (segment: string, baseCol: number): boolean => {
+    ctx.re.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = ctx.re.exec(segment)) !== null) {
+      const absCol = baseCol + m.index
+      matches.push({
+        line,
+        col: absCol + 1,
+        preview: text.length > 400 ? text.slice(0, 400) : text,
+        matchLength: m[0].length
+      })
+      ctx.total++
+      if (m[0].length === 0) ctx.re.lastIndex++
+      if (matches.length >= MAX_MATCHES_PER_FILE || ctx.total >= MAX_TOTAL_MATCHES) {
+        ctx.truncated = true
+        return true
+      }
+    }
+    return false
+  }
+
+  if (text.length <= MAX_LINE_SCAN_CHARS) {
+    return runOnSegment(text, 0)
+  }
+  // 超长行：切片扫描，段间重叠 1KB 以覆盖跨边界匹配。
+  const overlap = 1024
+  for (let start = 0; start < text.length; start += MAX_LINE_SCAN_CHARS - overlap) {
+    const segment = text.slice(start, start + MAX_LINE_SCAN_CHARS)
+    if (runOnSegment(segment, start)) return true
+    if (Date.now() >= ctx.deadline) {
+      ctx.timedOut = true
+      return true
+    }
+  }
+  return false
+}
+
 async function searchInFile(ctx: Ctx, path: string): Promise<void> {
   let buf: Buffer
   try {
     const stat = await fs.stat(path)
-    if (stat.size > MAX_FILE_BYTES || stat.size === 0) return
+    if (stat.size === 0) return
+    if (stat.size > MAX_FILE_BYTES) {
+      // 超大文件不再静默跳过：记录相对路径，供上层明确告知模型（而非"无匹配"）。
+      ctx.skippedLargeFiles.push(toRel(ctx.root, path))
+      return
+    }
     buf = await fs.readFile(path)
   } catch {
     return
   }
   if (isBinary(buf)) return
 
-  const text = buf.toString('utf8')
+  const text = decodeSmart(buf)
   const lines = text.split(/\r\n|\r|\n/)
   const matches: SearchMatch[] = []
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    ctx.re.lastIndex = 0
-    let m: RegExpExecArray | null
-    while ((m = ctx.re.exec(line)) !== null) {
-      matches.push({
-        line: i + 1,
-        col: m.index + 1,
-        preview: line.length > 400 ? line.slice(0, 400) : line,
-        matchLength: m[0].length
-      })
-      ctx.total++
-      if (m[0].length === 0) ctx.re.lastIndex++ 
-      if (matches.length >= MAX_MATCHES_PER_FILE || ctx.total >= MAX_TOTAL_MATCHES) {
-        ctx.truncated = true
-        break
-      }
-    }
+    if (collectLineMatches(ctx, i + 1, lines[i], matches)) break
     if (ctx.truncated) break
+    // 每扫若干行检查一次 deadline，避免超大文件长时间独占。
+    if ((i & 0x3ff) === 0 && Date.now() >= ctx.deadline) {
+      ctx.timedOut = true
+      break
+    }
   }
 
   if (matches.length > 0) ctx.results.push({ path, matches })
@@ -134,9 +204,25 @@ export async function searchInFiles(
     return { ok: false, results: [], truncated: false, error: '无效的正则表达式' }
   }
   const ig = await buildIgnore(root)
-  const ctx: Ctx = { root, re, ig, results: [], total: 0, truncated: false }
+  const ctx: Ctx = {
+    root,
+    re,
+    ig,
+    results: [],
+    total: 0,
+    truncated: false,
+    deadline: Date.now() + SEARCH_DEADLINE_MS,
+    timedOut: false,
+    skippedLargeFiles: []
+  }
   await walk(ctx, root)
-  return { ok: true, results: ctx.results, truncated: ctx.truncated }
+  return {
+    ok: true,
+    results: ctx.results,
+    truncated: ctx.truncated,
+    timedOut: ctx.timedOut,
+    ...(ctx.skippedLargeFiles.length ? { skippedLargeFiles: ctx.skippedLargeFiles } : {})
+  }
 }
 
 

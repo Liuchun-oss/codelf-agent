@@ -273,6 +273,35 @@ interface HistoryTurn {
   messages: ChatMessage[]
 }
 
+// 孤儿 tool_use 配对补全：确保每个 assistant 发起的工具调用（tool_use）后面都有
+// 对应的 tool 结果。用户在工具执行阶段点「停止」时，带 toolCalls 的 assistant 消息
+// 已入 turnMessages，但对应的 tool 结果尚未 push——这会在历史里留下「有 tool_use、
+// 无 tool_result」的残缺回合。Anthropic 对此零容忍（400: tool_use ids were found
+// without tool_result blocks），OpenAI 通道虽有清洗但也应从源头补齐。
+// 本函数在「历史提交」这一必经路径上运行：为所有缺失结果的调用补一条「已取消」占位，
+// 就地插到该 assistant 之后，保证 tool_use / tool_result 严格配对。无孤儿时零改动。
+function reconcileOrphanToolCalls(messages: ChatMessage[]): ChatMessage[] {
+  const resultIds = new Set<string>()
+  for (const m of messages) {
+    if (m.role === 'tool' && m.toolCallId) resultIds.add(m.toolCallId)
+  }
+  const out: ChatMessage[] = []
+  for (const m of messages) {
+    out.push(m)
+    if (m.role !== 'assistant' || !m.toolCalls?.length) continue
+    for (const tc of m.toolCalls) {
+      if (resultIds.has(tc.id)) continue
+      out.push({
+        role: 'tool',
+        toolCallId: tc.id,
+        content: '工具调用已取消（用户停止了本轮生成，该调用未执行或未返回结果）。'
+      })
+      resultIds.add(tc.id)
+    }
+  }
+  return out
+}
+
 export class QueryEngine {
   private historyTurns: HistoryTurn[] = []
   private active: AbortController | null = null
@@ -922,7 +951,7 @@ export class QueryEngine {
 
     const commitPartialIfSideEffected = (): void => {
       if (!sideEffected) return
-      this.historyTurns.push({ turnId, messages: [...turnMessages] })
+      this.historyTurns.push({ turnId, messages: reconcileOrphanToolCalls(turnMessages) })
       commitContentReplacementState()
       contentReplacementCommitted = true
     }
@@ -1798,7 +1827,10 @@ export class QueryEngine {
 
     
     // 历史添加完成后、turn_end 之前：检测任务完成并插入记笔记提醒
-    this.historyTurns.push({ turnId, messages: [...turnMessages] })
+    // reconcileOrphanToolCalls：取消发生在工具执行阶段时，turnMessages 里可能有
+    // 「有 tool_use、无 tool_result」的孤儿调用，补齐占位结果后再入历史，
+    // 保证下一轮请求的消息序列合规（尤其是 Anthropic 的严格配对校验）。
+    this.historyTurns.push({ turnId, messages: reconcileOrphanToolCalls(turnMessages) })
     if (!contentReplacementCommitted) commitContentReplacementState()
 
     const memSettings = getMemorySettings()

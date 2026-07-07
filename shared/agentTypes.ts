@@ -493,7 +493,7 @@ export interface ContentReplacementRecord {
 export interface PersistedFileChange {
   changeId: string
   path: string
-  encoding: 'utf8' | 'utf8bom' | 'utf16le' | 'utf16be'
+  encoding: 'utf8' | 'utf8bom' | 'utf16le' | 'utf16be' | 'gbk'
   oldExisted: boolean
   oldDataBase64: string
   newContent: string

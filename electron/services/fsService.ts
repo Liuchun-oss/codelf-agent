@@ -2,10 +2,13 @@ import { promises as fs } from 'fs'
 import { join, basename, dirname } from 'path'
 import { randomBytes } from 'crypto'
 import ignore, { type Ignore } from 'ignore'
+import iconv from 'iconv-lite'
 
 
 
-export type FileEncoding = 'utf8' | 'utf8bom' | 'utf16le' | 'utf16be'
+// gbk：Windows 简体中文旧文件常用编码（GB2312 的超集，iconv 用 gb18030 无损读写）。
+// 无 BOM，需靠 UTF-8 合法性校验失败来推断。落盘时必须沿用，否则整文件被写成 UTF-8 而损坏。
+export type FileEncoding = 'utf8' | 'utf8bom' | 'utf16le' | 'utf16be' | 'gbk'
 
 export interface ReadFileResult {
   ok: boolean
@@ -43,6 +46,28 @@ export function extOf(p: string): string {
 }
 
 
+// 校验 buffer 是否为合法 UTF-8 字节序列。用于区分「无 BOM 的 UTF-8」与「GBK 等旧编码」：
+// GBK 里的双字节汉字通常构成非法 UTF-8 序列，据此把它们从「兜底当 UTF-8」中甄别出来。
+function isValidUtf8(buf: Buffer): boolean {
+  let i = 0
+  const len = buf.length
+  while (i < len) {
+    const b = buf[i]
+    if (b <= 0x7f) { i++; continue }
+    let extra: number
+    if (b >= 0xc2 && b <= 0xdf) extra = 1
+    else if (b >= 0xe0 && b <= 0xef) extra = 2
+    else if (b >= 0xf0 && b <= 0xf4) extra = 3
+    else return false
+    if (i + extra >= len) return false
+    for (let j = 1; j <= extra; j++) {
+      if ((buf[i + j] & 0xc0) !== 0x80) return false
+    }
+    i += extra + 1
+  }
+  return true
+}
+
 export function detectEncoding(buf: Buffer): { encoding: FileEncoding; binary: boolean } {
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
     return { encoding: 'utf8bom', binary: false }
@@ -57,7 +82,10 @@ export function detectEncoding(buf: Buffer): { encoding: FileEncoding; binary: b
   for (let i = 0; i < sample.length; i++) {
     if (sample[i] === 0) return { encoding: 'utf8', binary: true }
   }
-  return { encoding: 'utf8', binary: false }
+  // 无 BOM：合法 UTF-8 直接判 UTF-8；否则若含高位字节(可能是 GBK 汉字)则判 gbk，
+  // 纯 ASCII（全 ≤0x7f）也是合法 UTF-8，走上面分支。sample 足够代表整体编码倾向。
+  if (isValidUtf8(sample)) return { encoding: 'utf8', binary: false }
+  return { encoding: 'gbk', binary: false }
 }
 
 export function decodeText(buf: Buffer, encoding: FileEncoding): string {
@@ -71,6 +99,9 @@ export function decodeText(buf: Buffer, encoding: FileEncoding): string {
       body.swap16()
       return body.toString('utf16le')
     }
+    case 'gbk':
+      // gb18030 是 GBK/GB2312 的严格超集，用它解码可无损覆盖简体中文旧文件。
+      return iconv.decode(buf, 'gb18030')
     default:
       return buf.toString('utf8')
   }
@@ -87,9 +118,24 @@ export function encodeText(text: string, encoding: FileEncoding): Buffer {
       body.swap16()
       return Buffer.concat([Buffer.from([0xfe, 0xff]), body])
     }
+    case 'gbk':
+      return iconv.encode(text, 'gb18030')
     default:
       return Buffer.from(text, 'utf8')
   }
+}
+
+// 严格编码：把文本按目标编码编码后，再解码回来与原文比对，确保「无损往返」。
+// 若不一致（如往 GBK 文件里写入 emoji / 该编码无法表示的字符），返回 lossy=true，
+// 上层据此拒绝写入并报错，绝不产生乱码落盘。ok 时 data 为可安全写盘的字节。
+export function encodeTextStrict(
+  text: string,
+  encoding: FileEncoding
+): { ok: true; data: Buffer } | { ok: false; lossy: true } {
+  const data = encodeText(text, encoding)
+  const roundTrip = decodeText(data, encoding)
+  if (roundTrip === text) return { ok: true, data }
+  return { ok: false, lossy: true }
 }
 
 
@@ -111,7 +157,15 @@ export async function writeTextFile(
   content: string,
   encoding: FileEncoding = 'utf8'
 ): Promise<void> {
-  await writeFileAtomic(target, encodeText(content, encoding))
+  // 落盘最后一道闸：严格往返校验。若新内容无法用目标编码无损表示，直接抛错而非写出乱码，
+  // 保证任何写入路径（含绕过工具层的调用）都不会因编码不一致损坏文件。
+  const res = encodeTextStrict(content, encoding)
+  if (!res.ok) {
+    throw new Error(
+      `编码不一致：内容无法用 ${encoding} 无损编码，已中止写入以避免乱码（${target}）`
+    )
+  }
+  await writeFileAtomic(target, res.data)
 }
 
 

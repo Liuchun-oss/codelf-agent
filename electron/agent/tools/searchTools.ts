@@ -41,7 +41,25 @@ export const grepTool: Tool<GrepInput> = {
     })
     if (!res.ok) return { content: res.error ?? '搜索失败', isError: true }
 
-    if (res.results.length === 0) return { content: '无匹配结果' }
+    // 附注：超大文件跳过 / 达时间上限。这些信息必须透出，否则模型会把"被跳过/超时"
+    // 误判为"内容不存在"，做出错误结论（这正是此前 grep"经常失败"的隐性根源）。
+    const notes: string[] = []
+    if (res.skippedLargeFiles?.length) {
+      const shown = res.skippedLargeFiles.slice(0, 10).join('、')
+      const more = res.skippedLargeFiles.length > 10 ? ` 等 ${res.skippedLargeFiles.length} 个` : ''
+      notes.push(
+        `注意：${res.skippedLargeFiles.length} 个文件因超过大小上限(32MB)未被搜索：${shown}${more}。` +
+          `如需在其中查找，请用 read_file 或终端命令(rg/grep)针对性搜索。`
+      )
+    }
+    if (res.timedOut) {
+      notes.push('注意：搜索因达到时间上限提前结束，结果可能不完整，请缩小 path 范围或细化查询后重试。')
+    }
+    const noteBlock = notes.length ? notes.join('\n') + '\n' : ''
+
+    if (res.results.length === 0) {
+      return { content: noteBlock ? `${noteBlock}无匹配结果` : '无匹配结果' }
+    }
 
     const lines: string[] = []
     let matchCount = 0
@@ -59,7 +77,7 @@ export const grepTool: Tool<GrepInput> = {
       truncated = true
     }
     const header = `找到 ${matchCount} 处匹配${res.truncated ? '（已达上限）' : ''}：\n`
-    return { content: header + body, truncated }
+    return { content: noteBlock + header + body, truncated }
   }
 }
 
