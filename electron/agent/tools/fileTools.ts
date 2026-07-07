@@ -7,6 +7,7 @@ import {
   errMessage,
   buildIgnore,
   toRel,
+  encodeTextStrict,
   type FileEncoding
 } from '../../services/fsService'
 import { resolveAnyPath } from './paths'
@@ -171,6 +172,35 @@ async function readCurrent(abs: string): Promise<CurrentFile> {
   return { exists: true, content: res.content ?? '', encoding: res.encoding ?? 'utf8', binary: false }
 }
 
+const ENCODING_LABEL: Record<FileEncoding, string> = {
+  utf8: 'UTF-8',
+  utf8bom: 'UTF-8 with BOM',
+  utf16le: 'UTF-16 LE',
+  utf16be: 'UTF-16 BE',
+  gbk: 'GBK/GB2312'
+}
+
+// 落盘前的编码一致性闸门：新内容必须能用「原文件编码」无损表示，否则拒绝写入。
+// 这从源头杜绝「用错误编码写回导致整文件乱码」——尤其是 GBK 文件里混入 emoji /
+// 生僻字这类原编码无法表示的字符时，明确报错并给出可执行的修复建议，绝不静默写坏。
+function encodingGuard(
+  newContent: string,
+  encoding: FileEncoding
+): { ok: true } | { ok: false; message: string } {
+  const res = encodeTextStrict(newContent, encoding)
+  if (res.ok) return { ok: true }
+  return {
+    ok: false,
+    message:
+      `写入被拒绝：新内容包含无法用原文件编码（${ENCODING_LABEL[encoding]}）表示的字符，` +
+      `强行写入会导致乱码。\n` +
+      `处理建议：\n` +
+      `1) 若这些字符（如 emoji / 生僻字）是必需的，请先征得用户同意，把该文件整体转换为 UTF-8 后再写入；\n` +
+      `2) 否则请改用该编码支持的等价字符。\n` +
+      `（为保护数据，本次未做任何写入）`
+  }
+}
+
 const writeFileSchema = z.object({
   path: z.string().describe('文件路径（相对工作区根）'),
   content: z.string().describe('文件完整新内容')
@@ -198,12 +228,15 @@ export const writeFileTool: Tool<WriteFileInput> = {
     if (cur.exists && !diffHasChanges(diff)) {
       return { content: '内容无变化，未发起写入' }
     }
+    const targetEncoding: FileEncoding = cur.exists ? cur.encoding : 'utf8'
+    const guard = encodingGuard(input.content, targetEncoding)
+    if (!guard.ok) return { content: guard.message, isError: true }
     return {
       content: `准备${cur.exists ? '覆盖' : '创建'} ${input.path}`,
       fileChange: {
         path: abs,
         newContent: input.content,
-        encoding: cur.exists ? cur.encoding : 'utf8',
+        encoding: targetEncoding,
         diff,
         isCreate: !cur.exists
       }
@@ -331,6 +364,9 @@ export const editFileTool: Tool<EditFileInput> = {
     const newContent = input.replace_all
       ? cur.content.split(needle).join(input.new_string)
       : cur.content.replace(needle, () => input.new_string)
+
+    const guard = encodingGuard(newContent, cur.encoding)
+    if (!guard.ok) return { content: guard.message, isError: true }
 
     return {
       content: `准备修改 ${input.path}`,
