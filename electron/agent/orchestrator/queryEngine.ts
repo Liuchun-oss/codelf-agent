@@ -319,12 +319,41 @@ export class QueryEngine {
   private workspaceRootOverride: string | null = null
   private lastMemoryRoot: string | null = null
   private lastPromptCacheSnapshot?: { signature: string; hitRate: number }
+  // 空闲记忆反思：turn 结束不立即跑反思（那会额外发一次 LLM 请求，与主对话抢同一
+  // Provider 连接/并发配额，表现为"记笔记后卡 ~10 秒"）。改为登记一个延迟任务，
+  // 若窗口内本会话又开新 turn 则取消顺延，真正空闲时才执行，彻底避开资源争用。
+  private pendingReflect: { timer: NodeJS.Timeout; run: () => void } | null = null
 
   constructor(registry: ToolRegistry = buildDefaultRegistry()) {
     this.registry = registry
   }
 
+  // 会话空闲多久后才执行记忆反思（毫秒）。窗口内有新 turn 则取消重排。
+  private static readonly IDLE_REFLECT_DELAY_MS = 8000
+
+  // 取消挂起的空闲反思（新 turn 开始或引擎清理时调用）。
+  private cancelPendingReflect(): void {
+    if (this.pendingReflect) {
+      clearTimeout(this.pendingReflect.timer)
+      this.pendingReflect = null
+    }
+  }
+
+  // 登记一个"空闲后执行"的反思任务：延迟 IDLE_REFLECT_DELAY_MS 执行，
+  // 期间若被 cancelPendingReflect 取消（本会话又开新 turn）则不执行。
+  private scheduleIdleReflect(run: () => void): void {
+    this.cancelPendingReflect()
+    const timer = setTimeout(() => {
+      this.pendingReflect = null
+      run()
+    }, QueryEngine.IDLE_REFLECT_DELAY_MS)
+    // 反思是纯后台巩固，不应拖住进程退出。
+    timer.unref?.()
+    this.pendingReflect = { timer, run }
+  }
+
   cancel(sessionId?: string): void {
+    this.cancelPendingReflect()
     this.active?.abort()
     this.broker.cancelAll()
     this.fileChangeBroker.cancelAll()
@@ -384,6 +413,7 @@ export class QueryEngine {
   }
 
   clear(sessionId?: string): void {
+    this.cancelPendingReflect()
     this.historyTurns = []
     this.snippedTurnIds.clear()
     this.contentReplacementState = createContentReplacementState()
@@ -502,6 +532,108 @@ export class QueryEngine {
    * 生成的 summary turn（afterTurns 中标记了 compactMeta 的那个）。该 turn 在
    * 压缩瞬间一次性生成、之后固定，故注入不产生任何额外缓存失效。
    */
+  /**
+   * 用户主动触发的上下文压缩（对应聊天里的 /compact 指令）。
+   *
+   * 复用自动压缩的全部机制（maybeCompactTurns + checkpoint writer + 记忆反思），
+   * 差别仅在于：force=true 强制压缩、type='manual' 标记来源，且不依赖某一轮 turn。
+   * 空闲（非流式）时调用；返回是否真的压缩了及压缩前的 token 估算，供上层反馈。
+   */
+  async compactNow(payload: {
+    sessionId?: string
+    profileId?: string | null
+    workspaceRoot?: string | null
+    activeFilePath?: string
+  }): Promise<{ compacted: boolean; preTokens?: number; reason?: string }> {
+    if (this.active) return { compacted: false, reason: 'busy' }
+    if (this.visibleHistoryTurns().length <= 2) return { compacted: false, reason: 'too_short' }
+
+    const profileId =
+      (payload.profileId && getProfileRaw(payload.profileId) ? payload.profileId : null) ??
+      getActiveProfileId()
+    const profile = profileId ? getProfileRaw(profileId) : null
+    if (!profile) return { compacted: false, reason: 'no_profile' }
+
+    const workspaceRoot = this.workspaceRootOverride ?? payload.workspaceRoot ?? undefined
+    const ctx: PromptContext = {
+      appName: APP_NAME,
+      os: process.platform,
+      date: todayISODate(),
+      shell: currentShellName(),
+      responseLanguage: DEFAULT_RESPONSE_LANGUAGE,
+      workspacePath: workspaceRoot,
+      activeFilePath: payload.activeFilePath,
+      model: profile.model,
+      enabledTools: this.registry.availableTools().map((t) => t.name),
+      permissionMode: 'default'
+    }
+
+    const controller = new AbortController()
+    const signal = controller.signal
+    let adapter
+    try {
+      adapter = createAdapter(profile, getActiveProfileApiKey())
+    } catch {
+      return { compacted: false, reason: 'adapter_error' }
+    }
+
+    let systemText: string
+    try {
+      systemText = assembleSystemMessage(await fetchSystemPromptPartsAsync(ctx, signal))
+    } catch {
+      systemText = ''
+    }
+
+    const summarize = async (sumMessages: ChatMessage[]): Promise<string> => {
+      let text = ''
+      for await (const chunk of adapter.streamChat(
+        { model: profile.model, messages: sumMessages, maxOutputTokens: 1024, promptCache: buildPromptCacheOptions(profile.kind) },
+        signal
+      )) {
+        if (chunk.type === 'text') text += chunk.text
+      }
+      return text
+    }
+
+    const meta = lookupModelMetadata(profile.kind, profile.model)
+    const contextWindow = profile.contextWindow ?? meta.contextWindow ?? 128_000
+    const restoreHints = buildCompactRestoreHints({
+      historyTurns: this.historyTurns,
+      activeFilePath: payload.activeFilePath,
+      workspaceRoot
+    })
+
+    try {
+      const beforeTurns = this.visibleHistoryTurns()
+      const { turns, compacted, preCompactTokens } = await maybeCompactTurns({
+        turns: beforeTurns,
+        model: profile.model,
+        kind: profile.kind,
+        contextWindow,
+        summarize,
+        systemTokens: estimateSystemTokens(systemText, profile.model, profile.kind),
+        maxOutputTokens: profile.maxOutputTokens,
+        force: true,
+        type: 'manual',
+        restoreHints
+      })
+      if (!compacted) return { compacted: false, reason: 'nothing_to_compact' }
+      this.replaceHistoryAfterCompact(turns)
+      this.compactFailureCount = 0
+      void this.runCheckpointWriterFor({
+        sessionId: payload.sessionId || 'default',
+        turnId: `manual-compact-${Date.now()}`,
+        model: profile.model,
+        beforeTurns,
+        afterTurns: turns,
+        summarize
+      })
+      return { compacted: true, preTokens: preCompactTokens }
+    } catch {
+      return { compacted: false, reason: 'error' }
+    }
+  }
+
   private async runCheckpointWriterFor(params: {
     sessionId: string
     turnId: string
@@ -657,6 +789,9 @@ export class QueryEngine {
   }
 
   async *submitTurn(payload: AiSendPayload): AsyncGenerator<AgentEvent, void, unknown> {
+    // 新 turn 开始 = 会话不空闲：取消上一回合登记的空闲反思，顺延到下次真正空闲再跑，
+    // 从根上避免反思的后台 LLM 请求与本轮主对话抢同一 Provider 资源。
+    this.cancelPendingReflect()
     const turnId = payload.turnId
     // sessionCwd 区分「未提供(undefined) → 兼容旧路径回退编辑器工作区」与
     // 「显式 null（纯对话）→ 绝不回退」，避免纯对话泄漏当前工作区
@@ -933,6 +1068,10 @@ export class QueryEngine {
     let hasAttemptedReactiveCompact = false
     let lengthContinuationCount = 0
     const MAX_LENGTH_CONTINUATIONS = 8
+    // 空响应兜底：模型/中转在某轮返回完全空（无文字、无工具调用）时自动重试，
+    // 而不是静默结束。达上限则明确报错，根治"发消息没反应、自动结束输出"的现象。
+    let emptyResponseRetryCount = 0
+    const MAX_EMPTY_RESPONSE_RETRIES = 3
     // 「防假完成」：本轮用户是否请求出图、是否真正调用过图像工具、已纠正次数。
     const imageIntent = userAskedForImage(payload.message)
     let imageToolInvokedThisTurn = false
@@ -1139,8 +1278,15 @@ export class QueryEngine {
         // 当前模型明确不支持视觉时，主动剥掉历史里残留的图片块（如上一轮用视觉模型
         // 粘图后切到纯文本模型），从源头避免带 image_url 触发 400。supportsVision 为
         // undefined 的旧配置不动，仍走 provider 层的错误自愈。
-        const messages: ChatMessage[] =
+        const visionAdjusted =
           profile.supportsVision === false ? stripImagesForNonVision(assembledMessages) : assembledMessages
+        // 发送前最后一道闸门：对「完整历史 + 当前轮」整体补齐孤儿 tool_use。
+        // 各入历史路径的 reconcile 只作用于单轮 turnMessages，无法覆盖跨轮/跨重启
+        // 恢复丢失 tool_result 的历史残缺；而真正发给 Provider 的是这里的完整列表。
+        // 不在此补齐，严格通道（Anthropic/Bedrock 经中转）会报
+        // 400: `tool_use` ids were found without `tool_result` blocks，且点重试仍发同一份坏历史、报同样错。
+        // reconcile 幂等且只补占位不删除，无孤儿时零改动。
+        const messages: ChatMessage[] = reconcileOrphanToolCalls(visionAdjusted)
         let acc = new ToolCallAccumulator()
         let roundText = ''
         let roundThinking = ''
@@ -1168,6 +1314,7 @@ export class QueryEngine {
                   messages: requestMessages,
                   maxOutputTokens: profile.maxOutputTokens,
                   ...(currentToolDefs.length ? { tools: currentToolDefs } : {}),
+                  ...(profile.kind === 'dify' ? { sessionId: payload.sessionId || 'default' } : {}),
                   promptCacheKey,
                   promptCache,
                   ...(profile.kind === 'deepseek' && profile.thinkingMode
@@ -1316,14 +1463,33 @@ export class QueryEngine {
               this.compactFailureCount += 1
             }
           }
-          
-          
-          commitPartialIfSideEffected()
+          // 报错时也把本轮已流式输出的半截文字（含续写累积的 carryText）落进历史，
+          // 与「停止」一致：让用户点「重试」后模型仍能看到自己上次输出到哪，
+          // 避免完全重来或重复劳动。即使本轮无副作用（纯聊天）也落。
+          const partialAssistantText = carryText + roundText
+          if (partialAssistantText.length > 0) {
+            turnMessages.push({ role: 'assistant', content: partialAssistantText })
+          }
+          if (sideEffected || partialAssistantText.length > 0) {
+            this.historyTurns.push({ turnId, messages: reconcileOrphanToolCalls(turnMessages) })
+            commitContentReplacementState()
+            contentReplacementCommitted = true
+          }
           yield toErrorEvent(turnId, e)
           return
         }
 
         const calls = acc.finalize()
+        // 诊断日志（零行为影响）：记录本轮模型「解析后」的产出——文本/思考长度、
+        // 工具调用数、finish_reason。用于对比不同模型/通道：若某模型每轮 toolCalls 恒为 0
+        // 却有大段文本，基本可判定工具调用在上游（中转）被吞或模型未按工具协议返回。
+        recordDebugEvent({
+          kind: 'request_end',
+          sessionId: payload.sessionId || 'default',
+          turnId,
+          label: 'round_result',
+          detail: `kind=${profile.kind} model=${profile.model} toolsSent=${currentToolDefs.length} textLen=${roundText.trim().length} thinkingLen=${roundThinking.trim().length} toolCalls=${calls.length} finishReason=${lastFinishReason ?? 'none'}`
+        })
         if (calls.length === 0) {
           // 模型因达到 max_tokens 被截断（finish_reason=length）时，自动续写而非静默结束，
           // 避免出现"输出戛然而止、无报错、按钮变回发送"的现象。
@@ -1393,9 +1559,47 @@ export class QueryEngine {
             continue
           }
 
+          // 空响应兜底：模型/中转本轮既没输出任何文字，也没发起工具调用（常见于中转服务
+          // 偶发返回空流、或模型端异常）。过去这里直接 push 空消息并 break，表现为
+          // "发消息没反应、转圈后自动结束、一个字都没有"。现在改为：回收可能变坏的连接后
+          // 自动重试若干次；仍为空则明确报错，而不是静默假装完成。
+          if (
+            roundText.trim().length === 0 &&
+            roundThinking.trim().length === 0 &&
+            !signal.aborted
+          ) {
+            if (emptyResponseRetryCount < MAX_EMPTY_RESPONSE_RETRIES) {
+              emptyResponseRetryCount++
+              recycleOutboundDispatcher()
+              recordDebugEvent({
+                kind: 'request_error',
+                sessionId: payload.sessionId || 'default',
+                turnId,
+                label: 'empty_response',
+                detail: `模型返回空响应，自动重试 ${emptyResponseRetryCount}/${MAX_EMPTY_RESPONSE_RETRIES}（finishReason=${lastFinishReason ?? 'none'}）`
+              })
+              await new Promise((r) => setTimeout(r, Math.min(1000 * emptyResponseRetryCount, 3000)))
+              if (signal.aborted) { cancelled = true; break }
+              continue
+            }
+            commitPartialIfSideEffected()
+            yield {
+              type: 'error',
+              turnId,
+              code: 'provider_server',
+              message: '模型连续多次返回空响应（无任何文字或工具调用）。这通常是中转服务或模型端的问题，而非本地程序。可点「重试」，或在设置中更换模型/检查中转服务。',
+              retryable: false
+            }
+            return
+          }
+
           turnMessages.push({ role: 'assistant', content: roundText })
           break
         }
+
+        // 一旦模型正常发起了工具调用，说明本轮响应有效，重置空响应重试计数，
+        // 避免跨轮误累加导致后续正常轮次被提前判定为"连续空响应"。
+        emptyResponseRetryCount = 0
 
         
         turnMessages.push({
@@ -1511,8 +1715,14 @@ export class QueryEngine {
               cancelled: response.cancelled
             }
             const answers = response.answers ?? {}
+            const questionAnnotations = response.annotations ?? {}
             const answersText = Object.entries(answers)
-              .map(([questionText, answer]) => `"${questionText}"="${answer}"`)
+              .map(([questionText, answer]) => {
+                const note = questionAnnotations[questionText]?.notes?.trim()
+                return note
+                  ? `"${questionText}"="${answer}"（备注：${note}）`
+                  : `"${questionText}"="${answer}"`
+              })
               .join(', ')
             results.set(c.id, {
               content: response.cancelled
@@ -1873,16 +2083,21 @@ export class QueryEngine {
         if (reflectMsgs.length > 0) {
           const memRoot = this.lastMemoryRoot
           const activeFile = payload.editorContext?.activeFilePath
-          void import('../memory/reflection')
-            .then(({ reflectAndEncode }) =>
-              reflectAndEncode({
-                sessionId: reflectSessionId,
-                messages: reflectMsgs,
-                workspaceRoot: memRoot,
-                activeFile
-              })
-            )
-            .catch(() => {})
+          // 不在回合末尾立即跑反思（会额外发一次 LLM 请求，与后续主对话抢 Provider 资源，
+          // 造成"记笔记后卡 ~10 秒"）。登记为空闲任务：会话安静 IDLE_REFLECT_DELAY_MS 后才执行；
+          // 若期间用户又发消息（新 turn），submitTurn 会取消它，顺延到下次空闲。
+          this.scheduleIdleReflect(() => {
+            void import('../memory/reflection')
+              .then(({ reflectAndEncode }) =>
+                reflectAndEncode({
+                  sessionId: reflectSessionId,
+                  messages: reflectMsgs,
+                  workspaceRoot: memRoot,
+                  activeFile
+                })
+              )
+              .catch(() => {})
+          })
         }
       }
     }

@@ -3069,30 +3069,6 @@ body.resizing-x .sidebar-dock {
   border-left-color: var(--accent);
   background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.08), rgba(21, 21, 21, 0) 34px), var(--bg-elevated);
 }
-.agent-thought-body.live::before {
-  content: '';
-  position: sticky;
-  top: -8px;
-  display: block;
-  height: 2px;
-  margin: -8px -10px 6px -12px;
-  background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.9), transparent);
-  animation: agent-thought-scan 1.6s ease-in-out infinite;
-}
-@keyframes agent-thought-scan {
-  0% {
-    transform: translateX(-70%);
-    opacity: 0;
-  }
-  30%,
-  70% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(70%);
-    opacity: 0;
-  }
-}
 .agent-meta-link {
   background: transparent;
   border: none;

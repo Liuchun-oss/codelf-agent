@@ -366,6 +366,7 @@ export interface LcApi {
   aiSend: (payload: AiSendPayload) => Promise<AgentOpResult>
   aiStop: (sessionId?: string) => Promise<boolean>
   aiClearHistory: (sessionId?: string) => Promise<boolean>
+  aiCompactNow: (payload?: { sessionId?: string; profileId?: string | null; workspaceRoot?: string | null; activeFilePath?: string }) => Promise<{ compacted: boolean; preTokens?: number; reason?: string }>
   aiDeleteSession: (sessionId: string) => Promise<boolean>
   aiListSessions: (workspaceId?: string | null) => Promise<PersistedSession[]>
   aiLoadSession: (sessionId: string) => Promise<PersistedSession | null>

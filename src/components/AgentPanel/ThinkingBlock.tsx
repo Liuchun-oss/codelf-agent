@@ -13,6 +13,8 @@ export default function ThinkingBlock({ text, active }: Props): JSX.Element {
   const [open, setOpen] = useState(false)
   const startedAtRef = useRef<number | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
+  // 是否自动跟随到底部：用户主动上滑离开底部则暂停跟随，滑回底部附近再恢复。
+  const followBottomRef = useRef(true)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [doneSeconds, setDoneSeconds] = useState<number | null>(null)
   const visibleText = useTypewriterText(text, active)
@@ -51,10 +53,24 @@ export default function ThinkingBlock({ text, active }: Props): JSX.Element {
     }
   }, [active, clean.length])
 
+  // 展开时重置为跟随底部（下次打开默认贴底）。
+  useEffect(() => {
+    if (open) followBottomRef.current = true
+  }, [open])
+
   useEffect(() => {
     if (!open || !active || !bodyRef.current) return
+    if (!followBottomRef.current) return
     bodyRef.current.scrollTop = bodyRef.current.scrollHeight
   }, [active, open, visibleText])
+
+  // 用户滚动时更新跟随状态：贴近底部（阈值 24px）才继续自动跟随，上滑离开则暂停。
+  const handleScroll = (): void => {
+    const el = bodyRef.current
+    if (!el) return
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    followBottomRef.current = distanceToBottom <= 24
+  }
 
   return (
     <div className={`agent-thought${active ? ' active' : ''}${open ? ' open' : ''}`}>
@@ -83,7 +99,11 @@ export default function ThinkingBlock({ text, active }: Props): JSX.Element {
         )}
       </button>
       <Collapsible open={open && canExpand}>
-        <div ref={bodyRef} className={`agent-thought-body${active ? ' live' : ''}`}>
+        <div
+          ref={bodyRef}
+          className={`agent-thought-body${active ? ' live' : ''}`}
+          onScroll={handleScroll}
+        >
           {visibleText}
         </div>
       </Collapsible>

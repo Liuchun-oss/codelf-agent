@@ -182,6 +182,8 @@ const api = {
   aiSend: (payload: AiSendPayload) => ipcRenderer.invoke('ai:send', payload),
   aiStop: (sessionId?: string) => ipcRenderer.invoke('ai:stop', sessionId),
   aiClearHistory: (sessionId?: string) => ipcRenderer.invoke('ai:clearHistory', sessionId),
+  aiCompactNow: (payload?: { sessionId?: string; profileId?: string | null; workspaceRoot?: string | null; activeFilePath?: string }) =>
+    ipcRenderer.invoke('ai:compactNow', payload) as Promise<{ compacted: boolean; preTokens?: number; reason?: string }>,
   aiDeleteSession: (sessionId: string) => ipcRenderer.invoke('ai:deleteSession', sessionId),
   aiListSessions: (workspaceId?: string | null) => ipcRenderer.invoke('ai:listSessions', workspaceId),
   aiLoadSession: (sessionId: string) => ipcRenderer.invoke('ai:loadSession', sessionId),

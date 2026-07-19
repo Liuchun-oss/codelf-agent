@@ -175,6 +175,22 @@ export function registerAiIpc(): void {
     return true
   })
 
+  ipcMain.handle(
+    'ai:compactNow',
+    async (
+      _e,
+      payload?: { sessionId?: string; profileId?: string | null; workspaceRoot?: string | null; activeFilePath?: string }
+    ): Promise<{ compacted: boolean; preTokens?: number; reason?: string }> => {
+      const id = payload?.sessionId || 'default'
+      return getQueryEngine(id).compactNow({
+        sessionId: id,
+        profileId: payload?.profileId,
+        workspaceRoot: payload?.workspaceRoot,
+        activeFilePath: payload?.activeFilePath
+      })
+    }
+  )
+
   ipcMain.handle('ai:deleteSession', async (_e, sessionId: string): Promise<boolean> => {
     if (sessionId) {
       await disposeQueryEngine(sessionId)

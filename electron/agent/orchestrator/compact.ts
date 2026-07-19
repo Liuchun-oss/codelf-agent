@@ -51,6 +51,9 @@ export interface MaybeCompactOptions {
   restoreHints?: string
   
   force?: boolean
+  
+  // 压缩来源标记：用户主动触发（/compact）时传 'manual'，默认 'auto'。仅影响 summary turn 的元数据与提示文案。
+  type?: CompactMetadata['type']
 }
 
 export interface MaybeCompactResult {
@@ -313,7 +316,9 @@ export async function maybeCompactTurns(opts: MaybeCompactOptions): Promise<Mayb
   const reason: CompactMetadata['reason'] = crossesPredictiveThreshold ? 'predictive' : 'threshold'
   const summarizedTurnIds = old.map((t) => t.turnId)
   const contentParts = [
-    '[Summary of earlier conversation, auto-compacted to save context]',
+    opts.type === 'manual'
+      ? '[Summary of earlier conversation, manually compacted by user to save context]'
+      : '[Summary of earlier conversation, auto-compacted to save context]',
     `Reason: ${reason}`,
     `Summarized turns: ${summarizedTurnIds.join(', ') || '(none)'}`,
     '',
@@ -326,7 +331,7 @@ export async function maybeCompactTurns(opts: MaybeCompactOptions): Promise<Mayb
   const summaryTurn: CompactTurn = {
     turnId: `compact-${Date.now()}`,
     compactMeta: {
-      type: 'auto',
+      type: opts.type ?? 'auto',
       reason,
       summarizedTurnIds,
       preCompactTokens,

@@ -224,18 +224,24 @@ export const writeFileTool: Tool<WriteFileInput> = {
     const cur = await readCurrent(abs)
     if (cur.binary) return { content: '目标是二进制/超大文件，拒绝覆盖', isError: true }
 
-    const diff = computeLineDiff(cur.content, input.content)
+    // 覆盖已存在文件时，沿用原文件换行风格，避免整文件从 CRLF 变成 LF；
+    // 新建文件保持模型给的原样。
+    const newContent = cur.exists
+      ? normalizeEolToMatch(input.content, cur.content)
+      : input.content
+
+    const diff = computeLineDiff(cur.content, newContent)
     if (cur.exists && !diffHasChanges(diff)) {
       return { content: '内容无变化，未发起写入' }
     }
     const targetEncoding: FileEncoding = cur.exists ? cur.encoding : 'utf8'
-    const guard = encodingGuard(input.content, targetEncoding)
+    const guard = encodingGuard(newContent, targetEncoding)
     if (!guard.ok) return { content: guard.message, isError: true }
     return {
       content: `准备${cur.exists ? '覆盖' : '创建'} ${input.path}`,
       fileChange: {
         path: abs,
-        newContent: input.content,
+        newContent,
         encoding: targetEncoding,
         diff,
         isCreate: !cur.exists
@@ -275,6 +281,15 @@ function uniqueStrings(values: string[]): string[] {
 
 function toCrlf(text: string): string {
   return text.replace(/\r?\n/g, '\r\n')
+}
+
+// 按「原文件的主导换行风格」把新内容的换行统一掉，避免局部替换后
+// CRLF 文件里混入 LF（或反之）导致编辑器提示「行尾不一致」。
+// 判据：原文件若含任何 CRLF，视为 CRLF 文件，新内容一律转 CRLF；否则统一为 LF。
+export function normalizeEolToMatch(newContent: string, originalContent: string): string {
+  const usesCrlf = /\r\n/.test(originalContent)
+  const lf = newContent.replace(/\r\n/g, '\n')
+  return usesCrlf ? lf.replace(/\n/g, '\r\n') : lf
 }
 
 function candidateNeedles(needle: string): string[] {
@@ -361,9 +376,11 @@ export const editFileTool: Tool<EditFileInput> = {
     }
 
     
-    const newContent = input.replace_all
+    const rawNewContent = input.replace_all
       ? cur.content.split(needle).join(input.new_string)
       : cur.content.replace(needle, () => input.new_string)
+    // 统一换行风格到原文件，避免混用 CRLF/LF。
+    const newContent = normalizeEolToMatch(rawNewContent, cur.content)
 
     const guard = encodingGuard(newContent, cur.encoding)
     if (!guard.ok) return { content: guard.message, isError: true }

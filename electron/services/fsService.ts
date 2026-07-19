@@ -46,8 +46,13 @@ export function extOf(p: string): string {
 }
 
 
-// 校验 buffer 是否为合法 UTF-8 字节序列。用于区分「无 BOM 的 UTF-8」与「GBK 等旧编码」：
-// GBK 里的双字节汉字通常构成非法 UTF-8 序列，据此把它们从「兜底当 UTF-8」中甄别出来。
+// 校验 buffer 是否为合法 UTF-8 字节序列。用于区分「无 BOM 的 UTF-8」与「GBK 等旧编码」。
+//
+// 关键：必须对「完整 buffer」校验，或在多字节字符边界处安全截断，绝不能在任意字节位置
+// 截断样本——否则一个正常 UTF-8 中文文件若恰好在样本末尾切到某个汉字中间（UTF-8 汉字占
+// 3 字节），会被误判为非法 UTF-8 → 误判成 GBK → 编辑时沿用错误编码把文件写成乱码。
+// 这正是「有中文就大概率写坏」的根因。这里对全量 buffer 校验（文本文件已受 16MB 上限约束，
+// 一次线性扫描成本可忽略），从根上消除截断误判。
 function isValidUtf8(buf: Buffer): boolean {
   let i = 0
   const len = buf.length
@@ -68,6 +73,13 @@ function isValidUtf8(buf: Buffer): boolean {
   return true
 }
 
+// 二进制探测：只看是否含 NUL 字节（文本文件不含 \0）。对完整 buffer 检查。
+function hasNulByte(buf: Buffer): boolean {
+  const scanLen = Math.min(buf.length, 65_536)
+  for (let i = 0; i < scanLen; i++) if (buf[i] === 0) return true
+  return false
+}
+
 export function detectEncoding(buf: Buffer): { encoding: FileEncoding; binary: boolean } {
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
     return { encoding: 'utf8bom', binary: false }
@@ -78,14 +90,27 @@ export function detectEncoding(buf: Buffer): { encoding: FileEncoding; binary: b
   if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
     return { encoding: 'utf16be', binary: false }
   }
-  const sample = buf.subarray(0, Math.min(buf.length, 8000))
-  for (let i = 0; i < sample.length; i++) {
-    if (sample[i] === 0) return { encoding: 'utf8', binary: true }
+  if (hasNulByte(buf)) return { encoding: 'utf8', binary: true }
+  // 判定强烈偏向 UTF-8（现代文件的绝对主流）：全量合法 UTF-8（含纯 ASCII）一律判 UTF-8。
+  // 只有「确实不是合法 UTF-8」才考虑 GBK——此时再要求它能被 gb18030 无损解码才采纳，
+  // 否则仍回退 UTF-8。宁可偶尔把真 GBK 当 UTF-8（读出乱码、明显可见、不会写坏），
+  // 也绝不把真 UTF-8 误判成 GBK（会静默写坏文件）。
+  if (isValidUtf8(buf)) return { encoding: 'utf8', binary: false }
+  if (looksLikeGbk(buf)) return { encoding: 'gbk', binary: false }
+  return { encoding: 'utf8', binary: false }
+}
+
+// 保守判断 buffer 是否确实像 GBK：用 gb18030 解码后不含替换字符（U+FFFD），
+// 且解码结果里出现了中日韩汉字。二者兼备才认定 GBK，避免把「碰巧非法 UTF-8 的
+// 二进制边角/其它编码」误当成 GBK。
+function looksLikeGbk(buf: Buffer): boolean {
+  try {
+    const decoded = iconv.decode(buf.subarray(0, Math.min(buf.length, 65_536)), 'gb18030')
+    if (decoded.includes('\uFFFD')) return false
+    return /[\u4e00-\u9fff]/.test(decoded)
+  } catch {
+    return false
   }
-  // 无 BOM：合法 UTF-8 直接判 UTF-8；否则若含高位字节(可能是 GBK 汉字)则判 gbk，
-  // 纯 ASCII（全 ≤0x7f）也是合法 UTF-8，走上面分支。sample 足够代表整体编码倾向。
-  if (isValidUtf8(sample)) return { encoding: 'utf8', binary: false }
-  return { encoding: 'gbk', binary: false }
 }
 
 export function decodeText(buf: Buffer, encoding: FileEncoding): string {
@@ -157,8 +182,27 @@ export async function writeTextFile(
   content: string,
   encoding: FileEncoding = 'utf8'
 ): Promise<void> {
-  // 落盘最后一道闸：严格往返校验。若新内容无法用目标编码无损表示，直接抛错而非写出乱码，
-  // 保证任何写入路径（含绕过工具层的调用）都不会因编码不一致损坏文件。
+  // 落盘闸门一：写前复核磁盘上目标文件的「实际当前编码」，必须与本次要写的 encoding 一致。
+  // 覆盖已存在的文本文件时，若两者不符（例如决策时的探测与此刻磁盘状态不一致，或存在竞态），
+  // 直接中止——绝不用另一种编码覆盖原文件，从源头保证「写入编码 == 原文件编码」。
+  try {
+    const stat = await fs.stat(target)
+    if (stat.isFile() && stat.size > 0 && stat.size <= MAX_TEXT_BYTES) {
+      const existing = await fs.readFile(target)
+      const det = detectEncoding(existing)
+      if (!det.binary && det.encoding !== encoding) {
+        throw new Error(
+          `编码不一致：目标文件当前实际编码为 ${det.encoding}，本次写入声明为 ${encoding}，` +
+            `已中止写入以避免损坏原文件（${target}）。请以文件实际编码重新生成写入内容。`
+        )
+      }
+    }
+  } catch (e) {
+    // stat 失败（文件不存在=新建）属正常路径；只有主动抛出的编码不一致错误需要向上传播。
+    if (e instanceof Error && e.message.startsWith('编码不一致')) throw e
+  }
+
+  // 落盘闸门二：严格往返校验。若新内容无法用目标编码无损表示，直接抛错而非写出乱码。
   const res = encodeTextStrict(content, encoding)
   if (!res.ok) {
     throw new Error(

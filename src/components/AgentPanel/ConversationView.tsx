@@ -60,6 +60,7 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
   const activeProfile = useAgentStore((s) => s.activeProfile)
   const sendMessage = useAgentStore((s) => s.sendMessage)
   const stop = useAgentStore((s) => s.stop)
+  const compactContext = useAgentStore((s) => s.compactContext)
 
   const syncCursor = useCallback((): void => {
     const el = textareaRef.current
@@ -156,20 +157,23 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
           }
         })
       }
+      // 动作型指令：立即执行，不加入引用、不塞进输入框。
+      if (item.kind === 'action') {
+        if (item.action === 'compact') void compactContext()
+        return
+      }
+      const ref: SlashReference = {
+        kind: item.kind === 'plugin' ? 'plugin' : 'skill',
+        name: item.name,
+        pluginSkills: item.pluginSkills,
+        pluginMcpServers: item.pluginMcpServers
+      }
       setSlashRefs((prev) => {
-        if (prev.some((r) => r.kind === item.kind && r.name === item.name)) return prev
-        return [
-          ...prev,
-          {
-            kind: item.kind,
-            name: item.name,
-            pluginSkills: item.pluginSkills,
-            pluginMcpServers: item.pluginMcpServers
-          }
-        ]
+        if (prev.some((r) => r.kind === ref.kind && r.name === ref.name)) return prev
+        return [...prev, ref]
       })
     },
-    [slashCommand, input]
+    [slashCommand, input, compactContext]
   )
 
   const onSend = (): void => {

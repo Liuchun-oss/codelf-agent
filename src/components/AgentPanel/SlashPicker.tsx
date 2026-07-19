@@ -4,21 +4,37 @@ import type { InstalledPluginInfo } from '@shared/pluginTypes'
 import { fuzzyRank } from '@/utils/fuzzy'
 import { shouldConsumePickSignal } from './pickTrigger'
 
-export type SlashKind = 'skill' | 'plugin'
+export type SlashKind = 'skill' | 'plugin' | 'action'
+
+/** 动作型指令 id（立即执行，非引用）。 */
+export type SlashActionId = 'compact'
 
 export interface SlashItem {
   kind: SlashKind
   /** 唯一 id（kind + name） */
   id: string
-  /** skill 名 或 插件名 */
+  /** skill 名 或 插件名 / action 名 */
   name: string
-  /** 展示用副标题（skill 描述 / 插件携带内容概览） */
+  /** 展示用副标题（skill 描述 / 插件携带内容概览 / action 说明） */
   description?: string
   /** 插件携带的 skill 名（plugin 专用） */
   pluginSkills?: string[]
   /** 插件携带的 MCP server 名（plugin 专用） */
   pluginMcpServers?: string[]
+  /** action 专用：具体动作标识 */
+  action?: SlashActionId
 }
+
+/** 内置动作型指令：立即执行，不塞进输入框。 */
+const ACTION_ITEMS: SlashItem[] = [
+  {
+    kind: 'action',
+    id: 'action:compact',
+    name: 'compact',
+    description: '压缩当前对话的早期上下文，释放空间并保留摘要',
+    action: 'compact'
+  }
+]
 
 interface Row extends SlashItem {
   label: string
@@ -98,7 +114,8 @@ export default function SlashPicker({
         name: s.name,
         description: s.description
       }))
-    return [...pluginItems, ...skillItems]
+    // 动作型指令排在最前，便于快速触发。
+    return [...ACTION_ITEMS, ...pluginItems, ...skillItems]
   }, [skills, plugins])
 
   const rows = useMemo<Row[]>(() => {
@@ -156,10 +173,12 @@ export default function SlashPicker({
               }}
             >
               <span className="agent-context-picker-icon">
-                {row.kind === 'plugin' ? '🧩' : '⚡'}
+                {row.kind === 'action' ? '🗜️' : row.kind === 'plugin' ? '🧩' : '⚡'}
               </span>
               <span className="agent-context-picker-primary">{row.label}</span>
-              <span className="agent-slash-kind">{row.kind === 'plugin' ? '插件' : '技能'}</span>
+              <span className="agent-slash-kind">
+                {row.kind === 'action' ? '指令' : row.kind === 'plugin' ? '插件' : '技能'}
+              </span>
               {row.description && (
                 <span className="agent-context-picker-secondary">{row.description}</span>
               )}

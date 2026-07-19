@@ -28,13 +28,11 @@ import {
   type ContentReplacementState
 } from '../tools/resultStorage'
 import { currentShellName } from '../../services/headlessTerminal'
-import { getAgentBehaviorSettings } from '../settings/agentSettingsStore'
 import { getAgentDefinition, listAgentDefinitions, summarizeAgentDefinition, type AgentDefinition } from './agentDefinitions'
 
 export const RUN_SUBAGENT_NAME = 'run_subagent'
 
 const DEFAULT_RESPONSE_LANGUAGE = 'Simplified Chinese'
-const MAX_SUBAGENT_DURATION_MS = 5 * 60 * 1000
 const MAX_FORK_CONTEXT_CHARS = 12_000
 const SUBAGENT_WORKTREE_DIR = 'subagent-worktrees'
 
@@ -575,9 +573,6 @@ export async function runReadOnlySubagent(
       ? `${profile.name}（${profile.model}，未匹配到「${requestedModel}」已回退激活模型）`
       : `${profile.name}（${profile.model}）`
 
-  const behavior = getAgentBehaviorSettings()
-  const maxToolSteps = behavior.maxToolSteps
-  const maxDurationMs = behavior.maxTurnDurationMs || MAX_SUBAGENT_DURATION_MS
   const registry = subagentRegistry(definition)
   const permissionEngine = new PermissionEngine()
   permissionEngine.loadRules(options.workspaceRoot)
@@ -632,7 +627,6 @@ export async function runReadOnlySubagent(
     ...(options.initialMessages ?? []),
     { role: 'user', content: makeSubagentPrompt(input, definition, forkContext, options.handoffInputs) }
   ]
-  let steps = 0
   let finalText = ''
   let usage: TokenUsage | undefined
   const fileChanges = new Map<string, AppliedFileChange>()
@@ -649,9 +643,6 @@ export async function runReadOnlySubagent(
   try {
     while (true) {
       if (options.signal?.aborted) throw new ProviderError('cancelled', '已取消')
-      if (Date.now() - started > maxDurationMs) {
-        return partialResult('子 Agent 已达最长执行时间，已停止。')
-      }
 
       const acc = new ToolCallAccumulator()
       let roundText = ''
@@ -755,11 +746,6 @@ export async function runReadOnlySubagent(
           toolCallId: call.id,
           content: result.isError ? `工具执行失败：${result.content}` : result.content
         })
-      }
-
-      steps += calls.length
-      if (maxToolSteps > 0 && steps >= maxToolSteps) {
-        return partialResult(`子 Agent 已达最大工具步数（${maxToolSteps}），已停止。`)
       }
     }
   } catch (e) {

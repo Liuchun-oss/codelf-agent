@@ -59,6 +59,9 @@ interface ParsedToolCall {
  * - 对话型应用（Chat App）专用，使用 /v1/chat-messages 端点
  * - 支持流式响应模式
  * - 自动管理 conversation_id 实现会话续接
+ * - **不重发历史**：上层每轮组装全量 messages，但 Dify 服务端自带会话记忆，
+ *   因此本适配器只发「本轮新增内容」（用户新消息或工具执行结果），历史交给 Dify。
+ *   新对话开端会重置 conversation_id，工具结果轮则回传 <tool_result> 完成闭环。
  * - **支持客户端工具调用**：把 Codelf tools 注入 prompt，
  *   累积完整回复后用容错解析提取 <tool_use> 标记
  *
@@ -92,11 +95,7 @@ export class DifyAdapter extends BaseProviderAdapter {
    * 包含完整的工具调用格式规范 + 动态工具清单。
    * 必须自包含，不能依赖 Dify 平台的系统提示词（用户可能未配置）。
    */
-  private buildQueryWithTools(messages: ChatMessage[], tools?: ToolDef[]): string {
-    const userMessages = messages.filter(m => m.role === 'user')
-    const lastUser = userMessages[userMessages.length - 1]
-    const baseQuery = lastUser?.content || ''
-
+  private buildQueryWithTools(baseQuery: string, tools?: ToolDef[]): string {
     if (!tools || tools.length === 0) {
       return baseQuery
     }
@@ -130,10 +129,82 @@ ${baseQuery}`
   }
 
   /**
-   * 从消息列表提取用户最后一条消息作为 query
+   * 决定「本轮真正要发给 Dify 的内容」。
+   *
+   * 关键区别：上层 queryEngine 每轮都会组装「system + 完整历史 + 当前轮」的全量 messages，
+   * 但 Dify 的对话型应用（chat-messages）自带服务端会话记忆（靠 conversation_id 续接），
+   * 无需、也不应把历史重复发过去。因此这里只提取「Dify 尚不知道的本轮新增内容」：
+   *
+   * - 普通用户轮（末尾是 user）：只发最后一条 user 消息，历史交给 Dify 会话记忆。
+   * - 工具结果回填轮（末尾是 tool）：上一轮 Dify 让我们调工具、本地已执行完，
+   *   Dify 已记得用户问题与它自己带 <tool_use> 的回复，这里只回传工具执行结果，
+   *   完成「模型请求工具 → 本地执行 → 结果回填 → 模型据此继续」的闭环。
    */
-  private extractQuery(messages: ChatMessage[], tools?: ToolDef[]): string {
-    return this.buildQueryWithTools(messages, tools)
+  private extractQuery(messages: ChatMessage[], tools?: ToolDef[], includeTools = true): string {
+    const lastRole = messages[messages.length - 1]?.role
+
+    if (lastRole === 'tool') {
+      return this.buildToolResultQuery(messages)
+    }
+
+    const userMessages = messages.filter(m => m.role === 'user')
+    const lastUser = userMessages[userMessages.length - 1]
+    const baseQuery = lastUser?.content || ''
+    // includeTools=false 时只发用户问题本身，工具清单由 Dify 会话记忆保留，
+    // 避免同一对话室每轮都重复灌整份工具 schema、浪费 token。
+    return includeTools ? this.buildQueryWithTools(baseQuery, tools) : baseQuery
+  }
+
+  /**
+   * 把本轮末尾连续的工具执行结果拼成回填 query。
+   *
+   * 用 <tool_result> 标记与 Dify 端已存的 <tool_use> 回复呼应，附带工具名便于模型对应。
+   * 工具名从历史里 assistant.toolCalls 的 id→name 映射还原。
+   */
+  private buildToolResultQuery(messages: ChatMessage[]): string {
+    const toolMsgs: ChatMessage[] = []
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'tool') toolMsgs.unshift(messages[i])
+      else break
+    }
+
+    const idToName = new Map<string, string>()
+    for (const m of messages) {
+      if (m.role === 'assistant' && m.toolCalls) {
+        for (const tc of m.toolCalls) idToName.set(tc.id, tc.name)
+      }
+    }
+
+    const blocks = toolMsgs
+      .map(m => {
+        const name = (m.toolCallId && idToName.get(m.toolCallId)) || 'unknown'
+        return `<tool_result>\n<name>${name}</name>\n<output>${m.content}</output>\n</tool_result>`
+      })
+      .join('\n')
+
+    return `以下是你上一步请求的工具执行结果。请根据结果继续完成用户任务：如果还需要调用工具，继续用 <tool_use> 标记；如果任务已完成，直接回复用户。\n\n${blocks}`
+  }
+
+  /**
+   * 是否应重置 Dify 会话（开启一段全新对话）。
+   *
+   * conversationCache 按 baseUrl 常驻进程，跨会话不会自动清除。为避免新会话的首轮
+   * 误接续上一段旧对话，这里在「本轮是普通用户轮、且全量 messages 里不存在任何
+   * assistant 消息」时判定为一段新对话的开端，重置 conversation_id。
+   * 单轮内的多步工具循环、续写、纠正等都已产生 assistant 消息，因此不会被误判。
+   */
+  private shouldResetConversation(messages: ChatMessage[]): boolean {
+    const lastRole = messages[messages.length - 1]?.role
+    if (lastRole !== 'user') return false
+    return !messages.some(m => m.role === 'assistant')
+  }
+
+  /**
+   * 生成会话缓存 key：baseUrl + sessionId。
+   * 按会话隔离，使不同会话（多标签页/多 session）各自维护独立的 conversation_id。
+   */
+  private conversationKey(sessionId?: string): string {
+    return `${this.baseUrl}::${sessionId || 'default'}`
   }
 
   /**
@@ -426,13 +497,25 @@ ${baseQuery}`
   }
 
   async *streamChat(req: ChatRequest, signal?: AbortSignal): AsyncGenerator<StreamChunk, void, unknown> {
-    const query = this.extractQuery(req.messages, req.tools)
+    // 会话缓存 key：baseUrl + sessionId，按会话隔离 conversation_id，
+    // 支持多会话并发（多标签页/多 session 同时对话时互不串扰）。
+    // sessionId 缺省时退回 'default'，行为与旧的单会话缓存一致。
+    const profileId = this.conversationKey(req.sessionId)
+    // 新对话开端：清掉常驻缓存里的旧 conversation_id，避免首轮误接上一段对话。
+    if (this.shouldResetConversation(req.messages)) {
+      DifyAdapter.conversationCache.delete(profileId)
+    }
+    const conversationId = this.getConversationId(profileId)
+
+    // 只在「Dify 端还没有本会话记忆」（无 conversation_id）时发送完整工具清单；
+    // 一旦会话已建立，工具说明由 Dify 服务端会话记忆保留，后续轮不再重发，
+    // 避免同一对话室每轮都重复灌整份工具 schema。进程重启导致缓存丢失、
+    // conversationId 为空时会自动重新携带一次，保证工具定义不会丢。
+    const includeTools = !conversationId
+    const query = this.extractQuery(req.messages, req.tools, includeTools)
     if (!query) {
       throw new ProviderError('unknown', '未找到用户消息')
     }
-
-    const profileId = this.baseUrl
-    const conversationId = this.getConversationId(profileId)
 
     const difyReq: DifyRequest = {
       inputs: {},

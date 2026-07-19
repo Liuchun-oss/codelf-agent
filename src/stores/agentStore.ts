@@ -238,6 +238,7 @@ interface AgentState {
   stop: () => void
   retry: () => void
   clear: () => void
+  compactContext: () => Promise<void>
   respondPermission: (requestId: string, decision: PermissionDecision) => void
   respondUserQuestion: (requestId: string, response: UserQuestionResponse) => void
   respondFileChange: (changeId: string, decision: FileChangeDecision) => void
@@ -1835,6 +1836,46 @@ export const useAgentStore = create<AgentState>((set, get) => {
         sessionTokenUsage: { ...s.sessionTokenUsage, [s.currentSessionId]: null }
       }))
       void window.lc.aiClearHistory(get().currentSessionId)
+    },
+
+    compactContext: async () => {
+      const s = get()
+      if (s.streaming) {
+        toast.warn('正在生成回复，请等待完成后再压缩上下文')
+        return
+      }
+      const sessionId = s.currentSessionId
+      if (!sessionId) return
+      const cwd = s.sessions.find((m) => m.id === sessionId)?.cwd ?? null
+      const pushNotice = (content: string): void => {
+        set((st) => ({
+          messages: [...st.messages, { id: uuid(), role: 'notice' as const, content }]
+        }))
+      }
+      try {
+        const res = await window.lc.aiCompactNow({
+          sessionId,
+          profileId: s.activeProfile?.id ?? null,
+          workspaceRoot: cwd
+        })
+        if (res.compacted) {
+          pushNotice(
+            res.preTokens
+              ? `已手动压缩早期对话以释放上下文空间（压缩前约 ${res.preTokens.toLocaleString()} tokens）。`
+              : '已手动压缩早期对话以释放上下文空间。'
+          )
+        } else if (res.reason === 'too_short' || res.reason === 'nothing_to_compact') {
+          toast.info('当前对话较短，暂无需要压缩的早期上下文')
+        } else if (res.reason === 'busy') {
+          toast.warn('正在生成回复，请等待完成后再压缩上下文')
+        } else if (res.reason === 'no_profile') {
+          toast.warn('尚未配置模型，无法压缩上下文')
+        } else {
+          toast.warn('上下文压缩未成功，请稍后重试')
+        }
+      } catch {
+        toast.warn('上下文压缩失败，请稍后重试')
+      }
     },
 
     respondPermission: (requestId, decision) => {

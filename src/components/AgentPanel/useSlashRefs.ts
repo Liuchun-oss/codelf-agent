@@ -69,17 +69,17 @@ export function useSlashRefs(input: string, cursor: number, streaming: boolean):
           }
         })
       }
+      // 动作型指令（如 /compact）为立即执行型，不产生引用；此 hook 只处理引用型。
+      if (item.kind === 'action') return
+      const ref: SlashReference = {
+        kind: item.kind === 'plugin' ? 'plugin' : 'skill',
+        name: item.name,
+        pluginSkills: item.pluginSkills,
+        pluginMcpServers: item.pluginMcpServers
+      }
       setSlashRefs((prev) => {
-        if (prev.some((r) => r.kind === item.kind && r.name === item.name)) return prev
-        return [
-          ...prev,
-          {
-            kind: item.kind,
-            name: item.name,
-            pluginSkills: item.pluginSkills,
-            pluginMcpServers: item.pluginMcpServers
-          }
-        ]
+        if (prev.some((r) => r.kind === ref.kind && r.name === ref.name)) return prev
+        return [...prev, ref]
       })
     },
     []

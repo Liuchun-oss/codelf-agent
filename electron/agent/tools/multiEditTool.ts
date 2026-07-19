@@ -72,6 +72,13 @@ function resolveNeedle(haystack: string, rawNeedle: string): { needle: string; o
   return { needle: rawNeedle, occurrences: 0 }
 }
 
+// 按原文件主导换行风格统一新内容换行，避免混用 CRLF/LF 触发编辑器「行尾不一致」提示。
+function normalizeEolToMatch(newContent: string, originalContent: string): string {
+  const usesCrlf = /\r\n/.test(originalContent)
+  const lf = newContent.replace(/\r\n/g, '\n')
+  return usesCrlf ? lf.replace(/\n/g, '\r\n') : lf
+}
+
 async function readTextFile(abs: string): Promise<
   | { exists: true; content: string; encoding: FileEncoding }
   | { exists: false; error: string }
@@ -123,6 +130,9 @@ export const multiEditTool: Tool<MultiEditInput> = {
         ? nextContent.split(needle).join(edit.new_string)
         : nextContent.replace(needle, () => edit.new_string)
     }
+
+    // 统一换行风格到原文件，避免局部替换后混用 CRLF/LF。
+    nextContent = normalizeEolToMatch(nextContent, current.content)
 
     const diff = computeLineDiff(current.content, nextContent)
     if (!diffHasChanges(diff)) return { content: '内容无变化，未发起写入' }

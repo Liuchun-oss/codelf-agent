@@ -32,6 +32,47 @@ export function parseDataUrl(dataUrl: string): { mediaType: string; base64: stri
   return { mediaType: m[1], base64: m[2] }
 }
 
+// 清洗「孤儿」工具调用/结果，保证 tool_use 与 tool_result 严格配对后再发给 Provider。
+// - 丢弃 toolCallId 未被任何前置 assistant.toolCalls 声明的孤儿 tool 结果消息；
+// - 剔除 assistant.toolCalls 里「后面没有对应 tool 结果」的调用；若某 assistant 的
+//   所有调用都无结果，则降级为普通 assistant 文本消息。
+// 历史可能因异常中断/旧版持久化损坏而残留孤儿。OpenAI 兼容与 Anthropic 通道都必须
+// 在发送前清洗：Anthropic 服务端对此零容忍（400: tool_use ids were found without
+// tool_result blocks），OpenAI 侧亦应从源头保证消息序列合规。共享同一份实现避免分叉。
+export function sanitizeToolMessages(messages: ChatMessage[]): ChatMessage[] {
+  const declaredIds = new Set<string>()
+  for (const m of messages) {
+    if (m.role === 'assistant' && m.toolCalls?.length) {
+      for (const tc of m.toolCalls) declaredIds.add(tc.id)
+    }
+  }
+  const resultIds = new Set<string>()
+  for (const m of messages) {
+    if (m.role === 'tool' && m.toolCallId) resultIds.add(m.toolCallId)
+  }
+  const out: ChatMessage[] = []
+  for (const m of messages) {
+    if (m.role === 'tool') {
+      if (!m.toolCallId || !declaredIds.has(m.toolCallId)) continue
+      out.push(m)
+      continue
+    }
+    if (m.role === 'assistant' && m.toolCalls?.length) {
+      const kept = m.toolCalls.filter((tc) => resultIds.has(tc.id))
+      if (kept.length === 0) {
+        const { toolCalls: _drop, ...rest } = m
+        void _drop
+        out.push({ ...rest })
+      } else {
+        out.push({ ...m, toolCalls: kept })
+      }
+      continue
+    }
+    out.push(m)
+  }
+  return out
+}
+
 
 export interface ToolDef {
   name: string
@@ -55,6 +96,10 @@ export interface ChatRequest {
   maxOutputTokens?: number
   temperature?: number
   tools?: ToolDef[]
+  
+  // 上层会话标识。目前仅 Dify 适配器使用，用于按会话隔离 conversation_id，
+  // 支持多会话并发（多标签页/多 session 同时对话时互不串扰）。其他适配器忽略。
+  sessionId?: string
   
   promptCacheKey?: string
   
