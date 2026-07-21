@@ -1563,9 +1563,12 @@ export class QueryEngine {
           // 偶发返回空流、或模型端异常）。过去这里直接 push 空消息并 break，表现为
           // "发消息没反应、转圈后自动结束、一个字都没有"。现在改为：回收可能变坏的连接后
           // 自动重试若干次；仍为空则明确报错，而不是静默假装完成。
+          // 触发条件为「正文为空」即可，不再要求思考也为空：
+          // Kimi 等推理模型会出现「只吐 reasoning_content、正文 content 为空、且无工具调用」的
+          // 提前收尾（表现为思考好久后自动停止）。这类轮次若被当作有效回复存进历史，会写入一条
+          // content 为空的 assistant 消息，导致后续请求 400（must not be empty）。这里改为重试。
           if (
             roundText.trim().length === 0 &&
-            roundThinking.trim().length === 0 &&
             !signal.aborted
           ) {
             if (emptyResponseRetryCount < MAX_EMPTY_RESPONSE_RETRIES) {

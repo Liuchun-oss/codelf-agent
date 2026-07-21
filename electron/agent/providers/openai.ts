@@ -70,6 +70,12 @@ function toOpenAIMessages(
       continue
     }
     if (m.role === 'assistant') {
+      // Kimi/Moonshot 等严格 Provider 拒绝 content 为空的 assistant 消息
+      // （400: the message ... with role 'assistant' must not be empty）。
+      // 历史里可能残留「只思考、未输出正文，也无工具调用」的空 assistant 轮次，
+      // 这里直接跳过，避免整条请求 400、点「继续」反复失败。OpenAI 官方允许空/ null，
+      // 但跳过对纯文本轮次是安全的（不涉及 tool_call 配对）。
+      if (!m.content || m.content.trim().length === 0) continue
       out.push({ role: 'assistant', content: m.content })
       continue
     }
