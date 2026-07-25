@@ -63,6 +63,7 @@ import {
   onProfilesChanged
 } from '../agent/providers/profileStore'
 import { testConnection, testImageGeneration } from '../agent/providers/testConnection'
+import { listRemoteModels } from '../agent/providers/listModels'
 import { fimComplete } from '../agent/providers/fim'
 import { inlineEdit } from '../agent/orchestrator/inlineEdit'
 import { getExistingQueryEngine, getQueryEngine, disposeQueryEngine } from '../agent/orchestrator/queryEngine'
@@ -334,6 +335,11 @@ export function registerAiIpc(): void {
   ipcMain.handle(
     'ai:testImageGeneration',
     async (_e, draft: ProfileDraft) => testImageGeneration(draft)
+  )
+
+  ipcMain.handle(
+    'ai:listRemoteModels',
+    async (_e, draft: ProfileDraft) => listRemoteModels(draft)
   )
 
   let fimAbort: AbortController | null = null

@@ -107,7 +107,7 @@ export interface ChatRequest {
   
   thinking?: { type: 'enabled' | 'disabled' }
   
-  reasoningEffort?: 'high' | 'max'
+  reasoningEffort?: 'low' | 'high' | 'max'
   
   // 启用后改走 OpenAI Responses API，并注入 image_generation 托管工具，
   // 让模型可在对话中直接生成图片。

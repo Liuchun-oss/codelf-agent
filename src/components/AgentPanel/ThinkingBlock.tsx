@@ -3,55 +3,76 @@ import { useTypewriterText } from './useTypewriterText'
 import Collapsible from './Collapsible'
 
 interface Props {
+  
+  id: string
   text: string
   
   active: boolean
 }
 
+// 思考计时以消息 id 为键存放在组件外，避免切换对话时 ThinkingBlock 卸载/重挂
+// 导致开始时间丢失、计时从头重来。同一 app 会话内 msg.id 稳定，故重挂后可续算。
+interface ThinkTiming {
+  startedAt: number
+  
+  doneMs?: number
+}
+const thinkTimings = new Map<string, ThinkTiming>()
 
-export default function ThinkingBlock({ text, active }: Props): JSX.Element {
+
+export default function ThinkingBlock({ id, text, active }: Props): JSX.Element {
   const [open, setOpen] = useState(false)
-  const startedAtRef = useRef<number | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   // 是否自动跟随到底部：用户主动上滑离开底部则暂停跟随，滑回底部附近再恢复。
   const followBottomRef = useRef(true)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  const [doneSeconds, setDoneSeconds] = useState<number | null>(null)
+  const [doneSeconds, setDoneSeconds] = useState<number | null>(() => {
+    const t = thinkTimings.get(id)
+    return t?.doneMs != null ? Math.max(1, Math.round(t.doneMs / 1000)) : null
+  })
   const visibleText = useTypewriterText(text, active)
   const clean = text.trim()
   const canExpand = clean.length > 0
 
   useEffect(() => {
     if (!active) return
-    if (startedAtRef.current == null) startedAtRef.current = Date.now()
+    let timing = thinkTimings.get(id)
+    if (!timing) {
+      timing = { startedAt: Date.now() }
+      thinkTimings.set(id, timing)
+    }
+    // 重新进入 active（例如续写）时清掉旧的完成态，继续从原始 startedAt 累加。
+    timing.doneMs = undefined
     setDoneSeconds(null)
 
     const tick = (): void => {
-      if (startedAtRef.current == null) return
-      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAtRef.current) / 1000)))
+      const t = thinkTimings.get(id)
+      if (!t) return
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - t.startedAt) / 1000)))
     }
     tick()
     const timer = setInterval(tick, 500)
     return () => clearInterval(timer)
-  }, [active])
+  }, [active, id])
 
   
   useEffect(() => {
-    if (startedAtRef.current == null && doneSeconds == null && clean.length > 0) {
-      startedAtRef.current = Date.now()
+    if (!active && !thinkTimings.has(id) && clean.length > 0) {
+      thinkTimings.set(id, { startedAt: Date.now() })
     }
-  }, [clean.length, doneSeconds])
+  }, [clean.length, active, id])
 
   useEffect(() => {
     if (active) return
-    if (startedAtRef.current != null) {
-      const ms = Date.now() - startedAtRef.current
-      setDoneSeconds(Math.max(1, Math.round(ms / 1000)))
-      startedAtRef.current = null
+    const timing = thinkTimings.get(id)
+    if (timing) {
+      // 首次结束时冻结用时；已冻结则沿用，避免重挂后用 now 重新计算导致数字跳变。
+      if (timing.doneMs == null) timing.doneMs = Date.now() - timing.startedAt
+      setDoneSeconds(Math.max(1, Math.round(timing.doneMs / 1000)))
     } else if (clean.length > 0) {
       setDoneSeconds((s) => s ?? 1)
     }
-  }, [active, clean.length])
+  }, [active, clean.length, id])
 
   // 展开时重置为跟随底部（下次打开默认贴底）。
   useEffect(() => {

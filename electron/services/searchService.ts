@@ -215,7 +215,18 @@ export async function searchInFiles(
     timedOut: false,
     skippedLargeFiles: []
   }
-  await walk(ctx, root)
+  // path 可能指向单个文件（walk 会对其 readdir 失败并被静默吞掉，导致"无匹配"假象）。
+  // 因此先判定类型：文件走 searchInFile，目录走 walk。
+  try {
+    const stat = await fs.stat(root)
+    if (stat.isFile()) {
+      await searchInFile(ctx, root)
+    } else {
+      await walk(ctx, root)
+    }
+  } catch {
+    await walk(ctx, root)
+  }
   return {
     ok: true,
     results: ctx.results,

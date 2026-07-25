@@ -48,7 +48,7 @@ function AssistantPart({
   return (
     <div className="agent-assistant-part">
       {thinking.length > 0 || thinkingActive ? (
-        <ThinkingBlock text={thinking} active={thinkingActive} />
+        <ThinkingBlock id={msg.id} text={thinking} active={thinkingActive} />
       ) : null}
       {hasBody ? (
         <div className="agent-assistant-text">

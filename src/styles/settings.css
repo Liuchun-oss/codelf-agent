@@ -363,6 +363,23 @@
 .settings-ai-section .settings-group-label {
   padding-bottom: 5px;
 }
+.settings-model-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.settings-model-picker input,
+.settings-model-picker select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.settings-model-picker .settings-model-fetch {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
 .settings-ai-section .settings-row {
   padding-top: 9px;
   padding-bottom: 9px;

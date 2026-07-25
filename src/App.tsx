@@ -21,6 +21,7 @@ import { useEditorStore, isRestoringSession } from '@/stores/editorStore'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { useTerminalStore } from '@/stores/terminalStore'
 import { useDialogStore } from '@/stores/dialogStore'
+import { useAgentStore } from '@/stores/agentStore'
 import { runCommand } from '@/commands/commands'
 import { toast } from '@/stores/toastStore'
 import { isBenignUnhandledRejection } from '@/utils/benignErrors'
@@ -84,7 +85,28 @@ export default function App(): JSX.Element {
         if (!ok) return
         useWorkspaceStore.getState().saveCurrentSession()
 
-        // 2) 微信通道已连接时，关闭会导致收不到消息。提示「最小化到托盘 / 继续退出 / 取消」。
+        // 2) Agent 正在流式输出时关闭会中断本轮生成（工具可能只执行了一半）。
+        //    提示用户，让其确认是否放弃当前进度再退出。
+        const agent = useAgentStore.getState()
+        const streamingCount =
+          Object.values(agent.sessionStreaming).filter((s) => s.streaming).length ||
+          (agent.streaming ? 1 : 0)
+        if (streamingCount > 0) {
+          const agentChoice = await useDialogStore.getState().choose({
+            title: 'Agent 正在运行',
+            message:
+              streamingCount > 1
+                ? `有 ${streamingCount} 个会话的 Agent 正在生成，现在退出会中断它们，未完成的工作可能丢失。确定要退出吗？`
+                : 'Agent 正在生成回复，现在退出会中断本轮，未完成的工作可能丢失。确定要退出吗？',
+            buttons: [
+              { key: 'cancel', label: '取消', primary: true },
+              { key: 'quit', label: '仍然退出', danger: true }
+            ]
+          })
+          if (agentChoice !== 'quit') return
+        }
+
+        // 3) 微信通道已连接时，关闭会导致收不到消息。提示「最小化到托盘 / 继续退出 / 取消」。
         let weixinConnected = false
         try {
           const status = await window.lc.channels.getStatus('weixin')

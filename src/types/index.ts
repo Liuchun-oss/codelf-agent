@@ -14,6 +14,7 @@ import type {
   SaveProfileResult,
   TestConnectionResult,
   TestImageGenResult,
+  ListRemoteModelsResult,
   SubagentTaskSummary,
   AgentDefinitionSummary,
   AgentTask,
@@ -409,6 +410,7 @@ export interface LcApi {
   aiGetUsageStats: (query: UsageStatsQuery) => Promise<UsageStatsResult>
   aiTestConnection: (draft: ProfileDraft) => Promise<TestConnectionResult>
   aiTestImageGeneration: (draft: ProfileDraft) => Promise<TestImageGenResult>
+  aiListRemoteModels: (draft: ProfileDraft) => Promise<ListRemoteModelsResult>
   aiFimComplete: (req: FimRequest) => Promise<FimResult>
   aiInlineEdit: (req: InlineEditRequest) => Promise<InlineEditResult>
   aiInlineEditCancel: () => Promise<boolean>

@@ -71,7 +71,7 @@ import { writeTextFile } from '../../services/fsService'
 import { noteAgentWrite } from '../../services/localWriteRegistry'
 import { getAgentBehaviorSettings, getMemorySettings } from '../settings/agentSettingsStore'
 import { buildContextBreakdown } from '../context/contextBreakdown'
-import { lookupModelMetadata } from '../providers/modelMetadata'
+import { lookupModelMetadata, isKimiReasoningModel } from '../providers/modelMetadata'
 import { maybeCompactTurns, estimateSystemTokens } from './compact'
 import { runCheckpointWriter, buildRebuildInjection } from '../memory/writer'
 import { detectTaskCompletion, buildNoteReminder, isMemoryWorthyTurn } from './taskCompletionDetector'
@@ -596,7 +596,7 @@ export class QueryEngine {
     }
 
     const meta = lookupModelMetadata(profile.kind, profile.model)
-    const contextWindow = profile.contextWindow ?? meta.contextWindow ?? 128_000
+    const contextWindow = profile.contextWindow ?? meta.contextWindow ?? 500_000
     const restoreHints = buildCompactRestoreHints({
       historyTurns: this.historyTurns,
       activeFilePath: payload.activeFilePath,
@@ -1088,8 +1088,12 @@ export class QueryEngine {
       workspaceRoot: effectiveWorkspaceRoot
     }
 
+    // 各种提前退出路径（turn_limit / denial_limit / 空响应兜底等）在此提交本轮已产生的内容。
+    // 判据为「turnMessages 除初始 user 消息外还有实质产出」，而非仅 sideEffected：
+    // 只读探索回合（读文件、搜索、跑工具）不置 sideEffected，若沿用旧判据会被整轮丢弃，
+    // 用户重试时上下文全失、从头重来。
     const commitPartialIfSideEffected = (): void => {
-      if (!sideEffected) return
+      if (turnMessages.length <= 1) return
       this.historyTurns.push({ turnId, messages: reconcileOrphanToolCalls(turnMessages) })
       commitContentReplacementState()
       contentReplacementCommitted = true
@@ -1130,7 +1134,7 @@ export class QueryEngine {
     }
 
     const meta = lookupModelMetadata(profile.kind, profile.model)
-    const contextWindow = profile.contextWindow ?? meta.contextWindow ?? 128_000
+    const contextWindow = profile.contextWindow ?? meta.contextWindow ?? 500_000
 
     const summarize = async (sumMessages: ChatMessage[]): Promise<string> => {
       let text = ''
@@ -1320,7 +1324,8 @@ export class QueryEngine {
                   ...(profile.kind === 'deepseek' && profile.thinkingMode
                     ? { thinking: { type: profile.thinkingMode } }
                     : {}),
-                  ...(profile.kind === 'deepseek' && profile.reasoningEffort
+                  ...((profile.kind === 'deepseek' || isKimiReasoningModel(profile.model)) &&
+                  profile.reasoningEffort
                     ? { reasoningEffort: profile.reasoningEffort }
                     : {}),
                   ...(profile.imageGeneration ? { imageGeneration: true } : {})
@@ -1470,7 +1475,12 @@ export class QueryEngine {
           if (partialAssistantText.length > 0) {
             turnMessages.push({ role: 'assistant', content: partialAssistantText })
           }
-          if (sideEffected || partialAssistantText.length > 0) {
+          // 只要本轮已经产生了任何实质内容（此前若干轮的 assistant 文本、工具调用、
+          // 工具结果，或本次半截文字），就落历史。注意 turnMessages[0] 恒为初始 user 消息，
+          // 故 length > 1 表示有真实产出。之前用 sideEffected 判定会漏掉所有「只读探索」
+          // 回合（read_file / search / grep / 读终端 等不置 sideEffected），导致中断重试时
+          // 整个 turnMessages 被静默丢弃、模型完全看不到刚做过的事。
+          if (turnMessages.length > 1) {
             this.historyTurns.push({ turnId, messages: reconcileOrphanToolCalls(turnMessages) })
             commitContentReplacementState()
             contentReplacementCommitted = true

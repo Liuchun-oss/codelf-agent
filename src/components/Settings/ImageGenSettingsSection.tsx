@@ -5,8 +5,11 @@ import type {
   ImageGenTestResult
 } from '@shared/agentSettings'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
+import { isDashScopeEndpoint } from '@shared/appConfig'
 
 const SIZE_OPTIONS = ['auto', '1024x1024', '1024x1536', '1536x1024', '512x512', '1k', '2k', '4k']
+// 阿里云 DashScope 用 “宽*高” 形式，且不认 auto/档位关键字。
+const DASHSCOPE_SIZE_OPTIONS = ['1024*1024', '1536*1024', '1024*1536', '1280*720', '720*1280', '2048*2048']
 
 export default function ImageGenSettingsSection(): JSX.Element {
   const [settings, setSettings] = useState<ImageGenSettingsSummary | null>(null)
@@ -59,6 +62,13 @@ export default function ImageGenSettingsSection(): JSX.Element {
     )
   }
 
+  // 根据「当前正在编辑」的 Base URL 判断是否阿里云端点，实时切换提示与尺寸选项。
+  const isDashScope = isDashScopeEndpoint(baseUrlInput || settings.baseUrl)
+  const sizeOptions = isDashScope ? DASHSCOPE_SIZE_OPTIONS : SIZE_OPTIONS
+  const endpointGroupLabel = isDashScope
+    ? '端点配置（阿里云 DashScope / 百炼多模态生成）'
+    : '端点配置（OpenAI Images API 兼容）'
+
   return (
     <div className="settings-section-page">
       <SettingsGroup label="图像生成">
@@ -88,10 +98,23 @@ export default function ImageGenSettingsSection(): JSX.Element {
         />
       </SettingsGroup>
 
-      <SettingsGroup label="端点配置（OpenAI Images API 兼容）">
+      {isDashScope && (
+        <div className="settings-inline-alert">
+          已识别为阿里云端点：将改用 DashScope 原生多模态生成协议（
+          <code>/services/aigc/multimodal-generation/generation</code>），而非 OpenAI Images API。Base URL 可填
+          <code>https://dashscope.aliyuncs.com</code> 或 MaaS 专属地址，模型名如
+          <code>qwen-image-2.0-pro-2026-06-22</code>。
+        </div>
+      )}
+
+      <SettingsGroup label={endpointGroupLabel}>
         <SettingsRow
           title="Base URL"
-          description="如 https://api.openai.com/v1，会自动追加 /images/generations。也可填第三方兼容网关地址。"
+          description={
+            isDashScope
+              ? '阿里云：填 https://dashscope.aliyuncs.com 或 MaaS 专属域名即可，会自动补全多模态生成路径。'
+              : '如 https://api.openai.com/v1，会自动追加 /images/generations。也可填第三方兼容网关地址。'
+          }
           stacked
           control={
             <input
@@ -106,12 +129,16 @@ export default function ImageGenSettingsSection(): JSX.Element {
         />
         <SettingsRow
           title="模型名"
-          description="如 gpt-image-1、dall-e-3，或第三方网关的文生图模型名。"
+          description={
+            isDashScope
+              ? '阿里云文生图模型，如 qwen-image-2.0-pro-2026-06-22、wanx2.1-t2i-turbo 等。'
+              : '如 gpt-image-1、dall-e-3，或第三方网关的文生图模型名。'
+          }
           stacked
           control={
             <input
               type="text"
-              placeholder="gpt-image-1"
+              placeholder={isDashScope ? 'qwen-image-2.0-pro-2026-06-22' : 'gpt-image-1'}
               disabled={saving}
               value={modelInput}
               onChange={(e) => setModelInput(e.target.value)}
@@ -121,13 +148,17 @@ export default function ImageGenSettingsSection(): JSX.Element {
         />
         <SettingsRow
           title="默认尺寸"
+          description={isDashScope ? '阿里云用「宽*高」形式，如 1536*1024。' : undefined}
           control={
             <select
               disabled={saving}
               value={settings.size}
               onChange={(e) => void save({ size: e.target.value })}
             >
-              {SIZE_OPTIONS.map((o) => (
+              {!sizeOptions.includes(settings.size) && (
+                <option value={settings.size}>{settings.size}</option>
+              )}
+              {sizeOptions.map((o) => (
                 <option key={o} value={o}>
                   {o}
                 </option>

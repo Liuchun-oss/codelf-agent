@@ -36,7 +36,7 @@ function AssistantPart({ msg }: { msg: ChatMessageView }): JSX.Element | null {
 
   return (
     <div className="agent-assistant-part">
-      {thinking.length > 0 || thinkingActive ? <ThinkingBlock text={thinking} active={thinkingActive} /> : null}
+      {thinking.length > 0 || thinkingActive ? <ThinkingBlock id={msg.id} text={thinking} active={thinkingActive} /> : null}
       {hasBody ? (
         <div className="agent-assistant-text">
           <MarkdownView text={body} streaming={msg.streaming} />

@@ -156,7 +156,7 @@ export async function buildContextBreakdown(
   ].filter((s): s is ContextUsageSegment => s != null)
 
   const totalTokens = segments.reduce((sum, s) => sum + s.tokens, 0)
-  const window = contextWindow > 0 ? contextWindow : 128_000
+  const window = contextWindow > 0 ? contextWindow : 500_000
   const percentFull = Math.min(100, Math.round((totalTokens / window) * 100))
 
   return { segments, totalTokens, contextWindow: window, percentFull }

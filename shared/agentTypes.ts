@@ -392,7 +392,7 @@ export interface ProviderProfile {
   supportsReasoning?: boolean
   
   thinkingMode?: 'enabled' | 'disabled'
-  reasoningEffort?: 'high' | 'max'
+  reasoningEffort?: 'low' | 'high' | 'max'
   
   fimEnabled?: boolean
 
@@ -566,6 +566,12 @@ export interface TestConnectionResult {
   balanceAvailable?: boolean
   balanceTotal?: string
   balanceCurrency?: string
+}
+
+export interface ListRemoteModelsResult {
+  ok: boolean
+  models?: string[]
+  error?: string
 }
 
 export interface TestImageGenResult {

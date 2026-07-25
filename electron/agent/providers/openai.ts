@@ -16,6 +16,7 @@ import {
   type StreamChunk,
   type ToolDef
 } from './base'
+import { isKimiReasoningModel } from './modelMetadata'
 
 type OpenAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam
 type OpenAITool = OpenAI.Chat.Completions.ChatCompletionTool
@@ -337,7 +338,11 @@ export async function* streamChatViaOpenAI(
       stream_options: { include_usage: true },
     }
     if (typeof req.maxOutputTokens === 'number') body['max_tokens'] = req.maxOutputTokens
-    if (typeof req.temperature === 'number' && !thinkingEnabled) body['temperature'] = req.temperature
+    // Kimi K3 的 temperature 固定为 1.0，显式传入其他值会 400；这里直接不传。
+    const kimiReasoning = isKimiReasoningModel(req.model)
+    if (typeof req.temperature === 'number' && !thinkingEnabled && !kimiReasoning) {
+      body['temperature'] = req.temperature
+    }
     if (req.tools?.length) { body['tools'] = toOpenAITools(req.tools); body['tool_choice'] = 'auto' }
     if (req.promptCacheKey) body['prompt_cache_key'] = req.promptCacheKey
     if (req.thinking) body['thinking'] = req.thinking

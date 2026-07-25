@@ -277,6 +277,10 @@ const api = {
     ipcRenderer.invoke('ai:getUsageStats', query),
   aiTestConnection: (draft: ProfileDraft) => ipcRenderer.invoke('ai:testConnection', draft),
   aiTestImageGeneration: (draft: ProfileDraft) => ipcRenderer.invoke('ai:testImageGeneration', draft),
+  aiListRemoteModels: (draft: ProfileDraft) =>
+    ipcRenderer.invoke('ai:listRemoteModels', draft) as Promise<
+      import('@shared/agentTypes').ListRemoteModelsResult
+    >,
   aiFimComplete: (req: import('@shared/agentTypes').FimRequest) =>
     ipcRenderer.invoke('ai:fimComplete', req) as Promise<import('@shared/agentTypes').FimResult>,
   aiInlineEdit: (req: import('@shared/agentTypes').InlineEditRequest) =>

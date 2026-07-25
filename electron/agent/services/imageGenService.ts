@@ -3,7 +3,7 @@ import { getSecret } from '../../ipc/secrets'
 import { guardOutboundUrl } from '../tools/ssrfGuard'
 import { getFetchOptions } from '../providers/network'
 import { saveGeneratedImage, type SavedGeneratedImage, type SaveImageTarget } from '../../services/generatedImageStore'
-import { userAgent, ARTIFACT_FILE_SCHEME, isVolcEndpoint } from '@shared/appConfig'
+import { userAgent, ARTIFACT_FILE_SCHEME, isVolcEndpoint, isDashScopeEndpoint } from '@shared/appConfig'
 import { readFile } from 'fs/promises'
 import { isAbsolute, resolve as resolvePath, basename } from 'path'
 
@@ -93,6 +93,30 @@ function buildEndpoint(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, '')
   if (/\/images\/generations$/.test(trimmed)) return trimmed
   return `${trimmed}/images/generations`
+}
+
+// 阿里云 DashScope / MaaS 多模态生成端点。
+// 用户可能填三种形式的 baseUrl，都归一到 .../multimodal-generation/generation：
+//   1) 直接填完整的 .../services/aigc/multimodal-generation/generation
+//   2) 填到 .../api/v1（DashScope 根）
+//   3) 填 https://dashscope.aliyuncs.com（裸域名）
+function buildDashScopeEndpoint(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, '')
+  if (/\/multimodal-generation\/generation$/.test(trimmed)) return trimmed
+  if (/\/api\/v1$/.test(trimmed)) return `${trimmed}/services/aigc/multimodal-generation/generation`
+  if (/\/api$/.test(trimmed)) return `${trimmed}/v1/services/aigc/multimodal-generation/generation`
+  // 裸域名或其它：补全整段路径。
+  return `${trimmed}/api/v1/services/aigc/multimodal-generation/generation`
+}
+
+// DashScope 尺寸用 “宽*高” 形式（如 1536*1024）；把常见的 1536x1024 / 1536×1024 归一。
+// auto、档位关键字（1k/2k/4k）等 DashScope 不认，回退到默认 1024*1024。
+function normalizeDashScopeSize(raw: string): string | undefined {
+  const s = (raw || '').trim()
+  if (!s || /^auto$/i.test(s) || /^[124]k$/i.test(s)) return undefined
+  const m = /^(\d+)\s*[x×*]\s*(\d+)$/i.exec(s)
+  if (m) return `${m[1]}*${m[2]}`
+  return undefined
 }
 
 // 自动重试配置：针对中转网关常见的瞬时故障（Cloudflare 524 超时、502/503/504、429 限流、
@@ -203,6 +227,161 @@ async function runImageRequestWithRetry(cfg: ImageHttpConfig): Promise<ImageGenO
   return { ok: false, error: lastError }
 }
 
+// ---- 阿里云 DashScope / MaaS 多模态生成协议解析 ----
+
+interface DashScopeResponse {
+  output?: {
+    choices?: Array<{
+      message?: { content?: Array<Record<string, unknown>> | string }
+    }>
+    // 少数模型直接返回 results（图片 URL 列表）。
+    results?: Array<{ url?: string; b64_image?: string }>
+  }
+  code?: string
+  message?: string
+}
+
+// 从 DashScope 响应里抽取图片 URL 列表（多模态返回的是 URL，需要再下载转 base64）。
+function extractDashScopeImageUrls(json: DashScopeResponse): string[] {
+  const urls: string[] = []
+  const choices = json.output?.choices ?? []
+  for (const choice of choices) {
+    const content = choice.message?.content
+    if (Array.isArray(content)) {
+      for (const item of content) {
+        const img = item?.image
+        if (typeof img === 'string' && img) urls.push(img)
+      }
+    }
+  }
+  for (const r of json.output?.results ?? []) {
+    if (typeof r.url === 'string' && r.url) urls.push(r.url)
+  }
+  return urls
+}
+
+interface DashScopeHttpConfig {
+  url: string
+  apiKey: string
+  model: string
+  prompt: string
+  size?: string
+  n: number
+  images?: string[]
+  signal?: AbortSignal
+  timeoutMs: number
+  persist: boolean
+  onRetry?: (attempt: number, reason: string) => void
+  saveTarget?: SaveImageTarget
+}
+
+// 执行 DashScope 多模态生成请求（含重试/超时）。请求体与响应解析都遵循阿里云原生协议，
+// 与 OpenAI Images API 完全不同：请求走 input.messages，出图为 output.choices[].message.content[].image。
+async function runDashScopeRequest(cfg: DashScopeHttpConfig): Promise<ImageGenOutcome> {
+  // content 里先放参考图（图生图/融合），再放文本提示。
+  const content: Record<string, unknown>[] = []
+  for (const img of cfg.images ?? []) content.push({ image: img })
+  content.push({ text: cfg.prompt })
+
+  const parameters: Record<string, unknown> = {}
+  const dsSize = cfg.size
+  if (dsSize) parameters.size = dsSize
+  if (cfg.n > 1) parameters.n = cfg.n
+
+  const body: Record<string, unknown> = {
+    model: cfg.model,
+    input: { messages: [{ role: 'user', content }] },
+    parameters
+  }
+
+  let lastError = 'DashScope 图像请求失败'
+  for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt += 1) {
+    if (cfg.signal?.aborted) return { ok: false, error: '已取消' }
+    const t = withTimeout(cfg.signal, cfg.timeoutMs)
+    let resp: Response
+    try {
+      resp = await fetch(cfg.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${cfg.apiKey}`,
+          'User-Agent': userAgent('image_gen')
+        },
+        body: JSON.stringify(body),
+        signal: t.signal,
+        ...(getFetchOptions() ?? {})
+      })
+    } catch (e) {
+      t.clear()
+      if (cfg.signal?.aborted) return { ok: false, error: '已取消' }
+      lastError = describeFetchError(e)
+      if (attempt < MAX_IMAGE_ATTEMPTS) {
+        cfg.onRetry?.(attempt, lastError)
+        await delay(attempt * 1500)
+        continue
+      }
+      return { ok: false, error: lastError }
+    }
+    t.clear()
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      let detail = text
+      try {
+        const parsed = JSON.parse(text) as DashScopeResponse
+        if (parsed.message) detail = parsed.message
+      } catch { /* keep raw text */ }
+      lastError = `DashScope 端点返回 HTTP ${resp.status}：${detail.slice(0, 300)}`
+      if (RETRYABLE_STATUS.has(resp.status) && attempt < MAX_IMAGE_ATTEMPTS) {
+        cfg.onRetry?.(attempt, `HTTP ${resp.status}`)
+        await delay(attempt * 1500)
+        continue
+      }
+      return { ok: false, error: lastError }
+    }
+
+    let json: DashScopeResponse
+    try {
+      json = (await resp.json()) as DashScopeResponse
+    } catch {
+      lastError = 'DashScope 端点响应不是有效 JSON。'
+      if (attempt < MAX_IMAGE_ATTEMPTS) {
+        cfg.onRetry?.(attempt, '响应非 JSON')
+        await delay(attempt * 1500)
+        continue
+      }
+      return { ok: false, error: lastError }
+    }
+
+    const imageUrls = extractDashScopeImageUrls(json)
+    if (imageUrls.length === 0) {
+      // 内容审核不通过等业务错误会在 code/message 里，透传给用户。
+      const biz = json.message ? `：${json.message}` : ''
+      lastError = `DashScope 未返回图片${biz}`
+      return { ok: false, error: lastError }
+    }
+
+    const b64List: string[] = []
+    for (const u of imageUrls) {
+      const b64 = await downloadImageAsBase64(u, cfg.signal).catch(() => null)
+      if (b64) b64List.push(b64)
+    }
+    if (b64List.length === 0) {
+      return { ok: false, error: 'DashScope 返回了图片地址，但下载失败。' }
+    }
+
+    if (!cfg.persist) {
+      return { ok: true, firstDataUrl: `data:image/png;base64,${b64List[0]}` }
+    }
+    const saved: SavedGeneratedImage[] = []
+    for (let i = 0; i < b64List.length; i += 1) {
+      saved.push(await saveGeneratedImage(b64List[i], 'image/png', cfg.saveTarget, i))
+    }
+    return { ok: true, images: saved, firstDataUrl: `data:image/png;base64,${b64List[0]}` }
+  }
+  return { ok: false, error: lastError }
+}
+
 // 把请求尺寸规整为图像端点能接受的值。
 // 火山 Seedream 4.x 要求像素总量较大（约 ≥368 万像素 / 2K 级），
 // 像 1024x1024(=105万) 这类小尺寸会被直接拒绝（HTTP 400 size too small）。
@@ -249,18 +428,52 @@ export async function generateImages(
     return { ok: false, error: '未配置图像端点 API Key。' }
   }
 
-  const endpoint = buildEndpoint(settings.baseUrl)
-  const guard = await guardOutboundUrl(endpoint)
-  if (!guard.ok || !guard.url) {
-    return { ok: false, error: `端点被拒绝：${guard.error ?? 'URL 不安全'}` }
-  }
-
   const n = req.n && req.n > 0 ? Math.min(req.n, 4) : 1
   // 落盘目标：multi 取决于是否可能产出多张（series 或 n>1 或 maxImages>1）。
   const willBeMulti = Boolean(req.series) || n > 1 || (req.maxImages ?? 0) > 1
   const saveTarget: SaveImageTarget | undefined = req.outputPath
     ? { outputPath: req.outputPath, workspaceRoot: req.workspaceRoot ?? null, multi: willBeMulti }
     : undefined
+
+  // 阿里云 DashScope / MaaS：OpenAI 兼容模式无 Images API，走原生多模态生成协议。
+  if (isDashScopeEndpoint(settings.baseUrl)) {
+    const dsEndpoint = buildDashScopeEndpoint(settings.baseUrl)
+    const dsGuard = await guardOutboundUrl(dsEndpoint)
+    if (!dsGuard.ok || !dsGuard.url) {
+      return { ok: false, error: `端点被拒绝：${dsGuard.error ?? 'URL 不安全'}` }
+    }
+    // 参考图：http(s) 原样传，本地引用读为 data URL（DashScope 均可接受）。
+    let dsImages: string[] | undefined
+    if (req.images?.length) {
+      const resolved: string[] = []
+      for (const ref of req.images) {
+        const r = await resolveImageForRequest(ref, req.workspaceRoot ?? null)
+        if ('error' in r) return { ok: false, error: r.error }
+        resolved.push(r.value)
+      }
+      dsImages = resolved
+    }
+    return runDashScopeRequest({
+      url: dsGuard.url.toString(),
+      apiKey,
+      model: settings.model,
+      prompt: req.prompt,
+      size: normalizeDashScopeSize(req.size || settings.size),
+      n,
+      images: dsImages,
+      signal: opts?.signal,
+      timeoutMs: settings.timeoutMs,
+      persist: opts?.persist !== false,
+      onRetry: opts?.onRetry,
+      saveTarget
+    })
+  }
+
+  const endpoint = buildEndpoint(settings.baseUrl)
+  const guard = await guardOutboundUrl(endpoint)
+  if (!guard.ok || !guard.url) {
+    return { ok: false, error: `端点被拒绝：${guard.error ?? 'URL 不安全'}` }
+  }
   const body: Record<string, unknown> = {
     model: settings.model,
     prompt: req.prompt,
@@ -541,6 +754,12 @@ export async function editImages(
     return viaGenerations
   }
   if (opts?.signal?.aborted) return viaGenerations
+
+  // 阿里云 DashScope 没有 /images/edits 端点，图生图已在多模态生成分支处理过，
+  // 再回退 multipart 只会 404，直接返回原始错误。
+  if (isDashScopeEndpoint(getImageGenSettings().baseUrl)) {
+    return viaGenerations
+  }
 
   // 回退：OpenAI 风格 multipart /images/edits。
   opts?.onRetry?.(0, 'generations 编辑失败，回退 /images/edits')

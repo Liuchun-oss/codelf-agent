@@ -93,3 +93,25 @@ export function isVolcEndpoint(baseUrl: string | null | undefined): boolean {
     return /volces\.com|volcengine|ark\.cn-/i.test(baseUrl)
   }
 }
+
+/**
+ * 判断给定端点是否为阿里云 DashScope / 百炼 MaaS。
+ * 阿里云的 OpenAI 兼容模式只实现了 Chat Completions，没有 Images API
+ * （POST /v1/images/generations 会 404）；文生图必须走其原生多模态生成接口
+ * （POST .../services/aigc/multimodal-generation/generation，请求体为 input.messages，
+ * 响应为 output.choices[].message.content[].image）。据此单独走 DashScope 协议分支。
+ */
+export function isDashScopeEndpoint(baseUrl: string | null | undefined): boolean {
+  if (!baseUrl) return false
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase()
+    return (
+      host.includes('dashscope.aliyuncs.com') ||
+      host.includes('aliyuncs.com') ||
+      host.includes('maas.aliyuncs.com') ||
+      host.includes('bailian.aliyuncs.com')
+    )
+  } catch {
+    return /dashscope|aliyuncs\.com|maas\.aliyuncs|bailian/i.test(baseUrl)
+  }
+}

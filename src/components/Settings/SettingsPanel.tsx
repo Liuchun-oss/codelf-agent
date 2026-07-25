@@ -308,21 +308,20 @@ export default function SettingsPanel(): JSX.Element | null {
             {activeSection === 'diagnostics' && <DebugPanelSection />}
           </div>
 
-          <footer className="settings-footer">
-            {activeSection === 'editor' && (
-              <button className="btn-secondary" onClick={() => settings.reset()}>
-                恢复编辑器默认
-              </button>
-            )}
-            {activeSection === 'appearance' && (
-              <button className="btn-secondary" onClick={() => useThemeStore.getState().reset()}>
-                恢复默认外观
-              </button>
-            )}
-            <button className="btn" onClick={close}>
-              完成
-            </button>
-          </footer>
+          {(activeSection === 'editor' || activeSection === 'appearance') && (
+            <footer className="settings-footer">
+              {activeSection === 'editor' && (
+                <button className="btn-secondary" onClick={() => settings.reset()}>
+                  恢复编辑器默认
+                </button>
+              )}
+              {activeSection === 'appearance' && (
+                <button className="btn-secondary" onClick={() => useThemeStore.getState().reset()}>
+                  恢复默认外观
+                </button>
+              )}
+            </footer>
+          )}
         </section>
       </div>
     </AnimatedOverlay>

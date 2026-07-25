@@ -43,9 +43,14 @@ interface DraftForm {
   azureDeployment: string
   azureApiVersion: string
   thinkingMode: boolean
-  reasoningEffort: 'high' | 'max'
+  reasoningEffort: 'low' | 'high' | 'max'
   fimEnabled: boolean
   imageGeneration: boolean
+}
+
+// Kimi K3：openai-compatible 类型下模型名以 kimi-k3 开头，支持顶层 reasoning_effort。
+function isKimiK3Model(model: string): boolean {
+  return /^kimi-k3/i.test(model.trim())
 }
 
 function blankDraft(): DraftForm {
@@ -116,7 +121,12 @@ function buildDraft(f: DraftForm, includeTypedKey: boolean): ProfileDraft {
     azureDeployment: f.kind === 'azure-openai' ? f.azureDeployment.trim() || undefined : undefined,
     azureApiVersion: f.kind === 'azure-openai' ? f.azureApiVersion.trim() || undefined : undefined,
     thinkingMode: f.kind === 'deepseek' ? (f.thinkingMode ? 'enabled' : 'disabled') : undefined,
-    reasoningEffort: f.kind === 'deepseek' && f.thinkingMode ? f.reasoningEffort : undefined,
+    reasoningEffort:
+      f.kind === 'deepseek' && f.thinkingMode
+        ? f.reasoningEffort
+        : isKimiK3Model(f.model)
+          ? f.reasoningEffort
+          : undefined,
     fimEnabled: f.kind === 'deepseek' ? f.fimEnabled : undefined,
     imageGeneration: (f.kind === 'openai' || f.kind === 'openai-compatible') ? f.imageGeneration : undefined,
     apiKey: includeTypedKey && f.apiKey !== '' ? f.apiKey : undefined
@@ -134,6 +144,10 @@ export default function AiSettingsSection(): JSX.Element {
   const [imgTestResult, setImgTestResult] = useState<TestImageGenResult | null>(null)
   const [secureAvailable, setSecureAvailable] = useState(true)
   const [showUsage, setShowUsage] = useState(false)
+  const [modelOptions, setModelOptions] = useState<string[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelListError, setModelListError] = useState<string | null>(null)
+  const [modelManual, setModelManual] = useState(false)
 
   const refresh = useCallback(async (selectId?: string) => {
     const [list, active, secure] = await Promise.all([
@@ -174,9 +188,22 @@ export default function AiSettingsSection(): JSX.Element {
     setForm((f) => ({ ...f, ...p }))
     setTestResult(null)
     setImgTestResult(null)
+    // 改动连接参数会让已拉取的模型列表失效，需清空缓存重新获取。
+    if ('baseUrl' in p || 'apiKey' in p || 'kind' in p) {
+      setModelOptions([])
+      setModelManual(false)
+      setModelListError(null)
+    }
+  }
+
+  const resetModelPicker = (): void => {
+    setModelOptions([])
+    setModelManual(false)
+    setModelListError(null)
   }
 
   const selectProfile = (id: string): void => {
+    resetModelPicker()
     if (id === '__new__') {
       setForm(blankDraft())
       setEditingHasKey(false)
@@ -226,6 +253,28 @@ export default function AiSettingsSection(): JSX.Element {
     await window.lc.aiSetActiveProfile(form.id)
     await refresh(form.id)
   }
+
+  const fetchModels = useCallback(async (): Promise<void> => {
+    setLoadingModels(true)
+    setModelListError(null)
+    try {
+      const res = await window.lc.aiListRemoteModels(buildDraft(form, true))
+      if (res.ok && res.models && res.models.length > 0) {
+        setModelOptions(res.models)
+        setModelManual(false)
+        // 当前模型不在列表里时，默认选中第一个，避免下拉显示空白。
+        if (form.model && !res.models.includes(form.model)) {
+          // 保留用户已填的模型名作为一个可选项，不强制覆盖。
+        }
+      } else {
+        setModelOptions([])
+        setModelManual(true)
+        setModelListError(res.error ?? '获取模型列表失败，请手动填写')
+      }
+    } finally {
+      setLoadingModels(false)
+    }
+  }, [form])
 
   const onTest = async (): Promise<void> => {
     setTesting(true)
@@ -324,7 +373,48 @@ export default function AiSettingsSection(): JSX.Element {
         />
         <SettingsRow
           title="模型名"
-          control={<input type="text" value={form.model} onChange={(e) => patch({ model: e.target.value })} />}
+          description={
+            modelListError
+              ? modelListError
+              : modelOptions.length > 0
+                ? '已从接口获取模型列表，可下拉选择或点「手动」自行填写。'
+                : '点「获取列表」自动拉取；失败可手动填写模型名。'
+          }
+          control={
+            <div className="settings-model-picker">
+              {modelOptions.length > 0 && !modelManual ? (
+                <select value={form.model} onChange={(e) => patch({ model: e.target.value })}>
+                  {!modelOptions.includes(form.model) && form.model !== '' && (
+                    <option value={form.model}>{`${form.model}（当前）`}</option>
+                  )}
+                  {modelOptions.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input type="text" value={form.model} onChange={(e) => patch({ model: e.target.value })} />
+              )}
+              <button
+                type="button"
+                className="btn-secondary settings-model-fetch"
+                onClick={() => void fetchModels()}
+                disabled={loadingModels}
+              >
+                {loadingModels ? '获取中…' : '获取列表'}
+              </button>
+              {modelOptions.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-secondary settings-model-fetch"
+                  onClick={() => setModelManual((v) => !v)}
+                >
+                  {modelManual ? '用下拉' : '手动'}
+                </button>
+              )}
+            </div>
+          }
         />
       </SettingsGroup>
 
@@ -380,11 +470,12 @@ export default function AiSettingsSection(): JSX.Element {
               <option value="">自动</option>
               <option value="128000">128K</option>
               <option value="200000">200K</option>
+              <option value="256000">256K</option>
               <option value="300000">300K</option>
               <option value="500000">500K</option>
               <option value="1000000">1M</option>
               {form.contextWindow !== '' &&
-                !['128000', '200000', '300000', '500000', '1000000'].includes(form.contextWindow) && (
+                !['128000', '200000', '256000', '300000', '500000', '1000000'].includes(form.contextWindow) && (
                   <option value={form.contextWindow}>{`${form.contextWindow}（自定义）`}</option>
                 )}
             </select>
@@ -463,7 +554,7 @@ export default function AiSettingsSection(): JSX.Element {
               <select
                 value={form.reasoningEffort}
                 disabled={!form.thinkingMode}
-                onChange={(e) => patch({ reasoningEffort: e.target.value as 'high' | 'max' })}
+                onChange={(e) => patch({ reasoningEffort: e.target.value as 'low' | 'high' | 'max' })}
               >
                 <option value="high">high</option>
                 <option value="max">max</option>
@@ -478,6 +569,25 @@ export default function AiSettingsSection(): JSX.Element {
                 checked={form.fimEnabled}
                 onChange={(v) => patch({ fimEnabled: v })}
               />
+            }
+          />
+        </SettingsGroup>
+      )}
+
+      {form.kind !== 'deepseek' && isKimiK3Model(form.model) && (
+        <SettingsGroup label="Kimi K3 推理">
+          <SettingsRow
+            title="推理强度 (reasoning_effort)"
+            description="Kimi K3 始终思考，通过顶层 reasoning_effort 控制强度。默认 max。切换档位会破坏前缀缓存命中。"
+            control={
+              <select
+                value={form.reasoningEffort}
+                onChange={(e) => patch({ reasoningEffort: e.target.value as 'low' | 'high' | 'max' })}
+              >
+                <option value="low">low</option>
+                <option value="high">high</option>
+                <option value="max">max</option>
+              </select>
             }
           />
         </SettingsGroup>
