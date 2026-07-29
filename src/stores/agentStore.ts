@@ -10,6 +10,8 @@ import type {
   ContentReplacementRecord,
   PersistedChatMessage,
   PersistedSession,
+  PersistedSessionInProgress,
+  PersistedSessionInProgressReason,
   ProviderProfileSummary,
   TokenUsage,
   AgentTask
@@ -94,6 +96,113 @@ function revertFailMessage(reason?: string): string {
   }
 }
 
+function interruptedNotice(reason?: PersistedSessionInProgressReason): string {
+  switch (reason) {
+    case 'tool_running':
+      return '上次会话在工具执行过程中异常中断。你可以继续提问，让 Agent 基于当前文件状态接着处理。'
+    case 'permission_pending':
+      return '上次会话在等待权限确认时异常中断。原权限请求已失效，如需继续请重新发送指令。'
+    case 'question_pending':
+      return '上次会话在等待你的回答时异常中断。如需继续，请直接补充回答或重新发送指令。'
+    case 'file_change_pending':
+      return '上次会话在文件变更确认过程中异常中断。请先检查当前文件状态，再决定是否继续。'
+    case 'thinking':
+    case 'streaming':
+    case 'backend_checkpoint':
+    default:
+      return '上次会话在生成过程中异常中断。已保留可恢复的中间记录，可继续提问让 Agent 接着处理。'
+  }
+}
+
+function inProgressReasonFromEvent(event: AgentEvent): PersistedSessionInProgressReason | null {
+  switch (event.type) {
+    case 'text_delta':
+    case 'image_progress':
+    case 'subagent_delta':
+      return 'streaming'
+    case 'thinking_delta':
+      return 'thinking'
+    case 'tool_call_start':
+    case 'tool_call_delta':
+    case 'tool_call_progress':
+    case 'subagent_start':
+    case 'subagent_tool_start':
+      return 'tool_running'
+    case 'tool_call_result':
+      return event.status === 'pending' ? 'tool_running' : 'streaming'
+    case 'subagent_tool_result':
+    case 'subagent_end':
+      return 'streaming'
+    case 'permission_request':
+      return 'permission_pending'
+    case 'user_question':
+      return 'question_pending'
+    case 'file_change_proposed':
+      return 'file_change_pending'
+    case 'file_change_applied':
+    case 'file_change_rejected':
+    case 'permission_resolved':
+    case 'user_question_resolved':
+    case 'workspace_root_changed':
+    case 'notice':
+    case 'warning':
+    case 'context_estimate':
+    case 'turn_start':
+      return 'streaming'
+    default:
+      return null
+  }
+}
+
+function recoverSubagent(subagent: SubagentTabView): SubagentTabView {
+  if (subagent.status !== 'running') return subagent
+  return {
+    ...subagent,
+    status: 'error',
+    failureSummary: subagent.failureSummary ?? '上次运行异常中断',
+    messages: subagent.messages.map(recoverInterruptedMessage)
+  }
+}
+
+function recoverInterruptedMessage(message: ChatMessageView): ChatMessageView {
+  if (message.role === 'assistant' && message.streaming) {
+    return { ...message, streaming: false, interrupted: true, stopped: true }
+  }
+  if (message.role === 'tool' && (message.toolStatus === 'running' || message.toolStatus === 'background' || message.toolStatus === 'deferred')) {
+    return { ...message, toolStatus: 'interrupted', toolResult: message.toolResult ?? '上次运行异常中断，工具执行状态未知。' }
+  }
+  if (message.role === 'permission' && message.permissionStatus === 'pending') {
+    return { ...message, permissionStatus: 'deny', interrupted: true }
+  }
+  if (message.role === 'question' && message.questionStatus === 'pending') {
+    return { ...message, questionStatus: 'cancelled', interrupted: true }
+  }
+  if (message.role === 'filechange' && message.fileStatus === 'streaming') {
+    return { ...message, fileStatus: 'interrupted', interrupted: true }
+  }
+  if (message.role === 'subagent' && message.subagent) {
+    return { ...message, subagent: recoverSubagent(message.subagent) }
+  }
+  return message
+}
+
+function recoverPersistedMessages(messages: ChatMessageView[], inProgress?: PersistedSessionInProgress | null): ChatMessageView[] {
+  const recovered = messages.map(recoverInterruptedMessage)
+  if (!inProgress) return recovered
+  const hasNotice = recovered.some((m) => m.role === 'notice' && m.turnId === inProgress.turnId && m.interrupted)
+  if (hasNotice) return recovered
+  return [
+    ...recovered,
+    {
+      id: `interrupted-${inProgress.turnId}`,
+      role: 'notice',
+      turnId: inProgress.turnId,
+      content: interruptedNotice(inProgress.reason),
+      interrupted: true
+    }
+  ]
+}
+
 // 单卡片撤销/取消撤销的进行中锁：同一 changeId 的 IPC 未返回前禁止重入，
 // 避免用户快速连点导致乐观 UI 状态与磁盘实际写入顺序交错、最终不一致。
 const fileChangeInFlight = new Set<string>()
@@ -127,11 +236,12 @@ export interface ChatMessageView {
   streaming?: boolean
   
   stopped?: boolean
+  interrupted?: boolean
   
   errorCode?: string
   
   toolName?: string
-  toolStatus?: 'running' | 'background' | 'deferred' | 'done' | 'error'
+  toolStatus?: 'running' | 'background' | 'deferred' | 'done' | 'error' | 'interrupted'
   toolArgs?: Record<string, unknown>
   toolResult?: string
   toolProgress?: string[]
@@ -157,7 +267,7 @@ export interface ChatMessageView {
   
   filePath?: string
   fileDiff?: string
-  fileStatus?: 'streaming' | 'proposed' | 'applied' | 'rejected' | 'reverted'
+  fileStatus?: 'streaming' | 'proposed' | 'applied' | 'rejected' | 'reverted' | 'interrupted'
   fileChangeCallId?: string
   // 后端 fileChangeHistory 是否持有该变更的可撤销快照（仅本次运行内有效）。
   // 重启 / 切换会话后从磁盘恢复的卡片不会带此标记，撤销按钮因此不显示，
@@ -978,6 +1088,8 @@ export const useAgentStore = create<AgentState>((set, get) => {
   const initialPreferences = loadAgentPreferences()
 
   const turnSessionMap = new Map<string, string>()
+  const turnStartedAt = new Map<string, number>()
+  const persistTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   const stashCurrentSessionState = (s: AgentState): Pick<AgentState, 'sessionMessages' | 'sessionCanRevert' | 'sessionTasks' | 'sessionStreaming' | 'sessionTokenUsage'> => {
     const sessionStreaming = { ...s.sessionStreaming }
@@ -1042,7 +1154,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
   }
 
   
-  const persistSessionById = (sessionId: string): void => {
+  const persistSessionById = (sessionId: string, inProgress?: PersistedSessionInProgress | null): void => {
     const s = get()
     const meta = s.sessions.find((m) => m.id === sessionId)
     if (!meta) return
@@ -1062,9 +1174,29 @@ export const useAgentStore = create<AgentState>((set, get) => {
       history: reconstructHistory(messages),
       tasks,
       replacementRecords: extractContentReplacementRecords(messages),
-      tokenUsage
+      tokenUsage,
+      inProgress: inProgress ?? null
     }
     void window.lc.aiSaveSession(record)
+  }
+
+  const flushPersistSession = (sessionId: string, inProgress?: PersistedSessionInProgress | null): void => {
+    const timer = persistTimers.get(sessionId)
+    if (timer) {
+      clearTimeout(timer)
+      persistTimers.delete(sessionId)
+    }
+    persistSessionById(sessionId, inProgress ?? null)
+  }
+
+  const schedulePersistSession = (sessionId: string, inProgress: PersistedSessionInProgress, delayMs = 1000): void => {
+    const existing = persistTimers.get(sessionId)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      persistTimers.delete(sessionId)
+      persistSessionById(sessionId, inProgress)
+    }, delayMs)
+    persistTimers.set(sessionId, timer)
   }
 
 
@@ -1083,6 +1215,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     const addUserBubble = options?.addUserBubble !== false
     const sessionId = get().currentSessionId
     turnSessionMap.set(turnId, sessionId)
+    turnStartedAt.set(turnId, Date.now())
     set((s) => {
       
       const sessions = s.sessions.map((meta) => {
@@ -1179,7 +1312,11 @@ export const useAgentStore = create<AgentState>((set, get) => {
   const foldEvent = (
     s: AgentState,
     event: AgentEvent,
-    side: { persist: Set<string>; inlineDiff: Array<() => void> }
+    side: {
+      persistFinal: Set<string>
+      persistProgress: Map<string, PersistedSessionInProgress>
+      inlineDiff: Array<() => void>
+    }
   ): Partial<AgentState> => {
     const eventTurnId = 'turnId' in event ? ((event as { turnId?: string }).turnId ?? undefined) : undefined
 
@@ -1286,8 +1423,22 @@ export const useAgentStore = create<AgentState>((set, get) => {
     }
 
     if (event.type === 'turn_end' || event.type === 'error') {
-      if (eventTurnId) turnSessionMap.delete(eventTurnId)
-      side.persist.add(targetSession)
+      if (eventTurnId) {
+        turnSessionMap.delete(eventTurnId)
+        turnStartedAt.delete(eventTurnId)
+      }
+      side.persistFinal.add(targetSession)
+    } else if (eventTurnId) {
+      const reason = inProgressReasonFromEvent(event)
+      if (reason) {
+        const now = Date.now()
+        side.persistProgress.set(targetSession, {
+          turnId: eventTurnId,
+          startedAt: turnStartedAt.get(eventTurnId) ?? now,
+          lastEventAt: now,
+          reason
+        })
+      }
     }
 
     return result
@@ -1296,7 +1447,11 @@ export const useAgentStore = create<AgentState>((set, get) => {
   function flushEvents(): void {
     if (eventQueue.length === 0) return
     const events = eventQueue.splice(0, eventQueue.length)
-    const side = { persist: new Set<string>(), inlineDiff: [] as Array<() => void> }
+    const side = {
+      persistFinal: new Set<string>(),
+      persistProgress: new Map<string, PersistedSessionInProgress>(),
+      inlineDiff: [] as Array<() => void>
+    }
     set((s) => {
       let working = s
       let patch: Partial<AgentState> = {}
@@ -1308,7 +1463,10 @@ export const useAgentStore = create<AgentState>((set, get) => {
       return patch
     })
     for (const op of side.inlineDiff) op()
-    for (const id of side.persist) persistSessionById(id)
+    for (const [id, progress] of side.persistProgress) {
+      if (!side.persistFinal.has(id)) schedulePersistSession(id, progress)
+    }
+    for (const id of side.persistFinal) flushPersistSession(id, null)
   }
 
   const initialSessionId = 'default'
@@ -1468,7 +1626,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
       const sessionTasks: Record<string, AgentTask[]> = {}
       const sessionTokenUsage: Record<string, TokenUsage | null> = {}
       for (const p of persisted) {
-        sessionMessages[p.id] = (p.messages as ChatMessageView[]) ?? []
+        sessionMessages[p.id] = recoverPersistedMessages((p.messages as ChatMessageView[]) ?? [], p.inProgress)
         sessionTasks[p.id] = p.tasks ?? []
         sessionTokenUsage[p.id] = p.tokenUsage ?? null
       }

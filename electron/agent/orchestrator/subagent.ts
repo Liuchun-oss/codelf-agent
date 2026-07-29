@@ -7,7 +7,7 @@ import { app } from 'electron'
 import { z } from 'zod'
 import { APP_NAME, DATA_DIR_NAME } from '@shared/appConfig'
 import type { AgentEvent, ContentReplacementRecord, SubagentTaskSummary, TokenUsage } from '@shared/agentTypes'
-import { createAdapter, ProviderError, type ChatMessage, type ToolDef, type ToolCallRequest } from '../providers'
+import { createAdapter, isTransientNetworkError, ProviderError, type ChatMessage, type ToolDef, type ToolCallRequest, type StreamChunk } from '../providers'
 import { getActiveProfileApiKey, getActiveProfileId, getProfileRaw, getProfileApiKey, resolveProfileByIdOrName } from '../providers/profileStore'
 import { fetchSystemPromptPartsAsync, assembleSystemMessage, fetchDynamicContextBlock } from '../prompts/assembler'
 import type { PromptContext } from '../prompts/types'
@@ -321,7 +321,7 @@ const RUN_SUBAGENT_DESCRIPTION = [
   'Use model to run this sub-agent on a different configured provider/model than the parent: pass a provider profile id, name, or model name (fuzzy matched against the user\'s configured models). This lets you delegate cheap/bulk work to a smaller model and reserve a stronger model for hard subtasks. If omitted or it cannot be resolved, the sub-agent inherits the parent\'s active model.',
   'Use runInBackground to start it asynchronously and return immediately with a subagent id when you have independent work to continue. Do not assume or fabricate background results before completion.',
   'CRITICAL for runInBackground: this call returns ONLY a started confirmation, NOT the result. You will NOT receive the result later in this same turn. Do NOT use Sleep, polling, or repeated checks to wait for a background sub-agent — that wastes turns and leads to false "stuck" conclusions. After starting a background sub-agent, either continue with other independent work or end your turn; the user is notified when it finishes and can hand the result back to you. If you actually need the result before continuing, run the sub-agent in the FOREGROUND instead (omit runInBackground); multiple foreground sub-agents in one turn run in parallel.',
-  'When a task naturally splits into several independent sub-tasks, prefer fanning out: emit several run_subagent calls in the SAME turn, each with its own focused task, and they will execute in parallel (up to the configured parallel limit; any extra are batched automatically). Give each one a distinct description and a self-contained task so they do not overlap.',
+  'Avoid fanning out multiple sub-agents for ordinary tasks because each sub-agent makes its own model requests and can quickly trigger provider rate limits. Prefer one focused sub-agent first; only launch several in the SAME turn when the user explicitly asks for parallel work or the task is clearly independent and latency-critical. Give each one a distinct description and a self-contained task so they do not overlap.',
   'Use resumeSubagentId to continue a previously started background sub-agent with a follow-up task.',
   'Use forkContext when the child needs a compact snapshot of the parent conversation context.',
   'Use inputsFromSubagentIds for staged handoff: pass the ids of earlier completed sub-agents and their final reports are injected as input for this one, so you can chain peers (research -> implement -> review) without copying long outputs into task. Run peers in the foreground, inspect each result, then launch the next stage referencing the prior id.',
@@ -648,20 +648,13 @@ export async function runReadOnlySubagent(
       let roundText = ''
       let roundInputTokens = 0
       let roundOutputTokens = 0
-
-      for await (const chunk of adapter.streamChat(
-        {
-          model: profile.model,
-          messages: [
-            { role: 'system', content: systemText },
-            ...(dynamicContextBlock ? [{ role: 'system' as const, content: dynamicContextBlock }] : []),
-            ...messages
-          ],
-          maxOutputTokens: profile.maxOutputTokens,
-          ...(toolDefs.length ? { tools: toolDefs } : {})
-        },
-        options.signal
-      )) {
+      const MAX_SUBAGENT_STREAM_RETRIES = 5
+      const requestMessages: ChatMessage[] = [
+        { role: 'system', content: systemText },
+        ...(dynamicContextBlock ? [{ role: 'system' as const, content: dynamicContextBlock }] : []),
+        ...messages
+      ]
+      const handleChunk = (chunk: StreamChunk): void => {
         if (chunk.type === 'text') {
           roundText += chunk.text
           if (options.turnId && options.subagentId) {
@@ -678,6 +671,37 @@ export async function runReadOnlySubagent(
         else if (chunk.type === 'usage') {
           roundInputTokens += chunk.inputTokens ?? 0
           roundOutputTokens += chunk.outputTokens ?? 0
+        }
+      }
+
+      for (let attempt = 0; attempt <= MAX_SUBAGENT_STREAM_RETRIES; attempt += 1) {
+        let producedOutput = false
+        try {
+          for await (const chunk of adapter.streamChat(
+            {
+              model: profile.model,
+              messages: requestMessages,
+              maxOutputTokens: profile.maxOutputTokens,
+              ...(toolDefs.length ? { tools: toolDefs } : {})
+            },
+            options.signal
+          )) {
+            if (chunk.type === 'text' || chunk.type === 'tool_call_delta') producedOutput = true
+            handleChunk(chunk)
+          }
+          break
+        } catch (e) {
+          if (producedOutput || attempt >= MAX_SUBAGENT_STREAM_RETRIES || !isTransientNetworkError(e)) throw e
+          const retryNo = attempt + 1
+          if (options.turnId && options.subagentId) {
+            options.emitEvent?.({
+              type: 'subagent_delta',
+              turnId: options.turnId,
+              subagentId: options.subagentId,
+              content: `\n\n[子 Agent 遇到临时错误，正在自动重试（第 ${retryNo}/${MAX_SUBAGENT_STREAM_RETRIES} 次）…]\n\n`
+            })
+          }
+          await new Promise((r) => setTimeout(r, Math.min(30000, 1000 * 2 ** retryNo)))
         }
       }
 

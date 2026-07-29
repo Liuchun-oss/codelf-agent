@@ -155,13 +155,14 @@ export abstract class BaseProviderAdapter {
 export class ProviderError extends Error {
   readonly code: AgentErrorCode
   readonly httpStatus?: number
-  readonly retryable = false
+  readonly retryable: boolean
 
-  constructor(code: AgentErrorCode, message: string, httpStatus?: number, cause?: unknown) {
+  constructor(code: AgentErrorCode, message: string, httpStatus?: number, cause?: unknown, retryable = false) {
     super(message)
     this.name = 'ProviderError'
     this.code = code
     this.httpStatus = httpStatus
+    this.retryable = retryable
     if (cause !== undefined) {
       ;(this as Error & { cause?: unknown }).cause = cause
     }
@@ -177,10 +178,25 @@ export function mapHttpStatusToError(status: number, detail?: string): ProviderE
     return new ProviderError('provider_not_found', 'Base URL 错误，或模型/Deployment 不存在', status)
   }
   if (status === 429) {
-    return new ProviderError('provider_rate_limit', '配额不足或被限流（429）', status)
+    const lowered = (detail || '').toLowerCase()
+    const looksLikeBalanceIssue =
+      lowered.includes('余额不足') ||
+      lowered.includes('余额为零') ||
+      lowered.includes('欠费') ||
+      lowered.includes('insufficient balance') ||
+      lowered.includes('insufficient credit') ||
+      lowered.includes('credit exhausted') ||
+      lowered.includes('no credit')
+    return new ProviderError(
+      'provider_rate_limit',
+      looksLikeBalanceIssue ? '账户余额或额度不足（429）' : '请求过于频繁，触发上游限流（429）',
+      status,
+      undefined,
+      true
+    )
   }
   if (status >= 500) {
-    return new ProviderError('provider_server', `服务端错误（${status}）`, status)
+    return new ProviderError('provider_server', `服务端错误（${status}）`, status, undefined, true)
   }
   return new ProviderError('unknown', detail ? `请求失败（${status}）：${detail}` : `请求失败（${status}）`, status)
 }
@@ -196,7 +212,7 @@ export function isTransientNetworkError(e: unknown): boolean {
   if (!e || typeof e !== 'object') return false
   if (isAbortError(e)) return false
   if (e instanceof ProviderError) {
-    return e.code === 'network' || e.code === 'provider_timeout'
+    return e.retryable || e.code === 'network' || e.code === 'provider_timeout'
   }
   const code = (e as { code?: unknown })?.code
   if (
@@ -228,7 +244,7 @@ export function networkErrorToProviderError(e: unknown): ProviderError {
     code === 'ECONNRESET' ||
     code === 'EAI_AGAIN'
   ) {
-    return new ProviderError('network', '网络不可达；请检查 Base URL、代理或防火墙设置')
+    return new ProviderError('network', '网络不可达；请检查 Base URL、代理或防火墙设置', undefined, undefined, true)
   }
   const msg = e instanceof Error ? e.message : '未知错误'
   return new ProviderError('unknown', msg)
@@ -284,7 +300,7 @@ export function sdkErrorToProviderError(e: unknown): ProviderError {
 
   const name = (e as { name?: unknown })?.name
   if (name === 'APIConnectionTimeoutError') {
-    return new ProviderError('provider_timeout', '请求超时；可在设置中调大超时时间')
+    return new ProviderError('provider_timeout', '请求超时；可在设置中调大超时时间', undefined, undefined, true)
   }
   const cause = (e as { cause?: unknown })?.cause
   return networkErrorToProviderError(cause ?? e)

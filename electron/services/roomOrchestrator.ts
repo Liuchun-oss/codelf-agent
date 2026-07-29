@@ -64,6 +64,8 @@ const HARD_ROUND_CAP = 200
 // ===== 并行协作模型（host-routed）常量 =====
 // 同时后台干活的工人上限（决策：3，平衡吞吐与 API 限流/成本）。超出的派活进等位队列。
 const MAX_PARALLEL_WORKERS = 3
+// 每个岗位被唤起时，除“未读增量”外额外附带最近可见群聊，避免新岗位/重试时只看见碎片输入。
+const RECENT_CONTEXT_UTTERANCES = 20
 // 单条用户输入派生的工人派发总数上限（防群主无限派活失控，替代串行模型的 HARD_ROUND_CAP）。
 const MAX_DISPATCHES_PER_INPUT = 60
 // 群主连续空回合（既不派活也不播报）上限：达到则认为收敛，停止 pump。
@@ -788,11 +790,12 @@ class RoomOrchestrator {
     const effSeat = this.ensureSeatWorktree(rt, seat, effSeat0)
     const sessionId = `room:${rt.room.id}:seat:${seat.id}`
     const incoming = collectUnseenFor(rt.room.id, seat.id)
+    const recentContext = collectRecentContextFor(rt.room.id, seat.id, RECENT_CONTEXT_UTTERANCES)
     // 并行安全：记录本回合实际读到的最大 seq。发言期间别的工人可能并发追加更大 seq 的消息，
     // 回合结束只把游标推进到这个快照点（markSeenUpTo），不会把没读过的并发消息误标已读。
     const maxSeenSeq = incoming.length ? incoming[incoming.length - 1].seq : 0
     const nameOf = (id: string): string => rt.room.seats.find((s) => s.id === id)?.name ?? id
-    const prompt = renderGroupTranscript(incoming, !!seat.isHost, sr.privateReplyVisibility ? (sr.privateReplySource ?? 'host') : false, nameOf, rt.parallelMode)
+    const prompt = renderGroupTranscript(incoming, !!seat.isHost, sr.privateReplyVisibility ? (sr.privateReplySource ?? 'host') : false, nameOf, rt.parallelMode, recentContext)
 
     // 终端/命令工具的运行根：岗位 workspaceRoot 为空（主管/纯对话岗位 = null）时，
     // 回退到用户家目录，否则 PowerShell/terminal 等工具会一律「未打开工作区」直接失败，
@@ -897,7 +900,7 @@ class RoomOrchestrator {
     sr: SeatRuntime,
     payload0: AiSendPayload
   ): Promise<string> {
-    const MAX_RETRIES = 2
+    const MAX_RETRIES = 5
     let attempt = 0
     let payload = payload0
     while (true) {
@@ -910,9 +913,10 @@ class RoomOrchestrator {
       if (error.retryable && attempt < MAX_RETRIES) {
         attempt++
         // 重试中：人话提示（不升级为报警），指数退避。
-        this.systemNote(rt.room.id, explainError(error.code, seat.name, true))
-        if (rt.weixinRelay) void notifyWeixin(explainError(error.code, seat.name, true))
-        await delay(Math.min(8000, 1000 * 2 ** attempt))
+        const retryNotice = `${explainError(error.code, seat.name, true)}（第 ${attempt}/${MAX_RETRIES} 次）`
+        this.systemNote(rt.room.id, retryNotice)
+        if (rt.weixinRelay) void notifyWeixin(retryNotice)
+        await delay(Math.min(30000, 1000 * 2 ** attempt))
         // 换新 turnId 重跑，避免审计/调试事件复用同一 turnId 产生重复记录（B1-2）。
         payload = { ...payload, turnId: randomUUID() }
         continue
@@ -1584,12 +1588,27 @@ function safeHomeDir(): string {
 // isHost：主管的职责是「先理解需求、再用 mention_seat 分派」，而非亲自动手（B1-4 决策）。
 // nameOf：把消息里的 seatId 渲染成人话显示名（群主验收时知道是「谁」交付的）。
 // parallel：并行模型下，群主的输入可能混着「用户新需求」和「工人完工交付」，给出验收+播报引导。
+function collectRecentContextFor(
+  roomId: string,
+  seatId: string,
+  limit: number
+): Array<{ from: string; to?: string; text: string; visibility?: string[]; seq?: number }> {
+  return getTranscript(roomId)
+    .filter((u) => {
+      if (u.from === seatId) return false
+      if (u.visibility && u.visibility.length) return u.visibility.includes(seatId)
+      return true
+    })
+    .slice(-limit)
+}
+
 function renderGroupTranscript(
-  incoming: Array<{ from: string; to?: string; text: string; visibility?: string[] }>,
+  incoming: Array<{ from: string; to?: string; text: string; visibility?: string[]; seq?: number }>,
   isHost = false,
   privateReply: false | 'host' | 'user' = false,
   nameOf: (id: string) => string = (id) => id,
-  parallel = false
+  parallel = false,
+  recentContext: Array<{ from: string; to?: string; text: string; visibility?: string[]; seq?: number }> = []
 ): string {
   // 群主在并行模型下，输入可能含工人交付：判断是否有「工人发来的（非 user/system）」消息。
   const hasWorkerDelivery = isHost && incoming.some((u) => u.from !== 'user' && u.from !== 'system')
@@ -1607,20 +1626,37 @@ function renderGroupTranscript(
       ? '你是被主管私信单独叫起的：本轮发言只有主管和你能看到，其他岗位看不到。请直接、私下地把结果/选择回复给主管，不必担心泄露给其他人。'
       : '请基于以上内容，完成属于你职责范围内的事，并在群里简洁汇报结果。'
   const tail = isHost ? hostTail : workerTail
-  if (incoming.length === 0) {
-    return isHost
-      ? '（群里暂无新消息。作为主管，请基于团队职责主动推进或等待用户指令，用 mention_seat 分派而非亲自动手。）'
-      : '（群里暂无新消息。如果你是被点名发言，请基于你的职责主动推进；否则简要说明你在等待什么。）'
-  }
-  const lines = incoming.map((u) => {
+  const formatLine = (u: { from: string; to?: string; text: string; visibility?: string[]; seq?: number }): string => {
     const isWorker = u.from !== 'user' && u.from !== 'system'
     const who = u.from === 'user' ? '用户' : u.from === 'system' ? '系统' : nameOf(u.from)
     const at = u.to ? `（@${nameOf(u.to)}）` : ''
     // 私信标注：让收信岗位知道这是私下交代，其他岗位看不到，回复时不必复述私信内容。
-    const priv = u.visibility && u.visibility.length ? '（🔒私信，仅你可见）' : ''
+    const priv = u.visibility && u.visibility.length ? '（私信，仅你可见）' : ''
     // 群主视角：工人发来的消息标为「完工交付」，提示该验收+播报。
-    const deliver = isHost && isWorker ? '✅ 完工交付 ' : ''
+    const deliver = isHost && isWorker ? '完工交付 ' : ''
     return `【${deliver}${who}${at}${priv}】：${u.text}`
-  })
-  return ['以下是群里自你上次发言以来的新消息：', '', ...lines, '', tail].join('\n')
+  }
+  const incomingSeqs = new Set(incoming.map((u) => u.seq).filter((seq): seq is number => typeof seq === 'number'))
+  const contextLines = recentContext
+    .filter((u) => typeof u.seq !== 'number' || !incomingSeqs.has(u.seq))
+    .map(formatLine)
+  const incomingLines = incoming.map(formatLine)
+  if (incoming.length === 0) {
+    const empty = isHost
+      ? '（群里暂无新消息。作为主管，请基于团队职责主动推进或等待用户指令，用 mention_seat 分派而非亲自动手。）'
+      : '（群里暂无新消息。如果你是被点名发言，请基于你的职责主动推进；否则简要说明你在等待什么。）'
+    return contextLines.length
+      ? ['以下是最近的群聊上下文（供你理解上文，不代表都是新任务）：', '', ...contextLines, '', empty].join('\n')
+      : empty
+  }
+  return [
+    ...(contextLines.length
+      ? ['以下是最近的群聊上下文（供你理解上文，不代表都是新任务）：', '', ...contextLines, '']
+      : []),
+    '以下是群里自你上次发言以来的新消息，请优先处理这些新消息：',
+    '',
+    ...incomingLines,
+    '',
+    tail
+  ].join('\n')
 }

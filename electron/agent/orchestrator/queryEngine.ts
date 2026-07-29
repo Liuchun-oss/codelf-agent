@@ -8,7 +8,8 @@ import type {
   UserQuestionResponse,
   ContentReplacementRecord,
   PersistedChatMessage,
-  PersistedFileChange
+  PersistedFileChange,
+  PersistedSessionInProgressReason
 } from '@shared/agentTypes'
 import { APP_NAME } from '@shared/appConfig'
 import {
@@ -86,6 +87,7 @@ import { closeBrowserSessionsForAgent } from '../../services/browserSession'
 import { closeDesktopSessionsForAgent } from '../../services/desktopSession'
 import { deleteBrowserPreview } from '../../services/browserPreviewImage'
 import { saveGeneratedImage } from '../../services/generatedImageStore'
+import { loadSession, saveSession } from './sessionPersistence'
 import { EXECUTE_EXTRA_TOOL_NAME } from '../tools/deferredTools'
 import { buildDeferredToolsAnnouncement, restoreDeferredToolDiscovery } from '../tools/deferredToolDiscovery'
 import { GENERATE_IMAGE_NAME, EDIT_IMAGE_NAME } from '../prompts/tools/imageGen'
@@ -454,6 +456,45 @@ export class QueryEngine {
 
   exportFileChanges(): PersistedFileChange[] {
     return this.fileChangeHistory.export()
+  }
+
+  snapshotHistoryWithTurn(turnMessages: ChatMessage[]): PersistedChatMessage[] {
+    return [
+      ...this.exportHistoryMessages(),
+      ...reconcileOrphanToolCalls(turnMessages).map((m) => ({
+        role: m.role,
+        content: m.content,
+        ...(m.toolCalls?.length
+          ? { toolCalls: m.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })) }
+          : {}),
+        ...(m.toolCallId ? { toolCallId: m.toolCallId } : {})
+      }))
+    ].filter((m) => typeof m.content === 'string')
+  }
+
+  persistTurnCheckpoint(sessionId: string, turnId: string, turnMessages: ChatMessage[], reason: PersistedSessionInProgressReason = 'backend_checkpoint'): void {
+    if (!sessionId || sessionId === 'default') return
+    const existing = loadSession(sessionId)
+    if (!existing) return
+    const now = Date.now()
+    try {
+      saveSession({
+        ...existing,
+        updatedAt: now,
+        history: this.snapshotHistoryWithTurn(turnMessages),
+        replacementRecords: this.exportContentReplacementRecords(),
+        discoveredDeferredTools: this.exportDiscoveredDeferredTools(),
+        fileChanges: this.exportFileChanges(),
+        inProgress: {
+          turnId,
+          startedAt: existing.inProgress?.turnId === turnId ? existing.inProgress.startedAt : now,
+          lastEventAt: now,
+          reason
+        }
+      })
+    } catch {
+      
+    }
   }
 
   restoreFileChanges(items: readonly PersistedFileChange[] | undefined): void {
@@ -987,6 +1028,7 @@ export class QueryEngine {
       role: 'user'
     }
     const turnMessages: ChatMessage[] = [userMsg]
+    this.persistTurnCheckpoint(payload.sessionId || 'default', turnId, turnMessages, 'streaming')
 
     let adapter
     try {
@@ -1607,6 +1649,7 @@ export class QueryEngine {
           }
 
           turnMessages.push({ role: 'assistant', content: roundText })
+          this.persistTurnCheckpoint(payload.sessionId || 'default', turnId, turnMessages, 'streaming')
           break
         }
 
@@ -1621,6 +1664,7 @@ export class QueryEngine {
           toolCalls: calls,
           ...(roundThinking ? { reasoningContent: roundThinking } : {})
         })
+        this.persistTurnCheckpoint(payload.sessionId || 'default', turnId, turnMessages, 'tool_running')
 
         
         const startTimes = new Map<string, number>()
@@ -2010,6 +2054,7 @@ export class QueryEngine {
             toolMsg.images = r.images
           }
           turnMessages.push(toolMsg)
+          this.persistTurnCheckpoint(payload.sessionId || 'default', turnId, turnMessages, 'tool_running')
         }
 
         if (denials.shouldTerminate()) {
@@ -2179,6 +2224,23 @@ export class QueryEngine {
       contextBreakdown = undefined
     }
 
+    const existingSession = loadSession(payload.sessionId || 'default')
+    if (existingSession) {
+      try {
+        saveSession({
+          ...existingSession,
+          updatedAt: Date.now(),
+          history: this.exportHistoryMessages(),
+          replacementRecords: this.exportContentReplacementRecords(),
+          discoveredDeferredTools: this.exportDiscoveredDeferredTools(),
+          fileChanges: this.exportFileChanges(),
+          inProgress: null
+        })
+      } catch {
+        
+      }
+    }
+
     yield {
       type: 'turn_end',
       turnId,
@@ -2244,7 +2306,7 @@ function toErrorEvent(turnId: string, e: unknown): AgentEvent {
       code: e.code,
       message: e.message,
       httpStatus: e.httpStatus,
-      retryable: false
+      retryable: e.retryable
     }
   }
   recordDebugEvent({

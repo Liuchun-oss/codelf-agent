@@ -371,51 +371,6 @@ export default function AiSettingsSection(): JSX.Element {
             </select>
           }
         />
-        <SettingsRow
-          title="模型名"
-          description={
-            modelListError
-              ? modelListError
-              : modelOptions.length > 0
-                ? '已从接口获取模型列表，可下拉选择或点「手动」自行填写。'
-                : '点「获取列表」自动拉取；失败可手动填写模型名。'
-          }
-          control={
-            <div className="settings-model-picker">
-              {modelOptions.length > 0 && !modelManual ? (
-                <select value={form.model} onChange={(e) => patch({ model: e.target.value })}>
-                  {!modelOptions.includes(form.model) && form.model !== '' && (
-                    <option value={form.model}>{`${form.model}（当前）`}</option>
-                  )}
-                  {modelOptions.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input type="text" value={form.model} onChange={(e) => patch({ model: e.target.value })} />
-              )}
-              <button
-                type="button"
-                className="btn-secondary settings-model-fetch"
-                onClick={() => void fetchModels()}
-                disabled={loadingModels}
-              >
-                {loadingModels ? '获取中…' : '获取列表'}
-              </button>
-              {modelOptions.length > 0 && (
-                <button
-                  type="button"
-                  className="btn-secondary settings-model-fetch"
-                  onClick={() => setModelManual((v) => !v)}
-                >
-                  {modelManual ? '用下拉' : '手动'}
-                </button>
-              )}
-            </div>
-          }
-        />
       </SettingsGroup>
 
       <SettingsGroup label="连接">
@@ -459,6 +414,51 @@ export default function AiSettingsSection(): JSX.Element {
             />
           </>
         )}
+        <SettingsRow
+          title="模型名"
+          description={
+            modelListError
+              ? modelListError
+              : modelOptions.length > 0
+                ? '已从接口获取模型列表，可下拉选择或点「手动」自行填写。'
+                : '填好 Base URL 与 API Key 后，点「获取列表」自动拉取；失败可手动填写模型名。'
+          }
+          control={
+            <div className="settings-model-picker">
+              {modelOptions.length > 0 && !modelManual ? (
+                <select value={form.model} onChange={(e) => patch({ model: e.target.value })}>
+                  {!modelOptions.includes(form.model) && form.model !== '' && (
+                    <option value={form.model}>{`${form.model}（当前）`}</option>
+                  )}
+                  {modelOptions.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input type="text" value={form.model} onChange={(e) => patch({ model: e.target.value })} />
+              )}
+              <button
+                type="button"
+                className="btn-secondary settings-model-fetch"
+                onClick={() => void fetchModels()}
+                disabled={loadingModels}
+              >
+                {loadingModels ? '获取中…' : '获取列表'}
+              </button>
+              {modelOptions.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-secondary settings-model-fetch"
+                  onClick={() => setModelManual((v) => !v)}
+                >
+                  {modelManual ? '用下拉' : '手动'}
+                </button>
+              )}
+            </div>
+          }
+        />
       </SettingsGroup>
 
       <SettingsGroup label="参数">

@@ -481,6 +481,22 @@ export interface PersistedChatMessage {
   toolCallId?: string
 }
 
+export type PersistedSessionInProgressReason =
+  | 'streaming'
+  | 'thinking'
+  | 'tool_running'
+  | 'permission_pending'
+  | 'question_pending'
+  | 'file_change_pending'
+  | 'backend_checkpoint'
+
+export interface PersistedSessionInProgress {
+  turnId: string
+  startedAt: number
+  lastEventAt: number
+  reason: PersistedSessionInProgressReason
+}
+
 export interface ContentReplacementRecord {
   kind: 'tool-result'
   toolUseId: string
@@ -524,6 +540,7 @@ export interface PersistedSession {
   discoveredDeferredTools?: string[]
   fileChanges?: PersistedFileChange[]
   tokenUsage?: TokenUsage | null
+  inProgress?: PersistedSessionInProgress | null
 }
 
 

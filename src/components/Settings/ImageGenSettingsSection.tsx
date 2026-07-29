@@ -5,9 +5,10 @@ import type {
   ImageGenTestResult
 } from '@shared/agentSettings'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
-import { isDashScopeEndpoint } from '@shared/appConfig'
+import { isDashScopeEndpoint, isVolcEndpoint } from '@shared/appConfig'
 
-const SIZE_OPTIONS = ['auto', '1024x1024', '1024x1536', '1536x1024', '512x512', '1k', '2k', '4k']
+const OPENAI_COMPAT_SIZE_OPTIONS = ['1024x1024', '1024x1536', '1536x1024', 'auto']
+const VOLC_SIZE_OPTIONS = ['2K', '4K', '2048x2048', '2304x1728', '1728x2304']
 // 阿里云 DashScope 用 “宽*高” 形式，且不认 auto/档位关键字。
 const DASHSCOPE_SIZE_OPTIONS = ['1024*1024', '1536*1024', '1024*1536', '1280*720', '720*1280', '2048*2048']
 
@@ -62,12 +63,20 @@ export default function ImageGenSettingsSection(): JSX.Element {
     )
   }
 
-  // 根据「当前正在编辑」的 Base URL 判断是否阿里云端点，实时切换提示与尺寸选项。
-  const isDashScope = isDashScopeEndpoint(baseUrlInput || settings.baseUrl)
-  const sizeOptions = isDashScope ? DASHSCOPE_SIZE_OPTIONS : SIZE_OPTIONS
+  // 根据「当前正在编辑」的 Base URL 判断端点类型，实时切换提示与尺寸选项。
+  const editedBaseUrl = baseUrlInput || settings.baseUrl
+  const isDashScope = isDashScopeEndpoint(editedBaseUrl)
+  const isVolc = isVolcEndpoint(editedBaseUrl)
+  const sizeOptions = isDashScope
+    ? DASHSCOPE_SIZE_OPTIONS
+    : isVolc
+      ? VOLC_SIZE_OPTIONS
+      : OPENAI_COMPAT_SIZE_OPTIONS
   const endpointGroupLabel = isDashScope
     ? '端点配置（阿里云 DashScope / 百炼多模态生成）'
-    : '端点配置（OpenAI Images API 兼容）'
+    : isVolc
+      ? '端点配置（火山方舟 Seedream）'
+      : '端点配置（OpenAI Images API 兼容）'
 
   return (
     <div className="settings-section-page">
@@ -107,13 +116,28 @@ export default function ImageGenSettingsSection(): JSX.Element {
         </div>
       )}
 
+      {isVolc && !isDashScope && (
+        <div className="settings-inline-alert">
+          已识别为火山方舟端点：可使用 <code>2K</code> / <code>4K</code> 档位、AI 水印和 Seedream 组图参数。
+        </div>
+      )}
+
+      {!isDashScope && !isVolc && settings.size.toUpperCase() === '2K' && (
+        <div className="settings-inline-alert">
+          当前看起来是普通 OpenAI 兼容网关，建议默认尺寸改为 <code>1024x1024</code>、竖图用
+          <code>1024x1536</code>、横图用 <code>1536x1024</code>；<code>2K</code> 可能不是该网关支持的格式。
+        </div>
+      )}
+
       <SettingsGroup label={endpointGroupLabel}>
         <SettingsRow
           title="Base URL"
           description={
             isDashScope
               ? '阿里云：填 https://dashscope.aliyuncs.com 或 MaaS 专属域名即可，会自动补全多模态生成路径。'
-              : '如 https://api.openai.com/v1，会自动追加 /images/generations。也可填第三方兼容网关地址。'
+              : isVolc
+                ? '火山方舟：填 Ark / Seedream 接入地址，会使用火山图像参数。'
+                : '如 https://api.openai.com/v1，会自动追加 /images/generations。第三方兼容网关也按通用 OpenAI Images 参数调用。'
           }
           stacked
           control={
@@ -132,7 +156,9 @@ export default function ImageGenSettingsSection(): JSX.Element {
           description={
             isDashScope
               ? '阿里云文生图模型，如 qwen-image-2.0-pro-2026-06-22、wanx2.1-t2i-turbo 等。'
-              : '如 gpt-image-1、dall-e-3，或第三方网关的文生图模型名。'
+              : isVolc
+                ? '火山 Seedream 模型名或接入点 ID。'
+                : '如 gpt-image-1、gpt-image-2、dall-e-3，或第三方网关的文生图模型名。'
           }
           stacked
           control={
@@ -148,7 +174,13 @@ export default function ImageGenSettingsSection(): JSX.Element {
         />
         <SettingsRow
           title="默认尺寸"
-          description={isDashScope ? '阿里云用「宽*高」形式，如 1536*1024。' : undefined}
+          description={
+            isDashScope
+              ? '阿里云用「宽*高」形式，如 1536*1024。'
+              : isVolc
+                ? '火山 Seedream 可用 2K/4K；普通宽高也会按火山规则规整。'
+                : '普通 OpenAI 兼容网关建议用 1024x1024、1024x1536 或 1536x1024；模型调用工具时也可按场景覆盖。'
+          }
           control={
             <select
               disabled={saving}

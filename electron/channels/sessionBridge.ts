@@ -21,7 +21,7 @@ function translateError(code: AgentErrorCode, message: string): string {
     case 'provider_not_found':
       return '找不到模型端点，请检查 Provider 配置。'
     case 'provider_rate_limit':
-      return '模型调用触发限流，请稍后再试。'
+      return message || '模型调用过于频繁，触发上游限流，请稍后再试。'
     case 'provider_timeout':
       return '模型响应超时，请稍后再试。'
     case 'provider_server':

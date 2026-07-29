@@ -118,6 +118,9 @@ function normalizeCommandForCurrentShell(command: string): string {
   return [first, ...rest.map((part) => `if ($?) { ${part} }`)].join('; ')
 }
 
+function escapePowerShellSingleQuotedHereString(text: string): string {
+  return text.replace(/'@/g, "'`@")
+}
 
 export function killProcessTree(child: ChildProcess): void {
   if (process.platform === 'win32' && child.pid) {
@@ -137,15 +140,19 @@ export function shellInvocation(command: string): { file: string; args: string[]
     
     
     
+    const escapedCommand = escapePowerShellSingleQuotedHereString(shellCommand)
     const script = [
       'chcp 65001 > $null',
       "$ProgressPreference='SilentlyContinue'",
       '[Console]::InputEncoding=[System.Text.Encoding]::UTF8',
       '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8',
       '$OutputEncoding=[System.Text.Encoding]::UTF8',
-      shellCommand,
-      'exit $LASTEXITCODE'
-    ].join('; ')
+      '$__codelf_exitCode = 0',
+      `$__codelf_command = @'\n${escapedCommand}\n'@`,
+      'try { & ([scriptblock]::Create($__codelf_command)) | Out-Default } catch { Write-Error $_; $__codelf_exitCode = 1 }',
+      'if ($__codelf_exitCode -eq 0) { if ($LASTEXITCODE -is [int]) { $__codelf_exitCode = $LASTEXITCODE } elseif (-not $?) { $__codelf_exitCode = 1 } }',
+      'exit $__codelf_exitCode'
+    ].join('\n')
     const encoded = Buffer.from(script, 'utf16le').toString('base64')
     return {
       file: 'powershell.exe',

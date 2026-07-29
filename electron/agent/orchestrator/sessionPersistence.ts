@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { readFileSync, writeFileSync, renameSync, rmSync, existsSync, mkdirSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
-import type { AgentTask, ContentReplacementRecord, PersistedSession, PersistedChatMessage, PersistedFileChange, TokenUsage } from '@shared/agentTypes'
+import type { AgentTask, ContentReplacementRecord, PersistedSession, PersistedChatMessage, PersistedFileChange, PersistedSessionInProgress, TokenUsage } from '@shared/agentTypes'
 
 
 
@@ -35,7 +35,8 @@ function serialize(session: PersistedSession): string {
       updatedAt: session.updatedAt,
       workspaceId: session.workspaceId ?? null,
       archived: session.archived ?? false,
-      tokenUsage: session.tokenUsage ?? null
+      tokenUsage: session.tokenUsage ?? null,
+      inProgress: session.inProgress ?? null
     })
   )
   for (const m of session.messages) lines.push(JSON.stringify({ t: 'msg', m }))
@@ -104,6 +105,24 @@ function parseFileChange(value: unknown): PersistedFileChange | null {
   }
 }
 
+function parseInProgress(value: unknown): PersistedSessionInProgress | null {
+  if (!value || typeof value !== 'object') return null
+  const p = value as Partial<PersistedSessionInProgress>
+  if (typeof p.turnId !== 'string' || !p.turnId) return null
+  if (typeof p.startedAt !== 'number' || typeof p.lastEventAt !== 'number') return null
+  const reason = p.reason
+  if (
+    reason !== 'streaming' &&
+    reason !== 'thinking' &&
+    reason !== 'tool_running' &&
+    reason !== 'permission_pending' &&
+    reason !== 'question_pending' &&
+    reason !== 'file_change_pending' &&
+    reason !== 'backend_checkpoint'
+  ) return null
+  return { turnId: p.turnId, startedAt: p.startedAt, lastEventAt: p.lastEventAt, reason }
+}
+
 function parseFile(raw: string): PersistedSession | null {
   const messages: unknown[] = []
   const history: PersistedChatMessage[] = []
@@ -111,7 +130,7 @@ function parseFile(raw: string): PersistedSession | null {
   const replacementRecords: ContentReplacementRecord[] = []
   const discoveredDeferredTools: string[] = []
   const fileChanges: PersistedFileChange[] = []
-  let meta: { id: string; title: string; createdAt: number; updatedAt: number; workspaceId: string | null; archived: boolean; tokenUsage: TokenUsage | null } | null = null
+  let meta: { id: string; title: string; createdAt: number; updatedAt: number; workspaceId: string | null; archived: boolean; tokenUsage: TokenUsage | null; inProgress: PersistedSessionInProgress | null } | null = null
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue
     let obj: Record<string, unknown>
@@ -131,7 +150,8 @@ function parseFile(raw: string): PersistedSession | null {
         tokenUsage:
           obj.tokenUsage && typeof obj.tokenUsage === 'object'
             ? (obj.tokenUsage as TokenUsage)
-            : null
+            : null,
+        inProgress: parseInProgress(obj.inProgress)
       }
     } else if (obj.t === 'msg' && 'm' in obj) {
       messages.push(obj.m)

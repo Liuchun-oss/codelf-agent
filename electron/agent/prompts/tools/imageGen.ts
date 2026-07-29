@@ -11,7 +11,7 @@ Behavior:
 
 Usage:
 - "prompt": a detailed description of the image to generate. Be specific about subject, style, composition, colors.
-- "size" (optional): use "2K" (recommended default) or "4K", or an explicit large WIDTHxHEIGHT (e.g. "2048x2048", "2304x1728"). NOTE: many endpoints (e.g. Seedream) reject small sizes like 1024x1024 — prefer "2K". Defaults to the configured size.
+- "size" (optional): choose a size that matches the requested composition when useful: "1024x1024" for square, "1536x1024" for landscape, "1024x1536" for portrait. Use "2K"/"4K" only for endpoints that support quality tiers such as Volcengine Seedream. Omit it when the user's intent does not require a specific ratio; the configured default will be used.
 - "n" (optional): number of images (1-4, default 1). For a coherent SET, prefer "series" instead of "n".
 - "referenceImages" (optional): one or more reference images to guide generation. Provide them when the user wants image-to-image ("make a close-up of this dog"), multi-image reference / fusion ("put the outfit from image 2 onto image 1"), or design derived from a reference (e.g. a logo). Accepts http(s) URLs, codelf-artifact:// URLs of prior generated images, absolute paths, or workspace-relative paths.
 - "series" (optional): set true WHENEVER the user asks for MULTIPLE related/consistent images in one request — e.g. "生成一组4张...", four seasons of the same courtyard, a brand visual kit, or one scene at morning/noon/night. This makes the model output SEPARATE images; without it a multi-image request usually returns a single collage/grid, which is wrong.

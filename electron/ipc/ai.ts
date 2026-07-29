@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow, type WebContents } from 'electron'
 import type {
+  AgentEvent,
   AiSendPayload,
   FileChangeDecision,
   PermissionDecision,
@@ -135,12 +136,53 @@ export function registerAiIpc(): void {
     const engine = getQueryEngine(sessionId)
     
     void (async () => {
+      const MAX_SEND_RETRIES = 5
+      const emit = (ev: AgentEvent): void => {
+        if (wc.isDestroyed()) return
+        // 接管激活时，把事件镜像给 HUD 悬浮窗显示进度。
+        feedTakeoverEvent(sessionId, ev)
+        wc.send('ai:event', ev)
+      }
       try {
-        for await (const ev of engine.submitTurn(payload)) {
-          if (wc.isDestroyed()) break
-          // 接管激活时，把事件镜像给 HUD 悬浮窗显示进度。
-          feedTakeoverEvent(sessionId, ev)
-          wc.send('ai:event', ev)
+        for (let attempt = 0; attempt <= MAX_SEND_RETRIES; attempt += 1) {
+          let finalError: Extract<AgentEvent, { type: 'error' }> | null = null
+          let producedOutput = false
+          for await (const ev of engine.submitTurn(payload)) {
+            if (wc.isDestroyed()) break
+            if (ev.type === 'error') {
+              finalError = ev
+              continue
+            }
+            if (
+              ev.type === 'text_delta' ||
+              ev.type === 'thinking_delta' ||
+              ev.type === 'tool_call_start' ||
+              ev.type === 'tool_call_delta' ||
+              ev.type === 'tool_call_progress' ||
+              ev.type === 'tool_call_result' ||
+              ev.type === 'subagent_start' ||
+              ev.type === 'subagent_delta' ||
+              ev.type === 'subagent_tool_start' ||
+              ev.type === 'subagent_tool_result' ||
+              ev.type === 'subagent_end' ||
+              ev.type === 'image_progress'
+            ) {
+              producedOutput = true
+            }
+            emit(ev)
+          }
+          if (!finalError) break
+          if (producedOutput || !finalError.retryable || attempt >= MAX_SEND_RETRIES || wc.isDestroyed()) {
+            emit(finalError)
+            break
+          }
+          const retryNo = attempt + 1
+          emit({
+            type: 'notice',
+            turnId: payload.turnId,
+            message: `${finalError.message}，正在自动重试（第 ${retryNo}/${MAX_SEND_RETRIES} 次）…`
+          })
+          await new Promise((r) => setTimeout(r, Math.min(30000, 1000 * 2 ** retryNo)))
         }
       } catch (err) {
         if (!wc.isDestroyed()) {
@@ -214,8 +256,10 @@ export function registerAiIpc(): void {
       const engine = getExistingQueryEngine(session.id)
       const engineRecords = engine?.exportContentReplacementRecords() ?? []
       const engineFileChanges = engine?.exportFileChanges() ?? []
+      const engineHistory = engine?.exportHistoryMessages() ?? []
       saveSession({
         ...session,
+        history: engineHistory.length > 0 ? engineHistory : session.history,
         tasks: listTasks(session.id),
         replacementRecords: engineRecords.length > 0 ? engineRecords : session.replacementRecords,
         discoveredDeferredTools: engine?.exportDiscoveredDeferredTools() ?? session.discoveredDeferredTools,
@@ -233,7 +277,14 @@ export function registerAiIpc(): void {
       if (session) {
         const engine = getQueryEngine(sessionId)
         engine.restoreHistory(
-          session.history.map((m) => ({ role: m.role, content: m.content })),
+          session.history.map((m) => ({
+            role: m.role,
+            content: m.content,
+            ...(m.toolCalls?.length
+              ? { toolCalls: m.toolCalls.map((tc) => ({ id: tc.id, name: tc.name, arguments: tc.arguments })) }
+              : {}),
+            ...(m.toolCallId ? { toolCallId: m.toolCallId } : {})
+          })),
           session.replacementRecords,
           session.discoveredDeferredTools
         )

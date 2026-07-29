@@ -31,7 +31,7 @@ const mediaConfigSchema = z.object({
   timeoutMs: z.number().int().positive().optional().describe('请求超时毫秒（video 为轮询超时 pollTimeoutMs）'),
   apiKey: z.string().optional().describe('对应端点的 API Key / Token；写入系统安全存储。传空字符串可清除'),
   // image 专属。
-  size: z.string().optional().describe('[image] 默认图片尺寸，如 2K / 1024x1024'),
+  size: z.string().optional().describe('[image] 默认图片尺寸，如 1024x1024 / 1536x1024 / 1024x1536；火山 Seedream 可用 2K / 4K'),
   // image / video 共有。
   watermark: z.boolean().optional().describe('[image/video] 是否加 AI 水印'),
   // video 专属。

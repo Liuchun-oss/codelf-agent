@@ -28,7 +28,7 @@ function resolveImageOutputPath(
 
 const generateImageSchema = z.object({
   prompt: z.string().min(1).describe('Detailed description of the image to generate'),
-  size: z.string().optional().describe('Image size. Prefer "2K" (default) or "4K"; small sizes like 1024x1024 are rejected by some endpoints. May also be an explicit large WIDTHxHEIGHT.'),
+  size: z.string().optional().describe('Image size. Choose by composition when useful: 1024x1024 for square, 1536x1024 for landscape, 1024x1536 for portrait. Use 2K/4K only for endpoints that support quality tiers such as Volcengine Seedream. Omit to use the configured default.'),
   n: z.number().int().min(1).max(4).optional().describe('Number of images to generate (1-4, default 1)'),
   referenceImages: z.array(z.string().min(1)).optional().describe('Optional reference image(s) for image-to-image, multi-image reference, or fusion. Each item is an http(s) URL, a codelf-artifact:// URL of a previously generated image, an absolute path, or a workspace-relative path. Pass one for single-image guidance, multiple for fusion/swap.'),
   series: z.boolean().optional().describe('Set true to generate a coherent SET of images in one call (e.g. four-seasons sequence, brand kit, a story across multiple scenes). The model auto-decides how many to produce up to maxImages.'),

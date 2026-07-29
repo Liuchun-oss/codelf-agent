@@ -382,26 +382,33 @@ async function runDashScopeRequest(cfg: DashScopeHttpConfig): Promise<ImageGenOu
   return { ok: false, error: lastError }
 }
 
-// 把请求尺寸规整为图像端点能接受的值。
-// 火山 Seedream 4.x 要求像素总量较大（约 ≥368 万像素 / 2K 级），
-// 像 1024x1024(=105万) 这类小尺寸会被直接拒绝（HTTP 400 size too small）。
-// 这里把过小或不带档位关键字的小尺寸抬到 2K，避免模型误传小尺寸导致失败。
-function normalizeRequestSize(raw: string): string {
+// 普通 OpenAI 兼容网关的尺寸：尽量尊重模型/用户传入的显式比例。
+// 某些网关不认 1K/2K/4K 档位；如果设置页遗留了这类值，转换成通用方图，避免直接 400。
+function normalizeOpenAICompatibleSize(raw: string): string | undefined {
   const s = (raw || '').trim()
-  if (!s) return '2K'
-  // 档位关键字（1K/2K/4K）直接交给端点。
+  if (!s) return undefined
+  if (/^auto$/i.test(s)) return 'auto'
+  const m = /^(\d+)\s*[x×]\s*(\d+)$/i.exec(s)
+  if (m) return `${m[1]}x${m[2]}`
+  if (/^[124]k$/i.test(s)) return '1024x1024'
+  return undefined
+}
+
+// 火山 Seedream 4.x 要求 2K/4K 或足够大的显式尺寸，小尺寸容易被拒绝。
+// 该规整只用于火山端点，避免污染普通 OpenAI 兼容网关。
+function normalizeVolcSize(raw: string): string {
+  const s = (raw || '').trim()
+  if (!s || /^auto$/i.test(s)) return '2K'
   if (/^[124]k$/i.test(s)) return s.toUpperCase()
   const m = /^(\d+)\s*[x×]\s*(\d+)$/i.exec(s)
   if (m) {
     const w = parseInt(m[1], 10)
     const h = parseInt(m[2], 10)
     if (Number.isFinite(w) && Number.isFinite(h)) {
-      // 低于约 368 万像素的，抬到 2K 档（端点会按比例给到合规尺寸）。
       if (w * h < 3_680_000) return '2K'
       return `${w}x${h}`
     }
   }
-  // auto 或无法识别：交给 2K，最稳。
   return '2K'
 }
 
@@ -474,18 +481,27 @@ export async function generateImages(
   if (!guard.ok || !guard.url) {
     return { ok: false, error: `端点被拒绝：${guard.error ?? 'URL 不安全'}` }
   }
+  const isVolc = isVolcEndpoint(settings.baseUrl)
   const body: Record<string, unknown> = {
     model: settings.model,
-    prompt: req.prompt,
-    size: normalizeRequestSize(req.size || settings.size),
-    response_format: 'b64_json'
+    prompt: req.prompt
   }
+  const requestSize = isVolc
+    ? normalizeVolcSize(req.size || settings.size)
+    : normalizeOpenAICompatibleSize(req.size || settings.size)
+  if (requestSize) body.size = requestSize
+  // b64_json/流式属于端点扩展兼容点；普通网关不强塞，优先接收默认 URL 响应并下载保存。
+  if (isVolc) body.response_format = 'b64_json'
   // watermark 是火山方舟私有参数；非火山端点开启严格校验时会拒绝该字段，故只对火山端点透传。
-  if (isVolcEndpoint(settings.baseUrl)) {
+  if (isVolc) {
     body.watermark = settings.watermark
   }
 
-  // 参考图（图生图 / 多图参考 / 融合）：把本地引用解析为 data URL，http(s) 原样透传。
+  // 参考图（图生图 / 多图参考 / 融合）：火山 generations 支持 image 字段；普通 OpenAI 兼容端点
+  // 需要走 /images/edits（由 editImages 的回退路径处理），不能在 generations 里静默忽略参考图。
+  if (req.images?.length && !isVolc) {
+    return { ok: false, error: '当前 OpenAI 兼容图像端点不支持在 /images/generations 中传参考图；请使用 EditImage，或改用支持参考图 generations 的端点。' }
+  }
   if (req.images?.length) {
     const resolved: string[] = []
     for (const ref of req.images) {
@@ -493,20 +509,27 @@ export async function generateImages(
       if ('error' in r) return { ok: false, error: r.error }
       resolved.push(r.value)
     }
-    // 火山约定：单图传字符串，多图传数组。
-    body.image = resolved.length === 1 ? resolved[0] : resolved
+    if (isVolc) {
+      // 火山约定：单图传字符串，多图传数组。普通 OpenAI 兼容网关的图生图走 /images/edits 回退，
+      // 不在 generations 请求里混入私有 image 字段，避免严格网关拒绝。
+      body.image = resolved.length === 1 ? resolved[0] : resolved
+    }
   }
 
-  // 组图：开启后由模型自动决定生成一组连贯图片；否则按需要的张数（n>1 时也用组图实现）。
-  if (req.series) {
-    body.sequential_image_generation = 'auto'
-    body.sequential_image_generation_options = { max_images: Math.min(Math.max(req.maxImages ?? n, 1), 15) }
-  } else if (n > 1) {
-    body.sequential_image_generation = 'auto'
-    body.sequential_image_generation_options = { max_images: n }
+  if (isVolc) {
+    // 火山组图：开启后由模型自动决定生成一组连贯图片；否则按需要的张数（n>1 时也用组图实现）。
+    if (req.series) {
+      body.sequential_image_generation = 'auto'
+      body.sequential_image_generation_options = { max_images: Math.min(Math.max(req.maxImages ?? n, 1), 15) }
+    } else if (n > 1) {
+      body.sequential_image_generation = 'auto'
+      body.sequential_image_generation_options = { max_images: n }
+    } else {
+      body.sequential_image_generation = 'disabled'
+      body.n = 1
+    }
   } else {
-    body.sequential_image_generation = 'disabled'
-    body.n = 1
+    body.n = req.series ? Math.min(Math.max(req.maxImages ?? n, 1), 4) : n
   }
   const url = guard.url.toString()
 
@@ -518,7 +541,7 @@ export async function generateImages(
 
   // 流式：火山 SSE 逐张返回（image_generation.partial_succeeded）。
   // 出错时回退到非流式整批请求，保证最终仍能出图。
-  if (opts?.stream) {
+  if (opts?.stream && isVolc) {
     const streamed = await runImageStream({
       url,
       headers,
@@ -800,14 +823,18 @@ async function editImagesViaMultipart(
       }
     : undefined
   // FormData/Blob 的 body 一旦被 fetch 消费就不可复用，故每次尝试都重建。
+  const isVolc = isVolcEndpoint(settings.baseUrl)
   const buildForm = (): FormData => {
     const form = new FormData()
     form.append('model', settings.model)
     form.append('prompt', req.prompt)
     form.append('n', String(req.n && req.n > 0 ? Math.min(req.n, 4) : 1))
-    form.append('size', req.size || settings.size)
+    const requestSize = isVolc
+      ? normalizeVolcSize(req.size || settings.size)
+      : normalizeOpenAICompatibleSize(req.size || settings.size)
+    if (requestSize) form.append('size', requestSize)
     // watermark 为火山方舟私有参数，仅对火山端点透传，避免其它端点严格校验拒绝。
-    if (isVolcEndpoint(settings.baseUrl)) {
+    if (isVolc) {
       form.append('watermark', String(settings.watermark))
     }
     for (const img of resolvedImages) {

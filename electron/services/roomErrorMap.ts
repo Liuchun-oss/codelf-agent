@@ -18,7 +18,7 @@ export function explainError(code: AgentErrorCode, seatName: string, retrying: b
   const tag = `【${seatName}】`
   switch (code) {
     case 'provider_rate_limit':
-      return retrying ? `${tag}被限流，正在自动重试…` : `⚠️${tag}多次被限流，已暂停。额度可能用完了，充值/稍后回复「继续」。`
+      return retrying ? `${tag}请求过于频繁，正在退避重试…` : `⚠️${tag}连续触发上游限流，已暂停。请稍后回复「继续」，或降低并发/切换模型。`
     case 'provider_timeout':
       return retrying ? `${tag}响应超时，重试中…` : `⚠️${tag}多次响应超时，已暂停，要继续吗？`
     case 'network':

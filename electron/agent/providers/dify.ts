@@ -554,7 +554,7 @@ ${baseQuery}`
     } catch (e: unknown) {
       // 超时错误特殊处理
       if (timeoutController && (e as { name?: string })?.name === 'AbortError') {
-        throw new ProviderError('provider_timeout', `请求超时（${this.timeoutMs}ms）`, undefined, e)
+        throw new ProviderError('provider_timeout', `请求超时（${this.timeoutMs}ms）`, undefined, e, true)
       }
       throw new ProviderError('network', '无法连接到 Dify 服务', undefined, e)
     }
@@ -568,10 +568,25 @@ ${baseQuery}`
         throw new ProviderError('provider_not_found', 'Dify 端点不存在，请检查 Base URL', response.status)
       }
       if (response.status === 429) {
-        throw new ProviderError('provider_rate_limit', 'Dify 配额不足或限流', response.status)
+        const lowered = text.toLowerCase()
+        const looksLikeBalanceIssue =
+          lowered.includes('余额不足') ||
+          lowered.includes('余额为零') ||
+          lowered.includes('欠费') ||
+          lowered.includes('insufficient balance') ||
+          lowered.includes('insufficient credit') ||
+          lowered.includes('credit exhausted') ||
+          lowered.includes('no credit')
+        throw new ProviderError(
+          'provider_rate_limit',
+          looksLikeBalanceIssue ? 'Dify 账户余额或额度不足（429）' : 'Dify 请求过于频繁，触发限流（429）',
+          response.status,
+          undefined,
+          true
+        )
       }
       if (response.status >= 500) {
-        throw new ProviderError('provider_server', `Dify 服务端错误（${response.status}）`, response.status)
+        throw new ProviderError('provider_server', `Dify 服务端错误（${response.status}）`, response.status, undefined, true)
       }
       throw new ProviderError('unknown', `请求失败（${response.status}）：${text}`, response.status)
     }
