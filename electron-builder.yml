@@ -123,3 +123,4 @@ nsis:
   include: resources/installer.nsh
 
 asar: true
+npmRebuild: false
