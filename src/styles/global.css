@@ -8957,6 +8957,18 @@ kbd {
   animation: home-recent-pulse 1.4s ease-in-out infinite;
 }
 
+.home-recent-rename-input {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg-overlay);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text-bright);
+  font-size: 13px;
+  padding: 2px 6px;
+  outline: none;
+}
+
 @keyframes home-recent-pulse {
   0%,
   100% {

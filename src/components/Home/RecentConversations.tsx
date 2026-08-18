@@ -98,11 +98,14 @@ export default function RecentConversations({
   const messages = useAgentStore((s) => s.messages)
   const deleteSession = useAgentStore((s) => s.deleteSession)
   const archiveSession = useAgentStore((s) => s.archiveSession)
+  const renameSession = useAgentStore((s) => s.renameSession)
   const sessionStreaming = useAgentStore((s) => s.sessionStreaming)
   const streaming = useAgentStore((s) => s.streaming)
 
   const [menuId, setMenuId] = useState<string | null>(null)
   const [menuClosing, setMenuClosing] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
   const [query, setQuery] = useState('')
   const [showArchived, setShowArchived] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -138,6 +141,20 @@ export default function RecentConversations({
     void window.lc.clipboardWriteText(id)
     toast.info('对话ID已复制')
     closeMenu()
+  }
+
+  const startRename = (meta: SessionMeta): void => {
+    setRenamingId(meta.id)
+    setRenameDraft(meta.title)
+    // 不走 closeMenu 的退出动画：菜单收起动画期间 .home-recent-main 是 display:none，
+    // 重命名输入框若在此时挂载，autoFocus 会失效
+    setMenuId(null)
+  }
+
+  const commitRename = (id: string): void => {
+    const trimmed = renameDraft.trim()
+    if (trimmed) renameSession(id, trimmed)
+    setRenamingId(null)
   }
 
   const onExport = async (id: string): Promise<void> => {
@@ -240,8 +257,12 @@ export default function RecentConversations({
         role="button"
         tabIndex={0}
         className={`home-recent-item${sidebar ? ' home-recent-item--sidebar' : ''}${active ? ' home-recent-item--active' : ''}`}
-        onClick={() => onOpen(meta.id)}
+        onClick={() => {
+          if (renamingId === meta.id) return
+          onOpen(meta.id)
+        }}
         onKeyDown={(e) => {
+          if (renamingId === meta.id) return
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
             onOpen(meta.id)
@@ -249,10 +270,32 @@ export default function RecentConversations({
         }}
       >
         <div className="home-recent-main">
-          <span className="home-recent-title">
-            {isStreaming && <span className="home-recent-dot" title="进行中" />}
-            {meta.title}
-          </span>
+          {renamingId === meta.id ? (
+            <input
+              className="home-recent-rename-input"
+              value={renameDraft}
+              autoFocus
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.nativeEvent.isComposing) return
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  commitRename(meta.id)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setRenamingId(null)
+                }
+              }}
+              onBlur={() => commitRename(meta.id)}
+            />
+          ) : (
+            <span className="home-recent-title">
+              {isStreaming && <span className="home-recent-dot" title="进行中" />}
+              {meta.title}
+            </span>
+          )}
           <span className="home-recent-meta">
             {dir && !hideCwd && (
               <span className="home-recent-cwd" title={meta.cwd ?? undefined}>
@@ -269,6 +312,17 @@ export default function RecentConversations({
             className={`home-recent-actions${menuClosing ? ' closing' : ''}`}
             onAnimationEnd={onActionsAnimEnd}
           >
+            <button
+              type="button"
+              className="home-recent-action-btn"
+              title="重命名对话"
+              onClick={(e) => {
+                e.stopPropagation()
+                startRename(meta)
+              }}
+            >
+              重命名
+            </button>
             <button
               type="button"
               className="home-recent-action-btn"
