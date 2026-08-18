@@ -1,6 +1,6 @@
 {
   "name": "codelf",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Codelf（码灵）- 轻量级 Agent 辅助编程 IDE",
   "main": "./out/main/index.js",
   "author": "巫枫",
