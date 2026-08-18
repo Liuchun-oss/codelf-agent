@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { ProviderProfileSummary } from '@shared/agentTypes'
 import { useAgentStore } from '@/stores/agentStore'
 
-/** 模型选择器：列出已配置的 Provider profile，切换全局当前模型 */
+/**
+ * 模型选择器：列出已配置的 Provider profile，切换全局默认模型。
+ * 这里改的是「新对话的默认模型」；已存在的对话各自绑定自己的模型，不受影响。
+ */
 export default function ModelPicker(): JSX.Element {
   const activeProfile = useAgentStore((s) => s.activeProfile)
   const refreshActiveProfile = useAgentStore((s) => s.refreshActiveProfile)
@@ -43,13 +46,14 @@ export default function ModelPicker(): JSX.Element {
   }
 
   const label = activeProfile ? `${activeProfile.name} · ${activeProfile.model}` : '未配置模型'
+  const hint = activeProfile ? `${label}（新对话默认模型）` : label
 
   return (
     <div className="cwd-picker" ref={rootRef}>
       <button
         type="button"
         className="cwd-picker-trigger"
-        title={label}
+        title={hint}
         disabled={switching}
         onClick={() => setOpen((v) => !v)}
       >

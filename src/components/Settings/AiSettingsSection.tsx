@@ -337,7 +337,9 @@ export default function AiSettingsSection(): JSX.Element {
         </select>
         <div className="settings-ai-bar-spacer" />
         <div className="settings-ai-tags">
-          <span className={`settings-tag${isActive ? ' on' : ''}`}>{isActive ? '当前激活' : '未激活'}</span>
+          <span className={`settings-tag${isActive ? ' on' : ''}`} title="新对话的默认模型，同时用于内联编辑、提交信息、记忆整理等辅助功能">
+            {isActive ? '默认模型' : '非默认'}
+          </span>
           <span className={`settings-tag${editingHasKey || form.apiKey ? ' on' : ''}`}>{credentialState}</span>
         </div>
       </div>
@@ -609,8 +611,13 @@ export default function AiSettingsSection(): JSX.Element {
           </button>
         )}
         {profileExists && (
-          <button className="btn-secondary" onClick={() => void onSetActive()} disabled={isActive}>
-            {isActive ? '当前' : '设为当前'}
+          <button
+            className="btn-secondary"
+            onClick={() => void onSetActive()}
+            disabled={isActive}
+            title="设为新对话的默认模型；不会改变已有对话已绑定的模型"
+          >
+            {isActive ? '默认模型' : '设为默认'}
           </button>
         )}
         {profileExists && (

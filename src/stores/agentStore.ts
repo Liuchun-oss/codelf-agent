@@ -31,6 +31,8 @@ export interface SessionMeta {
   updatedAt: number
 
   cwd: string | null
+  // 本对话绑定的模型 profile id。null/undefined 时回退到全局默认（激活）模型。
+  profileId?: string | null
   archived?: boolean
 }
 
@@ -336,6 +338,8 @@ interface AgentState {
   deleteSession: (id: string) => void
   archiveSession: (id: string, archived: boolean) => void
   renameSession: (id: string, title: string) => void
+  // 把某个对话绑定到指定模型 profile。传 null 表示跟随全局默认模型。
+  setSessionProfile: (id: string, profileId: string | null) => void
   
   openSessionTab: (id: string) => void
   
@@ -1144,6 +1148,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
       createdAt: meta.createdAt,
       updatedAt: meta.updatedAt,
       workspaceId: meta.cwd ?? null,
+      profileId: meta.profileId ?? null,
       archived: meta.archived ?? false,
       messages: s.messages,
       history: reconstructHistory(s.messages),
@@ -1170,6 +1175,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
       createdAt: meta.createdAt,
       updatedAt: meta.updatedAt,
       workspaceId: meta.cwd ?? null,
+      profileId: meta.profileId ?? null,
       archived: meta.archived ?? false,
       messages,
       history: reconstructHistory(messages),
@@ -1242,7 +1248,10 @@ export const useAgentStore = create<AgentState>((set, get) => {
     if (!hydratedMain.has(sessionId)) {
       await ensureSessionHydrated(sessionId)
     }
-    const sessionCwd = get().sessions.find((m) => m.id === sessionId)?.cwd ?? null
+    const sessionMeta = get().sessions.find((m) => m.id === sessionId)
+    const sessionCwd = sessionMeta?.cwd ?? null
+    // 对话绑定的模型；不传则由主进程回退到全局默认模型。
+    const sessionProfileId = sessionMeta?.profileId ?? null
     const att =
       options?.attachments && options.attachments.length > 0
         ? options.attachments.filter(
@@ -1259,6 +1268,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
         message: text,
         sessionCwd,
         permissionMode: get().permissionMode,
+        ...(sessionProfileId ? { profileId: sessionProfileId } : {}),
         ...(options?.resendOfTurnId ? { resendOfTurnId: options.resendOfTurnId } : {}),
         ...(att && att.length > 0 ? { attachments: att } : {}),
         ...(options?.images && options.images.length > 0 ? { images: options.images } : {})
@@ -1579,7 +1589,8 @@ export const useAgentStore = create<AgentState>((set, get) => {
               title: DEFAULT_SESSION_TITLE,
               createdAt: Date.now(),
               updatedAt: Date.now(),
-              cwd: get().currentWorkspaceId
+              cwd: get().currentWorkspaceId,
+              profileId: get().activeProfile?.id ?? null
             }
           ],
           openTabs: [id],
@@ -1621,6 +1632,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
         cwd: p.workspaceId ?? null,
+        profileId: p.profileId ?? null,
         archived: p.archived ?? false
       }))
       const sessionMessages: Record<string, ChatMessageView[]> = {}
@@ -1672,7 +1684,9 @@ export const useAgentStore = create<AgentState>((set, get) => {
               createdAt: Date.now(),
               updatedAt: Date.now(),
 
-              cwd: cwd === undefined ? s.currentWorkspaceId : cwd
+              cwd: cwd === undefined ? s.currentWorkspaceId : cwd,
+              // 新对话继承当前全局默认模型，之后可在对话内单独切换而不影响其他对话
+              profileId: s.activeProfile?.id ?? null
             }
           ],
           openTabs: [...s.openTabs.filter((t) => t !== id), id],
@@ -1827,6 +1841,17 @@ export const useAgentStore = create<AgentState>((set, get) => {
         sessions: s.sessions.map((m) => (m.id === id ? { ...m, title: trimmed } : m))
       })
       // 与 archiveSession 同理：空会话不落盘，重命名结果随首轮发送一起写入
+      persistSessionById(id)
+    },
+
+    setSessionProfile: (id, profileId) => {
+      const s = get()
+      if (!s.sessions.some((m) => m.id === id)) return
+      set({
+        sessions: s.sessions.map((m) => (m.id === id ? { ...m, profileId } : m))
+      })
+      // 空会话按设计不落盘（persistSessionById 跳过无消息会话，避免产生空文件），
+      // 此时选择仅存于内存，首轮发送时随会话一起写入；这与空会话本身不持久化一致。
       persistSessionById(id)
     },
 
@@ -2017,7 +2042,10 @@ export const useAgentStore = create<AgentState>((set, get) => {
       }
       const sessionId = s.currentSessionId
       if (!sessionId) return
-      const cwd = s.sessions.find((m) => m.id === sessionId)?.cwd ?? null
+      const meta = s.sessions.find((m) => m.id === sessionId)
+      const cwd = meta?.cwd ?? null
+      // 压缩发生在对话内，必须与对话正文用同一个模型，否则摘要风格与本轮回复脱节。
+      const compactProfileId = meta?.profileId ?? s.activeProfile?.id ?? null
       const pushNotice = (content: string): void => {
         set((st) => ({
           messages: [...st.messages, { id: uuid(), role: 'notice' as const, content }]
@@ -2026,7 +2054,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
       try {
         const res = await window.lc.aiCompactNow({
           sessionId,
-          profileId: s.activeProfile?.id ?? null,
+          profileId: compactProfileId,
           workspaceRoot: cwd
         })
         if (res.compacted) {

@@ -23,7 +23,7 @@ import {
 import {
   getActiveProfileId,
   getProfileRaw,
-  getActiveProfileApiKey
+  getProfileApiKey
 } from '../providers/profileStore'
 import { recycleOutboundDispatcher } from '../providers/network'
 import { fetchSystemPromptPartsAsync, assembleSystemMessage, fetchDynamicContextBlock, getStaticSystemCore } from '../prompts/assembler'
@@ -613,7 +613,9 @@ export class QueryEngine {
     const signal = controller.signal
     let adapter
     try {
-      adapter = createAdapter(profile, getActiveProfileApiKey())
+      // 密钥必须取自实际使用的 profile：会话/岗位可能绑定非全局默认模型，
+      // 用全局默认模型的 key 去请求另一个 baseUrl 会直接鉴权失败。
+      adapter = createAdapter(profile, getProfileApiKey(profile))
     } catch {
       return { compacted: false, reason: 'adapter_error' }
     }
@@ -955,6 +957,7 @@ export class QueryEngine {
     const toolCtx: ToolContext = {
       workspaceRoot: effectiveWorkspaceRoot,
       memoryWorkspaceRoot: effectiveMemoryRoot,
+      parentProfileId: profile.id,
       sessionId: payload.sessionId || 'default',
       signal,
       permissionMode: payload.permissionMode ?? 'default',
@@ -1032,7 +1035,8 @@ export class QueryEngine {
 
     let adapter
     try {
-      adapter = createAdapter(profile, getActiveProfileApiKey())
+      // 同上：key 必须跟随实际选用的 profile，而非全局默认 profile。
+      adapter = createAdapter(profile, getProfileApiKey(profile))
     } catch (e) {
       yield toErrorEvent(turnId, e)
       return

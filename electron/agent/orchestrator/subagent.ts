@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { APP_NAME, DATA_DIR_NAME } from '@shared/appConfig'
 import type { AgentEvent, ContentReplacementRecord, SubagentTaskSummary, TokenUsage } from '@shared/agentTypes'
 import { createAdapter, isTransientNetworkError, ProviderError, type ChatMessage, type ToolDef, type ToolCallRequest, type StreamChunk } from '../providers'
-import { getActiveProfileApiKey, getActiveProfileId, getProfileRaw, getProfileApiKey, resolveProfileByIdOrName } from '../providers/profileStore'
+import { getActiveProfileId, getProfileRaw, getProfileApiKey, resolveProfileByIdOrName } from '../providers/profileStore'
 import { fetchSystemPromptPartsAsync, assembleSystemMessage, fetchDynamicContextBlock } from '../prompts/assembler'
 import type { PromptContext } from '../prompts/types'
 import { countChatMessagesTokens, countTokens } from '../context/tokenCounter'
@@ -511,6 +511,8 @@ export interface RunSubagentOptions {
   forkContextMessages?: ChatMessage[]
   contentReplacementState?: ContentReplacementState
   agentDefinition?: AgentDefinition
+  /** 父级（主 Agent）本轮使用的 profile id，未显式指定模型时继承。 */
+  parentProfileId?: string | null
   permissionMode?: 'default' | 'acceptEdits'
   snapshot?: (absPath: string) => Promise<void>
   handoffInputs?: string
@@ -532,18 +534,20 @@ export async function runReadOnlySubagent(
   const definition = options.agentDefinition ?? getAgentDefinition(input.subagentType, options.workspaceRoot)
   let profile: ReturnType<typeof getProfileRaw> | null = null
   let apiKey: string | null = null
-  // 模型优先级：调用时显式传入的 input.model > 项目 agent 定义的默认 model > 当前激活模型。
+  // 模型优先级：调用时显式传入的 input.model > 项目 agent 定义的默认 model
+  // > 父级本轮使用的 profile（对话可能绑定了非默认模型）> 全局默认模型。
   const requestedModel = input.model?.trim() || definition.model?.trim() || undefined
   const requested = requestedModel ? resolveProfileByIdOrName(requestedModel) : null
   try {
-    if (requested) {
-      profile = requested
-      apiKey = getProfileApiKey(requested)
-    } else {
+    const inherited =
+      !requested && options.parentProfileId ? getProfileRaw(options.parentProfileId) : null
+    profile = requested ?? inherited
+    if (!profile) {
       const profileId = getActiveProfileId()
       profile = profileId ? getProfileRaw(profileId) : null
-      apiKey = getActiveProfileApiKey()
     }
+    // key 始终跟随最终选定的 profile，避免跨 profile 用错密钥。
+    apiKey = getProfileApiKey(profile)
   } catch {
     profile = null
   }
@@ -883,6 +887,7 @@ export function createRunSubagentTool(options: RunSubagentToolOptions = {}): Too
             ? cloneContentReplacementState(ctx.contentReplacementState)
             : undefined,
         agentDefinition: definition,
+        parentProfileId: ctx.parentProfileId ?? null,
         permissionMode: ctx.permissionMode ?? 'default',
         snapshot: ctx.snapshot,
         handoffInputs

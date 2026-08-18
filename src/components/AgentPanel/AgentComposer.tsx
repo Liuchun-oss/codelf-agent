@@ -88,11 +88,14 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
   } = props
 
   const activeProfile = useAgentStore((s) => s.activeProfile)
-  const refreshActiveProfile = useAgentStore((s) => s.refreshActiveProfile)
   const permissionMode = useAgentStore((s) => s.permissionMode)
   const setPermissionMode = useAgentStore((s) => s.setPermissionMode)
+  const currentSessionId = useAgentStore((s) => s.currentSessionId)
+  const sessionProfileId = useAgentStore(
+    (s) => s.sessions.find((m) => m.id === s.currentSessionId)?.profileId ?? null
+  )
+  const setSessionProfile = useAgentStore((s) => s.setSessionProfile)
   const [profiles, setProfiles] = useState<ProviderProfileSummary[]>([])
-  const [switchingProfile, setSwitchingProfile] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const modelMenuRef = useRef<HTMLDivElement>(null)
   const lastTokenUsage = useAgentStore((s) => s.lastTokenUsage)
@@ -100,13 +103,21 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
   const [contextOpen, setContextOpen] = useState(false)
   const ringRef = useRef<HTMLDivElement>(null)
 
+  // 会话级切换不再改动全局激活态，因此主要靠 profilesChanged 事件刷新列表。
+  // 同时保留 activeProfile?.id 依赖作兜底：onProfilesChanged 缺失时仍能跟随
+  // store 的全局刷新重新拉取，不会永久停在过期列表上。
   useEffect(() => {
     let cancelled = false
-    void window.lc.aiListProfiles().then((list) => {
-      if (!cancelled) setProfiles(list)
-    })
+    const load = (): void => {
+      void window.lc.aiListProfiles().then((list) => {
+        if (!cancelled) setProfiles(list)
+      })
+    }
+    load()
+    const off = window.lc.onProfilesChanged?.(load)
     return () => {
       cancelled = true
+      off?.()
     }
   }, [activeProfile?.id])
 
@@ -131,21 +142,21 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
     }
   }, [modelMenuOpen])
 
-  const switchProfile = async (id: string): Promise<void> => {
+  // 当前对话生效的模型：会话绑定优先，未绑定（或绑定的 profile 已被删除）则跟随全局默认模型，
+  // 与主进程 submitTurn 的回退顺序保持一致。
+  const boundProfile = sessionProfileId ? profiles.find((p) => p.id === sessionProfileId) : undefined
+  const effectiveProfile = boundProfile ?? activeProfile
+
+  // 只改当前对话的绑定，不动全局默认模型，因此其他对话不受影响。
+  const switchProfile = (id: string): void => {
     setModelMenuOpen(false)
-    if (!id || id === activeProfile?.id) return
-    setSwitchingProfile(true)
-    try {
-      const res = await window.lc.aiSetActiveProfile(id)
-      if (res.ok) await refreshActiveProfile()
-    } finally {
-      setSwitchingProfile(false)
-    }
+    if (!id || id === effectiveProfile?.id || !currentSessionId) return
+    setSessionProfile(currentSessionId, id)
   }
 
   // 菜单展示全部已配置模型（含当前），当前项高亮并打勾；只有一个模型时无需展开。
   const canOpenMenu = profiles.length > 1
-  const modelSwitcherDisabled = streaming || switchingProfile || profiles.length === 0 || !canOpenMenu
+  const modelSwitcherDisabled = streaming || profiles.length === 0 || !canOpenMenu
 
   return (
     <div className="agent-composer">
@@ -275,20 +286,22 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
                 type="button"
                 className="agent-composer-model-trigger"
                 title={
-                  !activeProfile
+                  !effectiveProfile
                     ? '未配置模型'
                     : streaming
                       ? '生成中无法切换模型'
                       : !canOpenMenu
-                        ? `${activeProfile.name} · ${activeProfile.model}（仅此一个可用模型）`
-                        : `${activeProfile.name} · ${activeProfile.model}`
+                        ? `${effectiveProfile.name} · ${effectiveProfile.model}（仅此一个可用模型）`
+                        : `${effectiveProfile.name} · ${effectiveProfile.model}（仅切换当前对话）`
                 }
                 disabled={modelSwitcherDisabled}
                 aria-haspopup="listbox"
                 aria-expanded={modelMenuOpen}
                 onClick={() => setModelMenuOpen((open) => !open)}
               >
-                <span>{activeProfile ? `${activeProfile.name} · ${activeProfile.model}` : '未配置模型'}</span>
+                <span>
+                  {effectiveProfile ? `${effectiveProfile.name} · ${effectiveProfile.model}` : '未配置模型'}
+                </span>
                 {canOpenMenu && (
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
                     <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -298,7 +311,7 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
               {modelMenuOpen && profiles.length > 0 && (
                 <div className="agent-composer-model-menu" role="listbox">
                   {profiles.map((profile) => {
-                    const isActive = profile.id === activeProfile?.id
+                    const isActive = profile.id === effectiveProfile?.id
                     return (
                       <button
                         key={profile.id}
@@ -307,7 +320,7 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
                         role="option"
                         aria-selected={isActive}
                         title={`${profile.name} · ${profile.model}`}
-                        onClick={() => void switchProfile(profile.id)}
+                        onClick={() => switchProfile(profile.id)}
                       >
                         <span className="agent-composer-model-check" aria-hidden>
                           {isActive ? '✓' : ''}

@@ -532,6 +532,8 @@ export interface PersistedSession {
   updatedAt: number
   
   workspaceId?: string | null
+  // 对话绑定的模型 profile。缺省（老会话/未指定）时回退到全局激活 profile。
+  profileId?: string | null
   archived?: boolean
   messages: unknown[]
   history: PersistedChatMessage[]

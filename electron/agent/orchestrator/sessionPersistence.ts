@@ -34,6 +34,7 @@ function serialize(session: PersistedSession): string {
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
       workspaceId: session.workspaceId ?? null,
+      profileId: session.profileId ?? null,
       archived: session.archived ?? false,
       tokenUsage: session.tokenUsage ?? null,
       inProgress: session.inProgress ?? null
@@ -130,7 +131,7 @@ function parseFile(raw: string): PersistedSession | null {
   const replacementRecords: ContentReplacementRecord[] = []
   const discoveredDeferredTools: string[] = []
   const fileChanges: PersistedFileChange[] = []
-  let meta: { id: string; title: string; createdAt: number; updatedAt: number; workspaceId: string | null; archived: boolean; tokenUsage: TokenUsage | null; inProgress: PersistedSessionInProgress | null } | null = null
+  let meta: { id: string; title: string; createdAt: number; updatedAt: number; workspaceId: string | null; profileId: string | null; archived: boolean; tokenUsage: TokenUsage | null; inProgress: PersistedSessionInProgress | null } | null = null
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue
     let obj: Record<string, unknown>
@@ -146,6 +147,7 @@ function parseFile(raw: string): PersistedSession | null {
         createdAt: typeof obj.createdAt === 'number' ? obj.createdAt : Date.now(),
         updatedAt: typeof obj.updatedAt === 'number' ? obj.updatedAt : Date.now(),
         workspaceId: typeof obj.workspaceId === 'string' ? obj.workspaceId : null,
+        profileId: typeof obj.profileId === 'string' && obj.profileId ? obj.profileId : null,
         archived: obj.archived === true,
         tokenUsage:
           obj.tokenUsage && typeof obj.tokenUsage === 'object'
