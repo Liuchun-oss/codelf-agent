@@ -41,6 +41,7 @@ export default function ChatHistory({ open, onClose, anchorRef, workspaceRoot }:
   const currentSessionId = useAgentStore((s) => s.currentSessionId)
   const switchSession = useAgentStore((s) => s.switchSession)
   const deleteSession = useAgentStore((s) => s.deleteSession)
+  const renameSession = useAgentStore((s) => s.renameSession)
   const sessionMessages = useAgentStore((s) => s.sessionMessages)
   const messages = useAgentStore((s) => s.messages)
   const sessionStreaming = useAgentStore((s) => s.sessionStreaming)
@@ -48,6 +49,8 @@ export default function ChatHistory({ open, onClose, anchorRef, workspaceRoot }:
 
   const [search, setSearch] = useState('')
   const [menuId, setMenuId] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
   const [render, setRender] = useState(open)
   const [exiting, setExiting] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -65,6 +68,7 @@ export default function ChatHistory({ open, onClose, anchorRef, workspaceRoot }:
     if (!open) {
       setSearch('')
       setMenuId(null)
+      setRenamingId(null)
     }
   }, [open])
 
@@ -97,6 +101,12 @@ export default function ChatHistory({ open, onClose, anchorRef, workspaceRoot }:
   const rect = anchorRef.current?.getBoundingClientRect()
   const top = rect ? rect.bottom + 4 : 40
   const right = rect ? window.innerWidth - rect.right : 8
+
+  const commitRename = (id: string): void => {
+    const trimmed = renameDraft.trim()
+    if (trimmed) renameSession(id, trimmed)
+    setRenamingId(null)
+  }
 
   const onExport = async (id: string): Promise<void> => {
     const meta = sessions.find((m) => m.id === id)
@@ -158,6 +168,7 @@ export default function ChatHistory({ open, onClose, anchorRef, workspaceRoot }:
                 tabIndex={0}
                 className={`chat-history-item${s.id === currentSessionId ? ' active' : ''}`}
                 onClick={() => {
+                  if (renamingId === s.id) return
                   switchSession(s.id)
                   onClose()
                 }}
@@ -169,9 +180,43 @@ export default function ChatHistory({ open, onClose, anchorRef, workspaceRoot }:
                   }
                 }}
               >
-                <span className="chat-history-item-title">{s.title}</span>
-                {menuId === s.id ? (
+                {renamingId === s.id ? (
+                  <input
+                    className="chat-history-item-rename-input"
+                    value={renameDraft}
+                    autoFocus
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.nativeEvent.isComposing) return
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        commitRename(s.id)
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setRenamingId(null)
+                      }
+                    }}
+                    onBlur={() => commitRename(s.id)}
+                  />
+                ) : (
+                  <span className="chat-history-item-title">{s.title}</span>
+                )}
+                {renamingId === s.id ? null : menuId === s.id ? (
                   <span className="chat-history-item-actions">
+                    <button
+                      type="button"
+                      className="chat-history-action-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setRenamingId(s.id)
+                        setRenameDraft(s.title)
+                        setMenuId(null)
+                      }}
+                      title="重命名对话"
+                    >
+                      重命名
+                    </button>
                     <button
                       type="button"
                       className="chat-history-action-btn"

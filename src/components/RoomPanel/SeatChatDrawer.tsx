@@ -146,7 +146,7 @@ export default function SeatChatDrawer({
             onKeyUp={syncCursor}
             onKeyDown={(e) => {
               if (slash.handleSlashKeyDown(e, { input: text, setInput: setText, setCursor })) return
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
                 submit()
               }

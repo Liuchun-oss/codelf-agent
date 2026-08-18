@@ -335,6 +335,7 @@ interface AgentState {
   switchSession: (id: string) => void
   deleteSession: (id: string) => void
   archiveSession: (id: string, archived: boolean) => void
+  renameSession: (id: string, title: string) => void
   
   openSessionTab: (id: string) => void
   
@@ -1814,6 +1815,18 @@ export const useAgentStore = create<AgentState>((set, get) => {
       set({
         sessions: s.sessions.map((m) => (m.id === id ? { ...m, archived } : m))
       })
+      persistSessionById(id)
+    },
+
+    renameSession: (id, title) => {
+      const trimmed = title.trim()
+      if (!trimmed) return
+      const s = get()
+      if (!s.sessions.some((m) => m.id === id)) return
+      set({
+        sessions: s.sessions.map((m) => (m.id === id ? { ...m, title: trimmed } : m))
+      })
+      // 与 archiveSession 同理：空会话不落盘，重命名结果随首轮发送一起写入
       persistSessionById(id)
     },
 

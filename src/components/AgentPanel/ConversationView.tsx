@@ -258,6 +258,8 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
   )
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    // IME 组词期间的按键（含回车选候选词）不触发发送/选择器操作
+    if (e.nativeEvent.isComposing) return
     if (showSlashPicker) {
       if (e.key === 'Escape') {
         e.preventDefault()

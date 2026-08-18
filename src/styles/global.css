@@ -1221,6 +1221,17 @@ body.resizing-x .sidebar-dock {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.chat-history-item-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-overlay);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text-bright);
+  font-size: 12px;
+  padding: 3px 6px;
+  outline: none;
+}
 .chat-history-item-more {
   opacity: 0;
   border: none;
