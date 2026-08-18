@@ -3,10 +3,11 @@ import type { Tool, ToolResult } from './types'
 import { guardOutboundUrl } from './ssrfGuard'
 import { WEB_SEARCH_DESCRIPTION, WEB_SEARCH_NAME } from '../prompts/tools/webSearch'
 import { getWebSearchSettings } from '../settings/agentSettingsStore'
-import { getSecret, hasSecret } from '../../ipc/secrets'
+import { getSecret } from '../../ipc/secrets'
 import { getFetchOptions } from '../providers/network'
-import type { IqsEngineType, WebSearchProvider } from '@shared/agentSettings'
+import type { IqsEngineType, WebSearchProvider, WebSearchSettings } from '@shared/agentSettings'
 import { userAgent } from '@shared/appConfig'
+import { searchZhipu, tryProviderNativeSearch } from './providerNativeSearch'
 
 const SEARCH_TIMEOUT_MS = 20_000
 const MAX_BODY_BYTES = 1024 * 1024
@@ -15,6 +16,7 @@ const MAX_RESULTS = 10
 
 export const WEB_SEARCH_IQS_KEY_REF = 'websearch:aliyun-iqs'
 export const WEB_SEARCH_BRAVE_KEY_REF = 'websearch:brave'
+export const WEB_SEARCH_ZHIPU_KEY_REF = 'websearch:zhipu'
 
 const IQS_ENDPOINT = 'https://cloud-iqs.aliyuncs.com/search/unified'
 const BRAVE_ENDPOINT = 'https://api.search.brave.com/res/v1/web/search'
@@ -36,6 +38,7 @@ interface SearchResult {
 export type ResolvedWebSearchProvider = Exclude<WebSearchProvider, 'auto'>
 
 interface SecretProbe {
+  hasZhipuKey?: boolean
   hasIqsKey: boolean
   hasBraveKey: boolean
 }
@@ -46,9 +49,19 @@ export function resolveWebSearchProvider(
   secrets: SecretProbe
 ): ResolvedWebSearchProvider {
   if (provider !== 'auto') return provider
+  if (secrets.hasZhipuKey) return 'zhipu'
   if (secrets.hasIqsKey) return 'aliyun-iqs'
   if (secrets.hasBraveKey) return 'brave'
   return 'duckduckgo'
+}
+
+// auto 模式下的完整降级链；显式指定后端时只尝试该后端 + DuckDuckGo 兜底。
+const AUTO_CHAIN: readonly ResolvedWebSearchProvider[] = ['zhipu', 'aliyun-iqs', 'brave', 'duckduckgo']
+
+
+export function buildSearchChain(provider: WebSearchProvider): ResolvedWebSearchProvider[] {
+  if (provider === 'auto') return [...AUTO_CHAIN]
+  return provider === 'duckduckgo' ? ['duckduckgo'] : [provider, 'duckduckgo']
 }
 
 function decodeHtml(value: string): string {
@@ -268,6 +281,32 @@ async function searchIqs(
   return formatResults(query, results, truncated)
 }
 
+// 跑单个通用后端。缺 Key 视为「不可用」返回 null，让调用方继续降级而不是硬失败。
+async function runBackend(
+  backend: ResolvedWebSearchProvider,
+  query: string,
+  limit: number,
+  engineType: IqsEngineType,
+  signal: AbortSignal
+): Promise<ToolResult | null> {
+  if (backend === 'zhipu') {
+    const key = getSecret(WEB_SEARCH_ZHIPU_KEY_REF)
+    if (!key) return null
+    return await searchZhipu(query, limit, key, signal)
+  }
+  if (backend === 'aliyun-iqs') {
+    const key = getSecret(WEB_SEARCH_IQS_KEY_REF)
+    if (!key) return null
+    return await searchIqs(query, limit, key, engineType, signal)
+  }
+  if (backend === 'brave') {
+    const key = getSecret(WEB_SEARCH_BRAVE_KEY_REF)
+    if (!key) return null
+    return await searchBrave(query, limit, key, signal)
+  }
+  return await searchDuckDuckGo(query, limit, signal)
+}
+
 export const webSearchTool: Tool<WebSearchInput> = {
   name: WEB_SEARCH_NAME,
   description: WEB_SEARCH_DESCRIPTION,
@@ -277,34 +316,65 @@ export const webSearchTool: Tool<WebSearchInput> = {
   async execute(input, ctx): Promise<ToolResult> {
     const limit = input.limit ?? 5
     const settings = getWebSearchSettings()
-    const provider = resolveWebSearchProvider(settings.provider, {
-      hasIqsKey: hasSecret(WEB_SEARCH_IQS_KEY_REF),
-      hasBraveKey: hasSecret(WEB_SEARCH_BRAVE_KEY_REF)
-    })
+    const notes: string[] = []
 
+    // 第一优先：当前对话模型所属厂商的官方搜索（复用该 provider 的 Key，零配置）。
+    if (settings.preferProviderNative) {
+      const native = await tryProviderNativeSearch({
+        query: input.query,
+        limit,
+        profileId: ctx.parentProfileId,
+        signal: ctx.signal
+      })
+      if (native.result) return native.result
+      if (native.failure) notes.push(`${native.vendor} 官方搜索不可用：${native.failure}`)
+    }
+
+    // 其次按设置里的后端顺序逐级降级，DuckDuckGo 永远兜底。
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS)
     const onAbort = (): void => controller.abort()
     ctx.signal?.addEventListener('abort', onAbort)
 
     try {
-      if (provider === 'aliyun-iqs') {
-        const key = getSecret(WEB_SEARCH_IQS_KEY_REF)
-        if (!key) return { content: '阿里云 IQS 未配置 API Key，请在设置 → 联网搜索 中填写。', isError: true }
-        return await searchIqs(input.query, limit, key, settings.iqsEngineType, controller.signal)
-      }
-      if (provider === 'brave') {
-        const key = getSecret(WEB_SEARCH_BRAVE_KEY_REF)
-        if (!key) return { content: 'Brave 未配置 API Key，请在设置 → 联网搜索 中填写。', isError: true }
-        return await searchBrave(input.query, limit, key, controller.signal)
-      }
-      return await searchDuckDuckGo(input.query, limit, controller.signal)
-    } catch (e) {
-      if (controller.signal.aborted) return { content: '请求已取消或超时', isError: true }
-      return { content: e instanceof Error ? e.message : '搜索失败', isError: true }
+      return await runChain(settings, input.query, limit, notes, controller)
     } finally {
       clearTimeout(timeout)
       ctx.signal?.removeEventListener('abort', onAbort)
     }
   }
+}
+
+async function runChain(
+  settings: WebSearchSettings,
+  query: string,
+  limit: number,
+  notes: string[],
+  controller: AbortController
+): Promise<ToolResult> {
+  const chain = buildSearchChain(settings.provider)
+  const skipped: string[] = []
+
+  for (const backend of chain) {
+    if (controller.signal.aborted) return { content: '请求已取消或超时', isError: true }
+    try {
+      const r = await runBackend(backend, query, limit, settings.iqsEngineType, controller.signal)
+      if (!r) {
+        skipped.push(backend)
+        continue
+      }
+      if (r.isError) {
+        notes.push(`${backend} 失败：${r.content.slice(0, 200)}`)
+        continue
+      }
+      return notes.length > 0 ? { ...r, content: `${r.content}\n\n（降级说明：${notes.join('；')}）` } : r
+    } catch (e) {
+      if (controller.signal.aborted) return { content: '请求已取消或超时', isError: true }
+      notes.push(`${backend} 异常：${e instanceof Error ? e.message : '未知错误'}`)
+    }
+  }
+
+  if (skipped.length > 0) notes.push(`未配置 Key 已跳过：${skipped.join('、')}`)
+  const detail = notes.length > 0 ? `\n${notes.join('\n')}` : ''
+  return { content: `所有搜索后端均不可用。${detail}`, isError: true }
 }

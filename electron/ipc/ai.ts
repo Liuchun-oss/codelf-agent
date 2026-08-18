@@ -43,11 +43,13 @@ import {
   saveAudioGenSettings
 } from '../agent/settings/agentSettingsStore'
 import { resetOutboundDispatcher } from '../agent/providers/network'
+import { MAX_AUTO_RETRIES, isRateLimitCode, retryDelayMs } from '../agent/providers/retryPolicy'
 import type { NetworkSettings, WebSearchSettingsDraft, WebSearchSettingsSummary, ImageGenSettingsDraft, ImageGenSettingsSummary, ImageGenTestResult, VideoGenSettingsDraft, VideoGenSettingsSummary, VideoTask, AudioGenSettingsDraft, AudioGenSettingsSummary, AudioGenTestResult } from '@shared/agentSettings'
 import type { MemorySettings } from '@shared/memoryTypes'
 import {
   WEB_SEARCH_IQS_KEY_REF,
   WEB_SEARCH_BRAVE_KEY_REF,
+  WEB_SEARCH_ZHIPU_KEY_REF,
   resolveWebSearchProvider
 } from '../agent/tools/webSearchTool'
 import { IMAGE_GEN_KEY_REF, generateImages } from '../agent/services/imageGenService'
@@ -136,7 +138,7 @@ export function registerAiIpc(): void {
     const engine = getQueryEngine(sessionId)
     
     void (async () => {
-      const MAX_SEND_RETRIES = 5
+      const MAX_SEND_RETRIES = MAX_AUTO_RETRIES
       const emit = (ev: AgentEvent): void => {
         if (wc.isDestroyed()) return
         // 接管激活时，把事件镜像给 HUD 悬浮窗显示进度。
@@ -182,7 +184,9 @@ export function registerAiIpc(): void {
             turnId: payload.turnId,
             message: `${finalError.message}，正在自动重试（第 ${retryNo}/${MAX_SEND_RETRIES} 次）…`
           })
-          await new Promise((r) => setTimeout(r, Math.min(30000, 1000 * 2 ** retryNo)))
+          await new Promise((r) =>
+            setTimeout(r, retryDelayMs(retryNo, isRateLimitCode(finalError.code)))
+          )
         }
       } catch (err) {
         if (!wc.isDestroyed()) {
@@ -499,13 +503,15 @@ export function registerAiIpc(): void {
   
   const webSearchSummary = (): WebSearchSettingsSummary => {
     const settings = getWebSearchSettings()
+    const hasZhipuKey = hasSecret(WEB_SEARCH_ZHIPU_KEY_REF)
     const hasIqsKey = hasSecret(WEB_SEARCH_IQS_KEY_REF)
     const hasBraveKey = hasSecret(WEB_SEARCH_BRAVE_KEY_REF)
     return {
       ...settings,
+      hasZhipuKey,
       hasIqsKey,
       hasBraveKey,
-      effectiveProvider: resolveWebSearchProvider(settings.provider, { hasIqsKey, hasBraveKey })
+      effectiveProvider: resolveWebSearchProvider(settings.provider, { hasZhipuKey, hasIqsKey, hasBraveKey })
     }
   }
 
@@ -514,8 +520,12 @@ export function registerAiIpc(): void {
   ipcMain.handle(
     'ai:saveWebSearchSettings',
     async (_e, draft: WebSearchSettingsDraft): Promise<WebSearchSettingsSummary> => {
-      const { iqsApiKey, braveApiKey, ...config } = draft ?? {}
-      
+      const { zhipuApiKey, iqsApiKey, braveApiKey, ...config } = draft ?? {}
+
+      if (zhipuApiKey !== undefined) {
+        if (zhipuApiKey === '') deleteSecret(WEB_SEARCH_ZHIPU_KEY_REF)
+        else setSecret(WEB_SEARCH_ZHIPU_KEY_REF, zhipuApiKey)
+      }
       if (iqsApiKey !== undefined) {
         if (iqsApiKey === '') deleteSecret(WEB_SEARCH_IQS_KEY_REF)
         else setSecret(WEB_SEARCH_IQS_KEY_REF, iqsApiKey)

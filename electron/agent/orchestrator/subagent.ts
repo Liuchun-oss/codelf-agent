@@ -7,7 +7,7 @@ import { app } from 'electron'
 import { z } from 'zod'
 import { APP_NAME, DATA_DIR_NAME } from '@shared/appConfig'
 import type { AgentEvent, ContentReplacementRecord, SubagentTaskSummary, TokenUsage } from '@shared/agentTypes'
-import { createAdapter, isTransientNetworkError, ProviderError, type ChatMessage, type ToolDef, type ToolCallRequest, type StreamChunk } from '../providers'
+import { createAdapter, isRetryableError, isRateLimitError, retryDelayMs, MAX_AUTO_RETRIES, ProviderError, type ChatMessage, type ToolDef, type ToolCallRequest, type StreamChunk } from '../providers'
 import { getActiveProfileId, getProfileRaw, getProfileApiKey, resolveProfileByIdOrName } from '../providers/profileStore'
 import { fetchSystemPromptPartsAsync, assembleSystemMessage, fetchDynamicContextBlock } from '../prompts/assembler'
 import type { PromptContext } from '../prompts/types'
@@ -652,7 +652,7 @@ export async function runReadOnlySubagent(
       let roundText = ''
       let roundInputTokens = 0
       let roundOutputTokens = 0
-      const MAX_SUBAGENT_STREAM_RETRIES = 5
+      const MAX_SUBAGENT_STREAM_RETRIES = MAX_AUTO_RETRIES
       const requestMessages: ChatMessage[] = [
         { role: 'system', content: systemText },
         ...(dynamicContextBlock ? [{ role: 'system' as const, content: dynamicContextBlock }] : []),
@@ -695,7 +695,7 @@ export async function runReadOnlySubagent(
           }
           break
         } catch (e) {
-          if (producedOutput || attempt >= MAX_SUBAGENT_STREAM_RETRIES || !isTransientNetworkError(e)) throw e
+          if (producedOutput || attempt >= MAX_SUBAGENT_STREAM_RETRIES || !isRetryableError(e)) throw e
           const retryNo = attempt + 1
           if (options.turnId && options.subagentId) {
             options.emitEvent?.({
@@ -705,7 +705,7 @@ export async function runReadOnlySubagent(
               content: `\n\n[子 Agent 遇到临时错误，正在自动重试（第 ${retryNo}/${MAX_SUBAGENT_STREAM_RETRIES} 次）…]\n\n`
             })
           }
-          await new Promise((r) => setTimeout(r, Math.min(30000, 1000 * 2 ** retryNo)))
+          await new Promise((r) => setTimeout(r, retryDelayMs(retryNo, isRateLimitError(e))))
         }
       }
 

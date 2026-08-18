@@ -59,7 +59,7 @@ export function normalizeNetworkSettings(partial: Partial<NetworkSettings>): Net
 
 
 
-export type WebSearchProvider = 'auto' | 'aliyun-iqs' | 'brave' | 'duckduckgo'
+export type WebSearchProvider = 'auto' | 'zhipu' | 'aliyun-iqs' | 'brave' | 'duckduckgo'
 
 
 export type IqsEngineType = 'Generic' | 'GenericAdvanced' | 'LiteAdvanced' | 'Deep'
@@ -70,14 +70,20 @@ export interface WebSearchSettings {
   provider: WebSearchProvider
   
   iqsEngineType: IqsEngineType
+  /**
+   * 是否优先使用「当前对话模型所属厂商」的官方搜索通道，复用该 provider 已配置的 API Key。
+   * 命中时无需在本页额外配置 Key；未命中或调用失败会自动回退到下方按优先级排列的通用后端。
+   */
+  preferProviderNative: boolean
 }
 
 export const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
   provider: 'auto',
-  iqsEngineType: 'Generic'
+  iqsEngineType: 'Generic',
+  preferProviderNative: true
 }
 
-const WEB_SEARCH_PROVIDERS: readonly WebSearchProvider[] = ['auto', 'aliyun-iqs', 'brave', 'duckduckgo']
+const WEB_SEARCH_PROVIDERS: readonly WebSearchProvider[] = ['auto', 'zhipu', 'aliyun-iqs', 'brave', 'duckduckgo']
 const IQS_ENGINE_TYPES: readonly IqsEngineType[] = ['Generic', 'GenericAdvanced', 'LiteAdvanced', 'Deep']
 
 
@@ -88,12 +94,17 @@ export function normalizeWebSearchSettings(partial: Partial<WebSearchSettings>):
       : DEFAULT_WEB_SEARCH_SETTINGS.provider,
     iqsEngineType: IQS_ENGINE_TYPES.includes(partial.iqsEngineType as IqsEngineType)
       ? (partial.iqsEngineType as IqsEngineType)
-      : DEFAULT_WEB_SEARCH_SETTINGS.iqsEngineType
+      : DEFAULT_WEB_SEARCH_SETTINGS.iqsEngineType,
+    preferProviderNative:
+      typeof partial.preferProviderNative === 'boolean'
+        ? partial.preferProviderNative
+        : DEFAULT_WEB_SEARCH_SETTINGS.preferProviderNative
   }
 }
 
 
 export interface WebSearchSettingsSummary extends WebSearchSettings {
+  hasZhipuKey: boolean
   hasIqsKey: boolean
   hasBraveKey: boolean
   effectiveProvider: Exclude<WebSearchProvider, 'auto'>
@@ -101,6 +112,7 @@ export interface WebSearchSettingsSummary extends WebSearchSettings {
 
 
 export interface WebSearchSettingsDraft extends Partial<WebSearchSettings> {
+  zhipuApiKey?: string
   iqsApiKey?: string
   braveApiKey?: string
 }

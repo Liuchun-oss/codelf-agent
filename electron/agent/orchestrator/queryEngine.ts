@@ -16,6 +16,8 @@ import {
   createAdapter,
   ProviderError,
   isTransientNetworkError,
+  isRateLimitError,
+  MAX_AUTO_RETRIES,
   type ChatMessage,
   type ToolCallRequest,
   type ToolDef
@@ -1344,7 +1346,7 @@ export class QueryEngine {
         let lastFinishReason: string | undefined
         const roundUsage = createRoundUsageAcc()
 
-        const MAX_STREAM_RETRIES = 5
+        const MAX_STREAM_RETRIES = MAX_AUTO_RETRIES
         let streamRetryCount = 0
         let streamDone = false
 
@@ -1462,12 +1464,13 @@ export class QueryEngine {
             cancelled = true
             break
           }
+          const shouldCompactAndRetry = isContextLengthError(e) || isRateLimitError(e)
           if (
             !hasAttemptedReactiveCompact &&
             !sideEffected &&
             roundText.length === 0 &&
             turnMessages.length === 1 &&
-            isContextLengthError(e)
+            shouldCompactAndRetry
           ) {
             hasAttemptedReactiveCompact = true
             try {
@@ -1506,7 +1509,9 @@ export class QueryEngine {
                 yield {
                   type: 'notice',
                   turnId,
-                  message: 'Provider 返回上下文超限，已压缩早期对话并自动重试本轮请求。'
+                  message: isRateLimitError(e)
+                    ? 'Provider 返回限流（429），可能是当前请求上下文过大或模型 TPM 较低；已压缩早期对话并自动重试本轮请求。'
+                    : 'Provider 返回上下文超限，已压缩早期对话并自动重试本轮请求。'
                 }
                 continue
               }

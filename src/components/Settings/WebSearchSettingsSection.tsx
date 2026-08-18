@@ -5,10 +5,11 @@ import type {
   WebSearchSettingsDraft,
   WebSearchSettingsSummary
 } from '@shared/agentSettings'
-import { SettingsGroup, SettingsRow } from './SettingsRow'
+import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRow'
 
 const PROVIDER_OPTIONS: { value: WebSearchProvider; label: string }[] = [
-  { value: 'auto', label: '自动（按优先级：阿里云 IQS → Brave → DuckDuckGo）' },
+  { value: 'auto', label: '自动（智谱 → 阿里云 IQS → Brave → DuckDuckGo）' },
+  { value: 'zhipu', label: '智谱 Web Search' },
   { value: 'aliyun-iqs', label: '阿里云 IQS' },
   { value: 'brave', label: 'Brave Search' },
   { value: 'duckduckgo', label: 'DuckDuckGo（无需 Key）' }
@@ -22,6 +23,7 @@ const ENGINE_OPTIONS: { value: IqsEngineType; label: string }[] = [
 ]
 
 const PROVIDER_LABEL: Record<Exclude<WebSearchProvider, 'auto'>, string> = {
+  zhipu: '智谱 Web Search',
   'aliyun-iqs': '阿里云 IQS',
   brave: 'Brave Search',
   duckduckgo: 'DuckDuckGo'
@@ -32,6 +34,7 @@ export default function WebSearchSettingsSection(): JSX.Element {
   const [saving, setSaving] = useState(false)
   const [iqsKeyInput, setIqsKeyInput] = useState('')
   const [braveKeyInput, setBraveKeyInput] = useState('')
+  const [zhipuKeyInput, setZhipuKeyInput] = useState('')
 
   const load = useCallback(async (): Promise<void> => {
     const s = await window.lc.aiGetWebSearchSettings()
@@ -64,6 +67,12 @@ export default function WebSearchSettingsSection(): JSX.Element {
     setBraveKeyInput('')
   }
 
+  const saveZhipuKey = async (): Promise<void> => {
+    if (!zhipuKeyInput) return
+    await save({ zhipuApiKey: zhipuKeyInput })
+    setZhipuKeyInput('')
+  }
+
   if (!settings) {
     return (
       <div className="settings-section-page">
@@ -74,6 +83,20 @@ export default function WebSearchSettingsSection(): JSX.Element {
 
   return (
     <div className="settings-section-page">
+      <SettingsGroup label="厂商官方搜索">
+        <SettingsRow
+          title="优先使用当前模型厂商的官方搜索"
+          description="命中时复用该模型配置里的 API Key，无需在本页重复配置。目前支持智谱（open.bigmodel.cn）与 Kimi（api.moonshot.cn）；其他厂商或调用失败会自动回退到下方通用服务。注意官方搜索按厂商规则单独计费。"
+          control={
+            <SettingsSwitch
+              checked={settings.preferProviderNative}
+              disabled={saving}
+              onChange={(v) => void save({ preferProviderNative: v })}
+            />
+          }
+        />
+      </SettingsGroup>
+
       <SettingsGroup label="服务选择">
         <SettingsRow
           title="搜索服务"
@@ -115,6 +138,36 @@ export default function WebSearchSettingsSection(): JSX.Element {
           title="当前生效"
           control={<span className="settings-tag on">{PROVIDER_LABEL[settings.effectiveProvider]}</span>}
         />
+      </SettingsGroup>
+
+      <SettingsGroup label="智谱 Web Search">
+        <SettingsRow
+          title="API Key"
+          description={
+            settings.hasZhipuKey
+              ? 'Key 已配置，输入新值可覆盖。'
+              : '智谱开放平台 API Key，可与对话模型共用同一个 Key。返回结构化明文结果，任何模型都能使用。'
+          }
+          stacked
+          control={
+            <input
+              type="password"
+              placeholder={settings.hasZhipuKey ? '已配置，输入新值可覆盖' : '输入智谱开放平台 API Key'}
+              disabled={saving}
+              value={zhipuKeyInput}
+              onChange={(e) => setZhipuKeyInput(e.target.value)}
+            />
+          }
+        />
+        <div className="settings-actions">
+          <span className="settings-actions-msg">{settings.hasZhipuKey ? 'Key 已配置' : '未配置'}</span>
+          <button type="button" className="btn-secondary" disabled={saving || !settings.hasZhipuKey} onClick={() => void save({ zhipuApiKey: '' })}>
+            清除 Key
+          </button>
+          <button type="button" className="btn" disabled={saving || !zhipuKeyInput} onClick={() => void saveZhipuKey()}>
+            保存 Key
+          </button>
+        </div>
       </SettingsGroup>
 
       <SettingsGroup label="阿里云 IQS">

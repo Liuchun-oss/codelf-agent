@@ -9,6 +9,13 @@ import { DifyAdapter } from './dify'
 
 export { BaseProviderAdapter, ProviderError, isTransientNetworkError } from './base'
 export { parseDataUrl } from './base'
+export {
+  MAX_AUTO_RETRIES,
+  isRetryableError,
+  isRateLimitError,
+  isRateLimitCode,
+  retryDelayMs
+} from './retryPolicy'
 export type { ChatMessage, ChatRequest, StreamChunk, ToolDef, ToolCallRequest, PromptCacheOptions } from './base'
 
 
