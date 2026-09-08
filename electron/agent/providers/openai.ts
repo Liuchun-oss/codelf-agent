@@ -9,6 +9,8 @@ import {
   buildEndpointUrl,
   endpointNeedsNeutralUa,
   markEndpointNeutralUa,
+  endpointRejectsPromptCacheKey,
+  markEndpointRejectsPromptCacheKey,
   NEUTRAL_UA,
   sanitizeToolMessages,
   type ChatMessage,
@@ -204,6 +206,16 @@ function isForbiddenError(e: unknown): boolean {
   return (e as { status?: unknown })?.status === 403
 }
 
+// 判断某个 400 错误是否因端点严格校验请求体、不认识 OpenAI 专有的
+// prompt_cache_key 字段。典型返回：
+//   {"code":"UNKNOWN_FIELD","message":"未知请求字段：prompt_cache_key",...}
+function isPromptCacheKeyRejectedError(e: unknown): boolean {
+  const status = (e as { status?: unknown })?.status
+  if (status !== undefined && status !== 400) return false
+  const msg = e instanceof Error ? e.message : typeof e === 'string' ? e : ''
+  return msg.toLowerCase().includes('prompt_cache_key')
+}
+
 // 手动 SSE 解析器：使用 Node.js Buffer 做字节级 UTF-8 解码，
 // 只对完整行（以 \n 结尾）解码，避免 TextDecoder 流式解码在 Electron 中的中文乱码 bug。
 function makeSSEIterable(
@@ -313,7 +325,8 @@ export async function* streamChatViaOpenAI(
   signal?: AbortSignal,
   visionState?: { imageUnsupported: boolean },
   opts?: { dropReasoningContent?: boolean },
-  uaState?: { neutralUa: boolean; baseUrl?: string }
+  uaState?: { neutralUa: boolean; baseUrl?: string },
+  cacheKeyState?: { rejected: boolean; baseUrl?: string }
 ): AsyncGenerator<StreamChunk, void, unknown> {
   const thinkingEnabled = req.thinking?.type === 'enabled'
   const apiKey = (client as unknown as Record<string, unknown>).apiKey as string
@@ -323,7 +336,8 @@ export async function* streamChatViaOpenAI(
 
   const doRequest = async (
     messages: ChatMessage[],
-    forceNeutralUa: boolean
+    forceNeutralUa: boolean,
+    omitCacheKey: boolean
   ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -344,7 +358,7 @@ export async function* streamChatViaOpenAI(
       body['temperature'] = req.temperature
     }
     if (req.tools?.length) { body['tools'] = toOpenAITools(req.tools); body['tool_choice'] = 'auto' }
-    if (req.promptCacheKey) body['prompt_cache_key'] = req.promptCacheKey
+    if (req.promptCacheKey && !omitCacheKey) body['prompt_cache_key'] = req.promptCacheKey
     if (req.thinking) body['thinking'] = req.thinking
     if (req.reasoningEffort) body['reasoning_effort'] = req.reasoningEffort
 
@@ -374,13 +388,21 @@ export async function* streamChatViaOpenAI(
   const createStream = async (
     messages: ChatMessage[]
   ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> => {
+    const omitCacheKey = cacheKeyState?.rejected ?? false
     try {
-      return await doRequest(messages, uaState?.neutralUa ?? false)
+      return await doRequest(messages, uaState?.neutralUa ?? false, omitCacheKey)
     } catch (e) {
+      // 严格网关不认识 prompt_cache_key（400 UNKNOWN_FIELD）：去掉该字段重试一次，
+      // 并记住该端点，后续请求直接不带，避免每轮提问都先吃一次 400。
+      if (cacheKeyState && !omitCacheKey && req.promptCacheKey && isPromptCacheKeyRejectedError(e)) {
+        cacheKeyState.rejected = true
+        if (cacheKeyState.baseUrl) markEndpointRejectsPromptCacheKey(cacheKeyState.baseUrl)
+        return await doRequest(messages, uaState?.neutralUa ?? false, true)
+      }
       if (uaState && !uaState.neutralUa && isForbiddenError(e)) {
         uaState.neutralUa = true
         if (uaState.baseUrl) markEndpointNeutralUa(uaState.baseUrl)
-        return await doRequest(messages, true)
+        return await doRequest(messages, true, omitCacheKey)
       }
       throw e
     }
@@ -522,14 +544,18 @@ export async function* streamChatViaResponses(
   client: OpenAI,
   req: ChatRequest,
   signal?: AbortSignal,
-  uaState?: { neutralUa: boolean; baseUrl?: string }
+  uaState?: { neutralUa: boolean; baseUrl?: string },
+  cacheKeyState?: { rejected: boolean; baseUrl?: string }
 ): AsyncGenerator<StreamChunk, void, unknown> {
   const apiKey = (client as unknown as Record<string, unknown>).apiKey as string
   const rawBaseUrl = ((client as unknown as Record<string, unknown>)._options as Record<string, unknown> | undefined)
     ?.baseURL as string || (client as unknown as Record<string, unknown>).baseURL as string || ''
   const fetchUrl = rawBaseUrl ? buildEndpointUrl(rawBaseUrl, 'responses') : ''
 
-  const doRequest = async (forceNeutralUa: boolean): Promise<ReadableStreamDefaultReader<Uint8Array>> => {
+  const doRequest = async (
+    forceNeutralUa: boolean,
+    omitCacheKey: boolean
+  ): Promise<ReadableStreamDefaultReader<Uint8Array>> => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`
@@ -544,7 +570,7 @@ export async function* streamChatViaResponses(
     }
     if (typeof req.maxOutputTokens === 'number') body['max_output_tokens'] = req.maxOutputTokens
     if (typeof req.temperature === 'number') body['temperature'] = req.temperature
-    if (req.promptCacheKey) body['prompt_cache_key'] = req.promptCacheKey
+    if (req.promptCacheKey && !omitCacheKey) body['prompt_cache_key'] = req.promptCacheKey
     if (req.reasoningEffort) body['reasoning'] = { effort: req.reasoningEffort }
 
     const resp = await fetch(fetchUrl, { method: 'POST', headers, body: JSON.stringify(body), signal })
@@ -561,13 +587,20 @@ export async function* streamChatViaResponses(
   }
 
   let reader: ReadableStreamDefaultReader<Uint8Array>
+  const omitCacheKey = cacheKeyState?.rejected ?? false
   try {
-    reader = await doRequest(uaState?.neutralUa ?? false)
+    reader = await doRequest(uaState?.neutralUa ?? false, omitCacheKey)
   } catch (e) {
-    if (uaState && !uaState.neutralUa && isForbiddenError(e)) {
+    // 严格网关不认识 prompt_cache_key（400 UNKNOWN_FIELD）：去掉该字段重试一次，
+    // 并记住该端点，后续请求直接不带，避免每轮提问都先吃一次 400。
+    if (cacheKeyState && !omitCacheKey && req.promptCacheKey && isPromptCacheKeyRejectedError(e)) {
+      cacheKeyState.rejected = true
+      if (cacheKeyState.baseUrl) markEndpointRejectsPromptCacheKey(cacheKeyState.baseUrl)
+      try { reader = await doRequest(uaState?.neutralUa ?? false, true) } catch (e2) { throw sdkErrorToProviderError(e2) }
+    } else if (uaState && !uaState.neutralUa && isForbiddenError(e)) {
       uaState.neutralUa = true
       if (uaState.baseUrl) markEndpointNeutralUa(uaState.baseUrl)
-      try { reader = await doRequest(true) } catch (e2) { throw sdkErrorToProviderError(e2) }
+      try { reader = await doRequest(true, omitCacheKey) } catch (e2) { throw sdkErrorToProviderError(e2) }
     } else {
       throw sdkErrorToProviderError(e)
     }
@@ -652,6 +685,8 @@ export class OpenAIAdapter extends BaseProviderAdapter {
   protected visionState = { imageUnsupported: false }
   // 记录该端点是否需要中性 UA（被网关按 SDK UA 拦截过 403），跨请求保持。
   protected uaState: { neutralUa: boolean; baseUrl?: string } = { neutralUa: false }
+  // 记录该端点是否已被证实拒绝 prompt_cache_key 字段（400 UNKNOWN_FIELD），跨请求保持。
+  protected cacheKeyState: { rejected: boolean; baseUrl?: string } = { rejected: false }
   protected dropReasoningContent = false
 
   constructor(profile: ProviderProfile, apiKey: string | null, opts?: { allowMissingKey?: boolean }) {
@@ -669,14 +704,17 @@ export class OpenAIAdapter extends BaseProviderAdapter {
     // 进程内若已探测过该端点需要中性 UA，直接沿用，避免每轮提问重复 403 探测。
     this.uaState.baseUrl = profile.baseUrl
     this.uaState.neutralUa = endpointNeedsNeutralUa(profile.baseUrl)
+    // 同理：若该端点此前已被证实拒绝 prompt_cache_key，直接不带该字段。
+    this.cacheKeyState.baseUrl = profile.baseUrl
+    this.cacheKeyState.rejected = endpointRejectsPromptCacheKey(profile.baseUrl)
   }
 
   streamChat(req: ChatRequest, signal?: AbortSignal): AsyncGenerator<StreamChunk, void, unknown> {
     if (req.imageGeneration) {
-      return streamChatViaResponses(this.client, req, signal, this.uaState)
+      return streamChatViaResponses(this.client, req, signal, this.uaState, this.cacheKeyState)
     }
     return streamChatViaOpenAI(this.client, req, signal, this.visionState, {
       dropReasoningContent: this.dropReasoningContent
-    }, this.uaState)
+    }, this.uaState, this.cacheKeyState)
   }
 }

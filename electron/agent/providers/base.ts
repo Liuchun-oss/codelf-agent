@@ -288,6 +288,19 @@ export function markEndpointNeutralUa(baseUrl: string): void {
   neutralUaEndpoints.add(normalizeBaseUrl(baseUrl))
 }
 
+// 进程级缓存：记住哪些端点（按 baseUrl）严格校验请求体、拒绝 OpenAI 专有的
+// prompt_cache_key 字段（部分中转网关返回 400 UNKNOWN_FIELD）。一旦探测到，
+// 整个进程生命周期内对该端点直接不带该字段，避免每轮提问都先吃一次 400 再重试。
+const rejectCacheKeyEndpoints = new Set<string>()
+
+export function endpointRejectsPromptCacheKey(baseUrl: string): boolean {
+  return rejectCacheKeyEndpoints.has(normalizeBaseUrl(baseUrl))
+}
+
+export function markEndpointRejectsPromptCacheKey(baseUrl: string): void {
+  rejectCacheKeyEndpoints.add(normalizeBaseUrl(baseUrl))
+}
+
 
 export function sdkErrorToProviderError(e: unknown): ProviderError {
   if (e instanceof ProviderError) return e
