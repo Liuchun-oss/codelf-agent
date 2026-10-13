@@ -80,7 +80,8 @@ export interface ToolResult {
   
   appliedPath?: string
   // 工具产出的图片（如 MCP 截图工具）。data URL 形式，供多模态模型读取。
-  images?: { dataUrl: string }[]
+  // path：图片来源的本地路径（如 read_file 读图），历史降载为占位文本时供模型按需回看。
+  images?: { dataUrl: string; path?: string }[]
 }
 
 

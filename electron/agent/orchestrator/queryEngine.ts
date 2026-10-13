@@ -212,6 +212,12 @@ function isContextLengthError(e: unknown): boolean {
   return /context( window| length)?|prompt too long|maximum context|token limit|too many tokens/.test(message)
 }
 
+// 网关 413（请求体超过 client_max_body_size，常见于 openresty 中转）：与上下文超限同性质，
+// 压缩历史（连带丢掉历史图片 base64）后重试通常能恢复。
+function isRequestTooLargeError(e: unknown): boolean {
+  return e instanceof ProviderError && e.httpStatus === 413
+}
+
 function pushUnique(list: string[], value: unknown, max = 8): void {
   if (typeof value !== 'string') return
   const trimmed = value.trim()
@@ -229,6 +235,49 @@ function extractPathLikeValues(value: unknown, out: string[]): void {
       extractPathLikeValues(child, out)
     }
   }
+}
+
+// 历史图片降载：图片 base64 会随每轮请求全量重发，会话里图一多，请求体线性膨胀——
+// 既拖慢每轮上传与首 token 延迟，也可能顶爆网关 client_max_body_size（openresty 413）。
+// 这里只保留最近若干张图原样发送，更早的图片替换为带路径的占位文本；图片此前已落盘
+//（用户附件 → codelf-artifact://，read_file 读图 → 原文件路径），模型需要回看时可用
+// read_file 按路径重新读取，视觉能力不受损。
+const HISTORY_IMAGE_KEEP_COUNT = 4
+
+function buildDroppedImagesNote(m: ChatMessage): string {
+  const imgs = m.images ?? []
+  const paths = imgs.map((i) => i.path).filter((p): p is string => Boolean(p))
+  if (paths.length > 0) {
+    const list = paths.map((p) => `- ${p}`).join('\n')
+    return `（早前附带的 ${imgs.length} 张图片已从上下文省略以减小请求体积；文件仍在本地，需要重新查看时可用 read_file 读取：\n${list}）`
+  }
+  if (m.role === 'user') {
+    return `（早前附带的 ${imgs.length} 张图片已从上下文省略以减小请求体积；路径见上文[附件图片]列表，需要时可用 read_file 重新查看。）`
+  }
+  return `（早前工具返回的 ${imgs.length} 张图片已从上下文省略以减小请求体积；如需最新内容请重新调用对应工具。）`
+}
+
+function downsampleHistoryImages(messages: ChatMessage[]): ChatMessage[] {
+  let kept = 0
+  const out: ChatMessage[] = []
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!
+    if (!m.images?.length) {
+      out.unshift(m)
+      continue
+    }
+    // 至少保留最后一条带图消息（哪怕它自身超过配额），保证当前交互相关的图一定在。
+    if (kept < HISTORY_IMAGE_KEEP_COUNT || kept === 0) {
+      kept += m.images.length
+      out.unshift(m)
+      continue
+    }
+    const note = buildDroppedImagesNote(m)
+    const content = m.content ? `${m.content}\n${note}` : note
+    const { images: _drop, ...rest } = m
+    out.unshift({ ...rest, content })
+  }
+  return out
 }
 
 // 主动剥离所有消息中的图片：当前模型不支持视觉时，把历史里残留的图片块（可能是
@@ -1011,24 +1060,30 @@ export class QueryEngine {
     // 用户粘贴/拖拽的图片：既作为多模态视觉内容发给模型"看"，也落盘成 codelf-artifact://
     // 本地路径并在文本里告知模型——这样模型可把它作为参考图传给 GenerateImage / GenerateVideo
     // 等工具（这些工具的入参要的是路径/URL，而非 dataUrl）。
-    let attachedImagePaths: string[] = []
+    let attachedImagePaths: (string | null)[] = []
     if (payload.images?.length) {
       attachedImagePaths = await persistUserImages(payload.images)
     }
+    const persistedImagePaths = attachedImagePaths.filter((p): p is string => Boolean(p))
 
     const userMessageText = buildUserMessage(payload.message, payload.editorContext, payload.attachments, {
       model: profile.model,
       providerKind: profile.kind
     })
-    const userMessageWithImages = attachedImagePaths.length
-      ? `${userMessageText}\n\n${buildAttachedImagesNote(attachedImagePaths)}`
+    const userMessageWithImages = persistedImagePaths.length
+      ? `${userMessageText}\n\n${buildAttachedImagesNote(persistedImagePaths)}`
       : userMessageText
 
     const userMsg: ChatMessage = {
       content: userMessageWithImages,
       
       ...(profile.supportsVision && payload.images?.length
-        ? { images: payload.images.map((i) => ({ dataUrl: i.dataUrl })) }
+        ? {
+            images: payload.images.map((img, idx) => {
+              const p = attachedImagePaths[idx]
+              return p ? { dataUrl: img.dataUrl, path: p } : { dataUrl: img.dataUrl }
+            })
+          }
         : {}),
       role: 'user'
     }
@@ -1328,10 +1383,10 @@ export class QueryEngine {
           ...turnMessages
         ]
         // 当前模型明确不支持视觉时，主动剥掉历史里残留的图片块（如上一轮用视觉模型
-        // 粘图后切到纯文本模型），从源头避免带 image_url 触发 400。supportsVision 为
-        // undefined 的旧配置不动，仍走 provider 层的错误自愈。
+        // 粘图后切到纯文本模型），从源头避免带 image_url 触发 400。其余情况做历史图片
+        // 降载：只保留最近几张原样发送，更早的换成带路径占位，避免请求体无限膨胀（慢/413）。
         const visionAdjusted =
-          profile.supportsVision === false ? stripImagesForNonVision(assembledMessages) : assembledMessages
+          profile.supportsVision === false ? stripImagesForNonVision(assembledMessages) : downsampleHistoryImages(assembledMessages)
         // 发送前最后一道闸门：对「完整历史 + 当前轮」整体补齐孤儿 tool_use。
         // 各入历史路径的 reconcile 只作用于单轮 turnMessages，无法覆盖跨轮/跨重启
         // 恢复丢失 tool_result 的历史残缺；而真正发给 Provider 的是这里的完整列表。
@@ -1464,7 +1519,7 @@ export class QueryEngine {
             cancelled = true
             break
           }
-          const shouldCompactAndRetry = isContextLengthError(e) || isRateLimitError(e)
+          const shouldCompactAndRetry = isContextLengthError(e) || isRateLimitError(e) || isRequestTooLargeError(e)
           if (
             !hasAttemptedReactiveCompact &&
             !sideEffected &&
@@ -1511,7 +1566,9 @@ export class QueryEngine {
                   turnId,
                   message: isRateLimitError(e)
                     ? 'Provider 返回限流（429），可能是当前请求上下文过大或模型 TPM 较低；已压缩早期对话并自动重试本轮请求。'
-                    : 'Provider 返回上下文超限，已压缩早期对话并自动重试本轮请求。'
+                    : isRequestTooLargeError(e)
+                      ? '网关返回请求体过大（413），通常是历史图片/大文件内容累积所致；已压缩早期对话并自动重试本轮请求。'
+                      : 'Provider 返回上下文超限，已压缩早期对话并自动重试本轮请求。'
                 }
                 continue
               }

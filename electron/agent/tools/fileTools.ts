@@ -74,7 +74,7 @@ export const readFileTool: Tool<ReadFileInput> = {
       }
       return {
         content: `已读取图片 ${input.path}（${res.size ?? 0} 字节）`,
-        images: [{ dataUrl: res.dataUrl }]
+        images: [{ dataUrl: res.dataUrl, path: input.path }]
       }
     }
     if (res.tooLarge) {

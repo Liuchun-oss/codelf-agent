@@ -20,7 +20,8 @@ export interface ChatMessage {
   
   toolCallId?: string
   
-  images?: { dataUrl: string }[]
+  // path：图片落盘后的本地路径（若有）。历史图片降载为占位文本时用它指引模型按需 read_file 回看。
+  images?: { dataUrl: string; path?: string }[]
   
   reasoningContent?: string
 }
@@ -193,6 +194,14 @@ export function mapHttpStatusToError(status: number, detail?: string): ProviderE
       status,
       undefined,
       true
+    )
+  }
+  if (status === 413) {
+    // 网关（nginx/openresty 的 client_max_body_size）在转发前就拒绝，detail 是网关的 HTML 错误页，不回显。
+    return new ProviderError(
+      'unknown',
+      '请求体超出网关大小限制（413）。通常是会话中累积的图片/大文件内容过多：可压缩上下文或开启新会话；若网关为自建 nginx/openresty，可加大 client_max_body_size。',
+      status
     )
   }
   if (status >= 500) {
