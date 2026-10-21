@@ -1,4 +1,5 @@
 import type { AgentErrorCode } from '@shared/agentTypes'
+import { isProviderImageMime } from '@shared/imageMediaTypes'
 
 
 
@@ -31,6 +32,35 @@ export function parseDataUrl(dataUrl: string): { mediaType: string; base64: stri
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(dataUrl)
   if (!m) return null
   return { mediaType: m[1], base64: m[2] }
+}
+
+// 发送前图片格式兜底闸门：Provider 只接受 png/jpeg/gif/webp（见 shared/imageMediaTypes），
+// 白名单外的图片（read_file 读到 bmp/ico/avif 且转码失败、MCP 工具返回非标准 mime、
+// 历史残留的旧数据）会让整条请求 400 被拒，而且那张坏图留在历史里会每轮重发、每轮被拒。
+// 这里统一在发送前把它们换成占位文本：模型知道少了什么，也能按路径重新读取。
+export function dropUnsupportedImages(messages: ChatMessage[]): ChatMessage[] {
+  let touched = false
+  const out = messages.map((m) => {
+    const images = m.images
+    if (!images?.length) return m
+    const kept = images.filter((img) => {
+      const parsed = parseDataUrl(img.dataUrl)
+      return parsed ? isProviderImageMime(parsed.mediaType) : false
+    })
+    if (kept.length === images.length) return m
+    touched = true
+    const dropped = images.filter((img) => !kept.includes(img))
+    const paths = dropped.map((img) => img.path).filter((p): p is string => Boolean(p))
+    const detail = paths.length
+      ? `原文件：${paths.join('、')}，转成 PNG/JPEG 后可重新读取。`
+      : '需转成 PNG/JPEG 后重新读取。'
+    const note = `（已省略 ${dropped.length} 张格式不受支持的图片：模型只接受 PNG/JPEG/GIF/WebP。${detail}）`
+    const content = m.content ? `${m.content}\n${note}` : note
+    const { images: _drop, ...rest } = m
+    void _drop
+    return kept.length > 0 ? { ...rest, content, images: kept } : { ...rest, content }
+  })
+  return touched ? out : messages
 }
 
 // 清洗「孤儿」工具调用/结果，保证 tool_use 与 tool_result 严格配对后再发给 Provider。

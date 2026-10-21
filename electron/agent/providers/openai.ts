@@ -13,6 +13,7 @@ import {
   markEndpointRejectsPromptCacheKey,
   NEUTRAL_UA,
   sanitizeToolMessages,
+  dropUnsupportedImages,
   type ChatMessage,
   type ChatRequest,
   type StreamChunk,
@@ -29,7 +30,9 @@ function toOpenAIMessages(
 ): OpenAIMessage[] {
   // 防御：丢弃"孤儿" tool 消息——即前面没有声明对应 tool_call id 的 assistant。
   // 历史可能因旧版持久化丢失 toolCalls 而损坏，发给严格 Provider（DeepSeek）会整请求报错。
-  messages = sanitizeToolMessages(messages)
+  // 发送前先滤掉 Provider 不接受的图片格式（bmp/ico/avif…），否则整个请求 400：
+  // "You have uploaded an unsupported image ... webp, png, jpeg, and gif"。
+  messages = dropUnsupportedImages(sanitizeToolMessages(messages))
   const out: OpenAIMessage[] = []
   // OpenAI 要求同一批 tool 结果消息必须连续，中间不能插别的角色。
   // 因此 tool 消息携带的图片先缓存，等这批连续的 tool 消息结束后，
@@ -129,7 +132,8 @@ function pushToolImagesAsUser(out: RInputItem[], imgs: { dataUrl: string }[]): v
 // - assistant 工具调用 → function_call item（call_id/name/arguments）
 // - tool 结果 → function_call_output item（call_id/output）
 // - 其余 → role 消息，user/带图用 input_text/input_image，assistant 用 output_text
-function toResponsesInput(messages: ChatMessage[]): RInputItem[] {
+function toResponsesInput(rawMessages: ChatMessage[]): RInputItem[] {
+  const messages = dropUnsupportedImages(rawMessages)
   const out: RInputItem[] = []
   let pendingToolImages: { dataUrl: string }[] = []
   const flush = (): void => {

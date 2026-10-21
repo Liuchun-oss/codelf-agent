@@ -71,6 +71,9 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
+        // sharp 只在读图遇到非 Provider 白名单格式时按需动态加载（见 fsService），
+        // 它是 devDependency，必须显式 external 否则会被打进 bundle 并连带 .node 资源。
+        external: ['sharp'],
         input: {
           index: resolve(__dirname, 'electron/main/index.ts'),
           embedWorker: resolve(__dirname, 'electron/services/semantic/embedWorker.ts'),

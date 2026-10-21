@@ -11,6 +11,7 @@ import {
   NEUTRAL_UA,
   parseDataUrl,
   sanitizeToolMessages,
+  dropUnsupportedImages,
   type ChatMessage,
   type ChatRequest,
   type StreamChunk,
@@ -90,7 +91,8 @@ function splitSystemAndMessages(rawMessages: ChatMessage[]): {
   // 关键：Anthropic 服务端对 tool_use / tool_result 配对零容忍——历史里若残留孤儿
   // 工具调用（如某轮异常中断、旧版持久化损坏），直接整请求 400。发送前先清洗配对，
   // 与 OpenAI 通道使用同一份 sanitizeToolMessages，保证行为一致、不再分叉。
-  const messages = sanitizeToolMessages(rawMessages)
+  // 与 OpenAI 通道一致：发送前先滤掉 Provider 不接受的图片格式，避免整请求 400。
+  const messages = dropUnsupportedImages(sanitizeToolMessages(rawMessages))
   const systemParts: string[] = []
   const msgs: Anthropic.MessageParam[] = []
   const pendingToolResults: Anthropic.ToolResultBlockParam[] = []

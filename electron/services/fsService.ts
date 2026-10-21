@@ -3,6 +3,8 @@ import { join, basename, dirname } from 'path'
 import { randomBytes } from 'crypto'
 import ignore, { type Ignore } from 'ignore'
 import iconv from 'iconv-lite'
+import { isProviderImageMime } from '@shared/imageMediaTypes'
+import { bmpToPng, icoToPng } from './bmpToPng'
 
 
 
@@ -18,6 +20,8 @@ export interface ReadFileResult {
   encoding?: FileEncoding
   size?: number
   tooLarge?: boolean
+  // 图片格式模型不认（如 bmp/ico）且转码失败：只报告元信息，不外发 base64。
+  unsupportedFormat?: boolean
   error?: string
 }
 
@@ -213,6 +217,54 @@ export async function writeTextFile(
 }
 
 
+// 图片格式归一化：Provider 只接受 png/jpeg/gif/webp（见 shared/imageMediaTypes），
+// 其余格式（bmp/ico/avif…）直接透传会让整个请求 400。这里在读图时转成 PNG 后再外发。
+// 转不了就返回 null，由上层降级为「只给路径、不发图片内容」——绝不把不支持的 mime 送出去。
+type SharpFactory = (input: Buffer) => { png: () => { toBuffer: () => Promise<Buffer> } }
+
+let sharpLoading: Promise<SharpFactory | null> | null = null
+
+// sharp 是 @huggingface/transformers 的传递依赖（N-API 预编译，无需 electron-rebuild），
+// 但不能假设打包后一定可加载，故按需加载、失败不抛。它支持 avif/tiff/heif/jxl，
+// 不支持 bmp/ico（libvips 无对应解码器），后者走下面的专用路径。
+async function loadSharp(): Promise<SharpFactory | null> {
+  if (!sharpLoading) {
+    sharpLoading = import('sharp')
+      .then((m) => {
+        const factory = (m as { default?: unknown }).default ?? (m as unknown)
+        return typeof factory === 'function' ? (factory as SharpFactory) : null
+      })
+      .catch(() => null)
+  }
+  return sharpLoading
+}
+
+// ICO/BMP：sharp（libvips）没有对应解码器，走自带的极简转码器（不依赖原生模块）。
+function decodeIcoOrBmp(buf: Buffer, mime: string): { data: Buffer; mime: string } | null {
+  if (mime === 'image/x-icon' || mime === 'image/vnd.microsoft.icon') {
+    const png = icoToPng(buf)
+    return png ? { data: png, mime: 'image/png' } : null
+  }
+  if (mime === 'image/bmp') {
+    const png = bmpToPng(buf)
+    return png ? { data: png, mime: 'image/png' } : null
+  }
+  return null
+}
+
+// 其余格式（avif/tiff/heif/jxl）交给 sharp；不可用或解码失败均返回 null。
+async function transcodeWithSharp(buf: Buffer): Promise<{ data: Buffer; mime: string } | null> {
+  const sharp = await loadSharp()
+  if (!sharp) return null
+  try {
+    const out = await sharp(buf).png().toBuffer()
+    return out.length > 0 ? { data: out, mime: 'image/png' } : null
+  } catch {
+    return null
+  }
+}
+
+
 export async function readFileSafe(filePath: string): Promise<ReadFileResult> {
   try {
     const stat = await fs.stat(filePath)
@@ -222,6 +274,16 @@ export async function readFileSafe(filePath: string): Promise<ReadFileResult> {
     if (imageMime) {
       if (size > MAX_IMAGE_BYTES) return { ok: true, kind: 'image', size, tooLarge: true }
       const buf = await fs.readFile(filePath)
+      if (!isProviderImageMime(imageMime)) {
+        const normalized = decodeIcoOrBmp(buf, imageMime) ?? (await transcodeWithSharp(buf))
+        if (!normalized) return { ok: true, kind: 'image', size, unsupportedFormat: true }
+        return {
+          ok: true,
+          kind: 'image',
+          size,
+          dataUrl: `data:${normalized.mime};base64,${normalized.data.toString('base64')}`
+        }
+      }
       return {
         ok: true,
         kind: 'image',

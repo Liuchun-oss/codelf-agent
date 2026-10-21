@@ -1,4 +1,5 @@
 import type { ImageAttachment } from '@shared/agentTypes'
+import { isProviderImageMime } from '@shared/imageMediaTypes'
 import { toast } from '@/stores/toastStore'
 
 
@@ -6,7 +7,6 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
 export const MAX_IMAGES = 6
 
-const SUPPORTED = /^image\/(png|jpeg|jpg|gif|webp)$/i
 
 function readAsDataUrl(file: File | Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -20,7 +20,7 @@ function readAsDataUrl(file: File | Blob): Promise<string> {
 
 export async function fileToImageAttachment(file: File | Blob): Promise<ImageAttachment | null> {
   const type = file.type || ''
-  if (!SUPPORTED.test(type)) {
+  if (!isProviderImageMime(type)) {
     toast.warn('仅支持 PNG / JPEG / GIF / WebP 图片')
     return null
   }

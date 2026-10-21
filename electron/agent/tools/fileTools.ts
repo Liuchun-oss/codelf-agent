@@ -8,6 +8,7 @@ import {
   buildIgnore,
   toRel,
   encodeTextStrict,
+  extOf,
   type FileEncoding
 } from '../../services/fsService'
 import { resolveAnyPath } from './paths'
@@ -70,7 +71,11 @@ export const readFileTool: Tool<ReadFileInput> = {
         return { content: '图片过大，无法读取', isError: true }
       }
       if (!res.dataUrl) {
-        return { content: '图片读取失败', isError: true }
+        if (!res.unsupportedFormat) return { content: '图片读取失败', isError: true }
+        const fmt = extOf(input.path).toUpperCase() || '未知'
+        return {
+          content: `已定位图片 ${input.path}（${res.size ?? 0} 字节），但 ${fmt} 格式模型无法识别且转码失败，本次未附带图片内容。请先转成 PNG/JPEG 后再读取。`
+        }
       }
       return {
         content: `已读取图片 ${input.path}（${res.size ?? 0} 字节）`,
