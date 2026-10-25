@@ -20,6 +20,7 @@ import {
   type ToolDef
 } from './base'
 import { isKimiReasoningModel } from './modelMetadata'
+import { createMinimaxStreamFilter, stripMinimaxArtifacts, coerceToolArgs } from './minimaxDialect'
 
 type OpenAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam
 type OpenAITool = OpenAI.Chat.Completions.ChatCompletionTool
@@ -441,6 +442,14 @@ export async function* streamChatViaOpenAI(
     }
   }
 
+  // MiniMax-M3 把工具调用当正文吐出来（每个结构标签前带 ]<]minimax[>[ 前缀）。
+  // 有的网关既解析出原生 tool_calls、又把同样的 XML 留在 content 里；有的只剥掉一半
+  // 前缀，导致参数值尾部残留 `]`/`[`（issue #7）。统一在流式出口收口：
+  // 正文剥掉前缀，纯文本里的协议段还原成工具调用，否则工具根本不会被执行。
+  const minimaxFilter = createMinimaxStreamFilter()
+  const toolParameters = new Map((req.tools ?? []).map((t) => [t.name, t.parameters] as const))
+  let sawNativeToolCalls = false
+
   try {
     for await (const chunk of stream) {
       const choice = chunk.choices?.[0]
@@ -462,14 +471,17 @@ export async function* streamChatViaOpenAI(
               ? extended.thinking
               : ''
       if (reasoning.length > 0) {
-        yield { type: 'thinking', text: reasoning }
+        const cleanReasoning = stripMinimaxArtifacts(reasoning)
+        if (cleanReasoning) yield { type: 'thinking', text: cleanReasoning }
       }
 
       if (typeof delta?.content === 'string' && delta.content.length > 0) {
-        yield { type: 'text', text: delta.content }
+        const visible = minimaxFilter.push(delta.content)
+        if (visible) yield { type: 'text', text: visible }
       }
 
       if (delta?.tool_calls) {
+        sawNativeToolCalls = true
         for (const tc of delta.tool_calls) {
           yield {
             type: 'tool_call_delta',
@@ -522,8 +534,39 @@ export async function* streamChatViaOpenAI(
         yield { type: 'done', finishReason: choice.finish_reason }
       }
     }
+
+    // 流结束：把缓冲的方言协议段收口。前缀被 chunk 从中间切断也能在这里拼回完整解析。
+    const inband = minimaxFilter.finish()
+    // 上游已把同一段 XML 解析成原生 tool_calls 时，正文里的协议原文只是重复内容，
+    // 丢掉即可；否则它会进历史、被模型下一轮复读（issue #7 的污染循环）。
+    if (inband.text && !(sawNativeToolCalls && inband.sawProtocol)) {
+      yield { type: 'text', text: inband.text }
+    }
+    if (!sawNativeToolCalls) {
+      for (let i = 0; i < inband.calls.length; i++) {
+        const call = inband.calls[i]
+        yield {
+          type: 'tool_call_delta',
+          index: 900 + i,
+          id: `minimax_${i}`,
+          name: call.name,
+          argumentsDelta: normalizeInbandArguments(call.arguments, toolParameters.get(call.name))
+        }
+      }
+    }
   } catch (e) {
     throw sdkErrorToProviderError(e)
+  }
+}
+
+// 方言里的参数值一律是字符串，按工具声明的 JSON Schema 还原 number/boolean/array 类型，
+// 否则 zod 严格校验会把 `offset: "100"` 判成非法参数。
+function normalizeInbandArguments(argsText: string, schema: unknown): string {
+  try {
+    const parsed = JSON.parse(argsText) as Record<string, unknown>
+    return JSON.stringify(coerceToolArgs(parsed, schema))
+  } catch {
+    return argsText
   }
 }
 

@@ -2,6 +2,7 @@ import type { ToolCallRequest, StreamChunk } from '../providers'
 import type { ToolContext, ToolResult } from './types'
 import type { ToolRegistry } from './registry'
 import { getAgentBehaviorSettings } from '../settings/agentSettingsStore'
+import { parseMinimaxArguments, sanitizeToolArgs } from '../providers/minimaxDialect'
 
 
 
@@ -87,8 +88,12 @@ export function parseToolArguments(raw: string): unknown {
   const trimmed = raw.trim()
   if (!trimmed) return {}
   try {
-    return JSON.parse(trimmed)
+    return sanitizeToolArgs(JSON.parse(trimmed))
   } catch {
+    // 不是合法 JSON：部分网关会把 MiniMax-M3 的 XML 参数方言原样塞进 arguments，
+    // 这里兜底还原成对象，避免整批工具调用直接失败（issue #7）。
+    const dialectArgs = parseMinimaxArguments(trimmed)
+    if (dialectArgs) return dialectArgs
     return undefined
   }
 }
