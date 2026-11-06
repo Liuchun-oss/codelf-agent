@@ -1,10 +1,6 @@
 import type { Tool } from '../tools/types'
 import {
-  commandFromArgs,
-  commandReferencesSensitivePath,
   isPathWithinWorkspace,
-  isSensitivePath,
-  isSystemPath,
   pathFromArgs
 } from './pathValidation'
 import { loadMergedPermissionRules, matchPermissionRules } from './rules'
@@ -36,16 +32,9 @@ export class PermissionEngine {
     if (!tool) return 'deny'
 
     const p = pathFromArgs(args)
-    if (p && isSensitivePath(p)) return 'deny'
-    if (p && isSystemPath(p) && !tool.readOnly) return 'deny'
     if (p && options?.workspaceRoot && !isPathWithinWorkspace(options.workspaceRoot, p)) {
       if (tool.readOnly) return 'allow'
     }
-
-    
-    
-    const cmd = commandFromArgs(args)
-    if (cmd && commandReferencesSensitivePath(cmd)) return 'deny'
 
     if (tool.readOnly) return 'allow'
 

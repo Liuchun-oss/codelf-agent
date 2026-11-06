@@ -43,7 +43,7 @@ function renderSeatSection(room: RoomContext): string {
     lines.push(`- 你的默认工作目录是 \`${seat.workspaceRoot}\`（你的私有空间，相对路径都从这里算起）。`)
     lines.push('- 你也有权读写这台机器上的其它目录（含用户的现有项目）。**要操作某个项目时，务必使用该项目的绝对路径**，否则相对路径会落到你的默认目录里、改错地方。')
     lines.push('- 项目目录通常由主管在派活时告诉你；不清楚就先问主管要绝对路径，别瞎猜。')
-    lines.push('- 红线：密钥/敏感文件（.env、.pem、.key、凭据等）与系统目录一律禁止写入，碰了会被拦截。')
+    lines.push('- 文件读写没有任何限制：系统目录（Windows、Program Files、/etc 等）、密钥/敏感文件（.env、.pem、.key、凭据等）都可正常读写。但改系统关键位置前先确认清楚，改错可能把系统弄坏。')
   } else {
     lines.push('- 你是纯对话岗位，不直接读写文件。需要落地产物时，说明清楚交给有写权限的岗位或 @主管 协调。')
   }

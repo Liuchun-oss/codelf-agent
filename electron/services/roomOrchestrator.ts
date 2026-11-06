@@ -1,5 +1,4 @@
 import { randomUUID } from 'crypto'
-import { resolve, isAbsolute } from 'path'
 import { homedir } from 'os'
 import type { AgentEvent, AiSendPayload } from '@shared/agentTypes'
 import type { Room, Seat, RoomContext, RoomEvent, SeatSignals, SeatKpiRecord } from '@shared/roomTypes'
@@ -43,7 +42,6 @@ import { RELOAD_MCP_TOOL_NAME } from '../agent/tools/mcpTools'
 import { SCHEDULE_CREATE_NAME, SCHEDULE_LIST_NAME, SCHEDULE_DELETE_NAME, SCHEDULE_TOGGLE_NAME } from '../agent/prompts/tools/schedule'
 import { notifyWeixin } from '../channels/notify'
 import { getChannelsSettings } from '../agent/settings/agentSettingsStore'
-import { isSensitivePath, isSystemPath, commandReferencesSensitivePath } from '../agent/permissions/pathValidation'
 
 // 群聊编排器（RoomOrchestrator）。群聊系统唯一的核心新增件（策划书 §6）。
 // 职责很薄：①决定谁说话 ②把共享消息流喂给该岗位引擎 ③把引擎事件广播回 UI + 落进 transcript。
@@ -403,33 +401,7 @@ class RoomOrchestrator {
     return { ...eff, workspaceRoot: res.worktreePath }
   }
 
-  // §6.6 权限自动裁决（全放行策略）：不再弹授权横幅打断用户——危险命令也自动放行。
-  // 仅保留一道静默红线：密钥文件 / 系统目录 → deny（谁都不能碰，安全网，不弹窗）。
-  // - 写类（带 path）：命中密钥文件 / 系统目录 → deny；否则 allow。
-  // - 终端命令（带 command）：引用密钥/系统路径 → deny；否则一律 allow（含 rm -rf、git push 等）。
-  // - 相对路径按岗位工作区解析后再判红线（与 resolveAnyPath 同口径）。
-  // - 既无 path 也无 command（如 append_note/todo_write 等纯应用内工具）：无副作用 → allow。
-  private autoResolvePermission(seat: Seat, ev: Extract<AgentEvent, { type: 'permission_request' }>): 'allow' | 'deny' | 'ask' {
-    const d = ev.details
-    if (d?.path) {
-      return this.crossesRedline(seat, d.path) ? 'deny' : 'allow'
-    }
-    if (d?.command) {
-      if (commandReferencesSensitivePath(d.command)) return 'deny'
-      const paths = [...absolutePathsIn(d.command), ...relativePathsIn(d.command)]
-      if (paths.some((p) => this.crossesRedline(seat, p))) return 'deny'
-      return 'allow'
-    }
-    return 'allow'
-  }
-
-  // 硬红线：密钥文件（secrets）与系统目录，任何岗位都不能写/动。相对路径按岗位工作区解析。
-  private crossesRedline(seat: Seat, targetPath: string): boolean {
-    const abs = isAbsolute(targetPath)
-      ? targetPath
-      : (seat.workspaceRoot ? resolve(seat.workspaceRoot, targetPath) : resolve(targetPath))
-    return isSensitivePath(abs) || isSystemPath(abs)
-  }
+  // §6.6 权限自动裁决已改为全放行（见 handleSeatEvent）：无任何路径红线。
 
   // 组装注入岗位引擎的 roomContext（驱动 roomSeat 提示词段）。
   private buildRoomContext(rt: RoomRuntime, seat: Seat): RoomContext {
@@ -935,29 +907,19 @@ class RoomOrchestrator {
     }
   }
 
-  // 单个引擎事件的处理：广播 + 交互类分流 + 路径围栏（§6.6/§7.4）。
+  // 单个引擎事件的处理：广播 + 交互类分流（§6.6/§7.4）。
   private handleSeatEvent(rt: RoomRuntime, seat: Seat, sr: SeatRuntime, ev: AgentEvent): void {
     const roomId = rt.room.id
-    // §6.6 权限自动裁决：permission_request（终端命令/敏感写）先按路径围栏判定，
-    // 工作区内的安全操作自动放行，越界/危险才升级为审批横幅，避免岗位每条命令都打断用户。
+    // §6.6 权限自动裁决：全放行策略——岗位的 permission_request（终端命令/写类）一律自动允许，
+    // 不弹授权横幅，避免岗位每条命令都打断用户。敏感文件与系统目录都已放开。
     if (ev.type === 'permission_request') {
-      const verdict = this.autoResolvePermission(seat, ev)
-      if (verdict !== 'ask') {
-        sr.engine.resolvePermission(ev.requestId, verdict === 'allow' ? 'allow_once' : 'deny')
-        if (verdict === 'deny') {
-          sr.signals.outOfBounds++
-          const where = ev.details?.path ?? ev.details?.command ?? ev.summary
-          sr.failures.push(`[越界] 试图操作 ${where} → 只动自己 seats/ 内`)
-          this.systemNote(roomId, `岗位「${seat.name}」请求越界/危险操作（${where}），已自动拒绝。`)
-          rt.noProgressStreak++
-        }
-        // 已自动裁决，仍广播为非交互过程事件供 UI 折叠显示，但不挂起全群。
-        this.broadcast(roomId, seat.id, ev, false, sr.privateReplyVisibility)
-        return
-      }
+      sr.engine.resolvePermission(ev.requestId, 'allow_once')
+      // 仍广播为非交互过程事件供 UI 折叠显示，但不挂起全群。
+      this.broadcast(roomId, seat.id, ev, false, sr.privateReplyVisibility)
+      return
     }
     // 第二类「需要你回应」事件：强制弹横幅 + 标 interactive（§7.4）。
-    const interactive = ev.type === 'permission_request' || ev.type === 'user_question'
+    const interactive = ev.type === 'user_question'
     if (interactive) sr.state = 'waiting-user'
     if (ev.type === 'user_question') sr.signals.questions++
     // §14.2 监工：从事件流顺手聚合「当前步骤」（无需新埋点）。
@@ -972,27 +934,17 @@ class RoomOrchestrator {
     // 微信遥控：交互类事件经主管汇总推机主（host-merge 队列，§8.4）。
     if (rt.weixinRelay && ev.type === 'user_question') {
       this.enqueueRelay(rt, { seatId: seat.id, seatName: seat.name, kind: 'question', requestId: ev.requestId, text: ev.question, suggestions: ev.suggestions })
-    } else if (rt.weixinRelay && ev.type === 'permission_request') {
-      this.enqueueRelay(rt, { seatId: seat.id, seatName: seat.name, kind: 'permission', requestId: ev.requestId, text: ev.summary })
     }
 
-    // 写类工具的 file_change_proposed：自由放行策略——仅密钥/系统目录红线拒绝，其余（含工作区外）放行。
+    // 写类工具的 file_change_proposed：自由放行策略——一律放行（含工作区外、系统目录）。
     if (ev.type === 'file_change_proposed') {
-      if (this.crossesRedline(seat, ev.path)) {
-        sr.engine.resolveFileChange(ev.changeId, 'reject')
-        sr.signals.outOfBounds++
-        sr.failures.push(`[红线] 试图写敏感/系统路径 ${ev.path} → 已拦截`)
-        this.systemNote(roomId, `岗位「${seat.name}」尝试写入密钥/系统路径 ${ev.path}，已拦截（红线，任何岗位都不允许）。`)
-        rt.noProgressStreak++
+      if (sr.writtenPaths.has(ev.path)) {
+        sr.signals.reworks++
+        sr.failures.push(`[返工] 反复修改 ${ev.path} → 动手前先想清楚改动`)
       } else {
-        if (sr.writtenPaths.has(ev.path)) {
-          sr.signals.reworks++
-          sr.failures.push(`[返工] 反复修改 ${ev.path} → 动手前先想清楚改动`)
-        } else {
-          sr.writtenPaths.add(ev.path)
-        }
-        sr.engine.resolveFileChange(ev.changeId, 'accept')
+        sr.writtenPaths.add(ev.path)
       }
+      sr.engine.resolveFileChange(ev.changeId, 'accept')
     }
   }
 
@@ -1512,7 +1464,7 @@ function parsePermissionReply(text: string): 'allow_once' | 'deny' | null {
 }
 
 // §6.6 危险命令检测：删除/格式化/权限/管道执行远端脚本等高破坏操作。
-// 注意：当前策略为「全放行」，autoResolvePermission 已不再调用本函数（不再弹授权横幅）。
+// 注意：当前策略为「全放行」，handleSeatEvent 已不再调用本函数（不再弹授权横幅）。
 // 导出保留定义，以便日后需要恢复「危险命令交用户拍板」时直接接回。
 export function isDangerousCommand(command: string): boolean {
   const c = command.toLowerCase()
@@ -1531,8 +1483,9 @@ export function isDangerousCommand(command: string): boolean {
   return patterns.some((re) => re.test(c))
 }
 
-// 从命令字符串里粗略抽取绝对路径（Windows 盘符 / POSIX 根），用于围栏越界判定。
-function absolutePathsIn(command: string): string[] {
+// 从命令字符串里粗略抽取绝对路径（Windows 盘符 / POSIX 根）。
+// 路径围栏已全部放开，仅保留以备日后需要恢复围栏判定时接回。
+export function absolutePathsIn(command: string): string[] {
   const out: string[] = []
   const win = command.match(/[A-Za-z]:[\\/][^\s"'|&;<>]*/g)
   if (win) out.push(...win)
@@ -1541,9 +1494,8 @@ function absolutePathsIn(command: string): string[] {
   return out
 }
 
-// 抽取含父级逃逸（..）的相对路径 token，用于检测 `rm ../other`、`cp x ../../elsewhere` 这类
-// 不带绝对路径、也不命中危险模式、却逃出工作区的命令。无 .. 的相对路径解析后仍在围栏内，无需查。
-function relativePathsIn(command: string): string[] {
+// 抽取含父级逃逸（..）的相对路径 token。围栏已全开，仅保留备恢复用。
+export function relativePathsIn(command: string): string[] {
   const matches = command.match(/(?<![\w:])\.\.[\\/][^\s"'|&;<>]*/g)
   return matches ?? []
 }
