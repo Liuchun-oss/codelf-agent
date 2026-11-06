@@ -3,8 +3,10 @@
 ; $APPDATA 指向 %APPDATA%（Roaming），$PROFILE 指向用户主目录 C:\Users\<用户>
 
 !macro customUnInstall
-  ; oneClick:false 模式下卸载需要交互，这里弹窗询问是否清除个人数据
-  MessageBox MB_YESNO|MB_ICONQUESTION "是否同时删除 Codelf 的个人数据？$\r$\n$\r$\n包含：API 密钥、会话历史、设置、日志，以及用户技能目录 (~/.codelf)。$\r$\n$\r$\n选择“是”将彻底清除，无法恢复；选择“否”将保留以便重装后继续使用。" IDYES codelf_purge IDNO codelf_keep
+  ; oneClick:false 模式下卸载需要交互，这里弹窗询问是否清除个人数据。
+  ; MB_DEFBUTTON2：默认焦点落在「否」，避免误按回车清空数据；
+  ; /SD IDNO：静默安装/升级（/S）无人可答时默认「保留」，自动更新不再误删。
+  MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "是否同时删除 Codelf 的个人数据？$\r$\n$\r$\n包含：API 密钥、会话历史、设置、日志，以及用户技能目录 (~/.codelf)。$\r$\n$\r$\n选择“是”将彻底清除，无法恢复；选择“否”将保留以便重装后继续使用。" /SD IDNO IDYES codelf_purge IDNO codelf_keep
 
   codelf_purge:
     DetailPrint "正在删除用户数据..."
