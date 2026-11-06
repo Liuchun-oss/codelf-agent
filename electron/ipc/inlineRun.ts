@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { spawn, type ChildProcess } from 'child_process'
-import { killProcessTree, shellInvocation } from '../services/headlessTerminal'
+import { DETACHED_GROUP, killProcessTree, shellInvocation } from '../services/headlessTerminal'
 
 /**
  * Inline run service: spawns a command via child_process and streams its
@@ -61,6 +61,7 @@ export function registerInlineRunIpc(): void {
           cwd: safeCwd,
           env: { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', ...process.env },
           windowsHide: true,
+          detached: DETACHED_GROUP,
           stdio: ['pipe', 'pipe', 'pipe']
         })
 

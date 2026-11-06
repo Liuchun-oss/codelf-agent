@@ -77,6 +77,28 @@ export const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
       '完成后用四态之一汇报，并列出改了哪些文件与验证结果：DONE（完成且有把握）、DONE_WITH_CONCERNS（完成但对正确性/范围存疑，需说明疑点）、BLOCKED（无法完成，说明卡点与已尝试方案）、NEEDS_CONTEXT（缺少必要信息，说明缺口）。',
       '绝不要在没有把握时静默交付——有疑点就用 DONE_WITH_CONCERNS 或升级，不要假装完成。'
     ].join('\n'),
+    // 显式白名单：只给「读-改-验」所需工具，刻意不含 StartTerminalTask / PowerShell 等
+    // 能起长驻后台进程的能力——子 Agent 无人监督，长驻进程一旦泄漏就会反过来改写用户工作区（issue #9）。
+    allowedTools: [
+      'read_file',
+      'list_dir',
+      'glob',
+      'grep',
+      'codebase_search',
+      'search_history',
+      'write_file',
+      'edit_file',
+      'multi_edit',
+      'delete_file',
+      'run_terminal_cmd',
+      'get_diagnostics',
+      'append_note',
+      'todowrite',
+      'taskcreate',
+      'taskupdate',
+      'tasklist',
+      'taskget'
+    ],
     deniedTools: NO_RECURSIVE_SUBAGENT
   },
   planner: {

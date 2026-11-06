@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { shellInvocation } from '../../services/headlessTerminal'
+import { DETACHED_GROUP, killProcessTree, shellInvocation } from '../../services/headlessTerminal'
 import { ENV_PROJECT_DIR } from '@shared/appConfig'
 import type {
   HookCommand,
@@ -32,7 +32,8 @@ function runOneHook(cmd: HookCommand, input: HookInput, cwd: string, signal?: Ab
     const child = spawn(file, args, {
       cwd,
       env: { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', ...process.env, CLAUDE_PROJECT_DIR: cwd, [ENV_PROJECT_DIR]: cwd },
-      windowsHide: true
+      windowsHide: true,
+      detached: DETACHED_GROUP
     })
     const finish = (exitCode: number | null) => {
       if (settled) return
@@ -43,12 +44,12 @@ function runOneHook(cmd: HookCommand, input: HookInput, cwd: string, signal?: Ab
 
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill('SIGKILL')
+      killProcessTree(child)
     }, timeoutMs)
 
     const onAbort = () => {
       timedOut = true
-      child.kill('SIGKILL')
+      killProcessTree(child)
     }
     if (signal) {
       if (signal.aborted) onAbort()

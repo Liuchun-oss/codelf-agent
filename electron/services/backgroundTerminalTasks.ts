@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { spawn, type ChildProcess } from 'child_process'
-import { killProcessTree, shellInvocation } from './headlessTerminal'
+import { DETACHED_GROUP, killProcessTree, shellInvocation } from './headlessTerminal'
 
 export type BackgroundTerminalStatus = 'running' | 'completed' | 'error' | 'stopped'
 
@@ -71,6 +71,7 @@ export function startBackgroundTerminalTask(options: StartBackgroundTerminalOpti
     cwd: options.cwd,
     env: { ...process.env, ...(options.env ?? {}) },
     windowsHide: true,
+    detached: DETACHED_GROUP,
     stdio: ['pipe', 'pipe', 'pipe']
   })
   processes.set(id, child)
@@ -141,7 +142,8 @@ export function writeToBackgroundTerminalTask(id: string, data: string): WriteTe
   }
 }
 
-export function resetBackgroundTerminalTasks(): void {  for (const child of processes.values()) killProcessTree(child)
+export function resetBackgroundTerminalTasks(): void {
+  for (const child of processes.values()) killProcessTree(child)
   processes.clear()
   tasks.clear()
 }

@@ -30,6 +30,8 @@ import { resumeRoomsOnStartup } from '../services/roomStore'
 import { BROWSER_PREVIEW_SCHEME, readBrowserPreview } from '../services/browserPreviewImage'
 import { ARTIFACT_FILE_SCHEME, readArtifactFile } from '../services/artifactFileServer'
 import { cleanupRendererBoundResources } from '../services/appLifecycle'
+import { resetBackgroundTerminalTasks } from '../services/backgroundTerminalTasks'
+import { resetHeadlessRuns } from '../services/headlessTerminal'
 import { migrateUserDataDir } from '../services/brandMigration'
 import { initUpdater, checkForUpdates } from '../services/updater'
 import { APP_NAME } from '@shared/appConfig'
@@ -360,6 +362,14 @@ app.on('before-quit', (e) => {
   e.preventDefault()
   isQuitting = true
   destroyTray()
+  // 先杀后台终端任务与前台 headless 命令的进程组：不等 cleanupRendererBoundResources 的异步链，
+  // 避免用户在等待期间强杀进程而留下孤儿进程（issue #9）。
+  try {
+    resetBackgroundTerminalTasks()
+    resetHeadlessRuns()
+  } catch {
+    
+  }
   void cleanupRendererBoundResources().finally(() => {
     void import('../services/roomStore').then((m) => m.flushCursorPersist()).catch(() => {})
     void import('../channels/manager').then((m) => m.getChannelManager().stopAll()).catch(() => {})
@@ -368,5 +378,16 @@ app.on('before-quit', (e) => {
     void import('../services/knowledge/store').then((m) => m.closeStore()).catch(() => {})
     app.quit()
   })
+})
+
+// 非正常退出兜底：before-quit 不会在 process.exit()、未捕获异常导致退出等路径上全部跑到，
+// 这里补最后一道同步清理（只能同步，且 SIGKILL 时不会执行 —— 那种情况靠进程组隔离）。
+process.on('exit', () => {
+  try {
+    resetBackgroundTerminalTasks()
+    resetHeadlessRuns()
+  } catch {
+    
+  }
 })
 }

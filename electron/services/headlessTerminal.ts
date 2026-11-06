@@ -122,16 +122,46 @@ function escapePowerShellSingleQuotedHereString(text: string): string {
   return text.replace(/'@/g, "'`@")
 }
 
+// POSIX 上让子进程自成进程组：配合 killProcessTree 的组 kill 才能回收整棵子树。
+// Windows 不加（会另起控制台，且 taskkill /T 已能杀树）。
+export const DETACHED_GROUP: boolean = process.platform !== 'win32'
+
+// 活跃的前台 headless 子进程（run_terminal_cmd / hook 之外的同步命令）。
+// 主进程退出时统一回收，避免它们连同孙进程一起变成孤儿。
+const activeChildren = new Set<ChildProcess>()
+
 export function killProcessTree(child: ChildProcess): void {
-  if (process.platform === 'win32' && child.pid) {
+  if (!child.pid) {
+    child.kill('SIGKILL')
+    return
+  }
+  if (process.platform === 'win32') {
     try {
       spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
       return
     } catch {
       
     }
+    child.kill('SIGKILL')
+    return
   }
-  child.kill('SIGKILL')
+  // POSIX：spawn 时加了 DETACHED_GROUP，子进程即组长，负 pid 精确命中它自己的组。
+  // 组已不存在（ESRCH）等异常时退回只杀直接子进程，绝不向未知组发信号。
+  try {
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    
+  }
+  try {
+    child.kill('SIGKILL')
+  } catch {
+    
+  }
+}
+
+export function resetHeadlessRuns(): void {
+  for (const child of activeChildren) killProcessTree(child)
+  activeChildren.clear()
 }
 
 export function shellInvocation(command: string): { file: string; args: string[] } {
@@ -180,8 +210,10 @@ export function runCommand(command: string, opts: HeadlessRunOptions): Promise<H
     const child = spawn(file, args, {
       cwd: opts.cwd,
       env: { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', ...process.env, ...(opts.env ?? {}) },
-      windowsHide: true
+      windowsHide: true,
+      detached: DETACHED_GROUP
     })
+    activeChildren.add(child)
 
     
     const looksLikePrompt = (): boolean => {
@@ -246,6 +278,7 @@ export function runCommand(command: string, opts: HeadlessRunOptions): Promise<H
       clearTimeout(timer)
       if (idleTimer) clearTimeout(idleTimer)
       opts.signal?.removeEventListener('abort', onAbort)
+      activeChildren.delete(child)
       resolve(result)
     }
 
