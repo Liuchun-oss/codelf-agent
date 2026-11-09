@@ -6,6 +6,8 @@ import pngToIco from 'png-to-ico'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const png = resolve(root, 'resources/icon.png')
+// Linux 打包要求图标至少 512x512，单独输出一张 1024 的
+const linuxPng = resolve(root, 'resources/icon-1024.png')
 const assets = resolve(root, 'src/assets/app-icon.png')
 const ico = resolve(root, 'resources/icon.ico')
 const icns = resolve(root, 'resources/icon.icns')
@@ -42,6 +44,7 @@ async function render(size) {
 const main = await render(256)
 writeFileSync(png, main)
 copyFileSync(png, assets)
+writeFileSync(linuxPng, await render(1024))
 
 const buffers = await Promise.all(sizes.map(render))
 const icoBuf = await pngToIco(buffers)
@@ -74,4 +77,4 @@ icnsHeader.writeUInt32BE(body.length + 8, 4)
 const icnsBuf = Buffer.concat([icnsHeader, body])
 writeFileSync(icns, icnsBuf)
 
-console.log(`icon.png 256x256, ico ${icoBuf.length} bytes (${sizes.join('/')}), icns ${icnsBuf.length} bytes`)
+console.log(`icon.png 256x256, icon-1024.png 1024x1024, ico ${icoBuf.length} bytes (${sizes.join('/')}), icns ${icnsBuf.length} bytes`)

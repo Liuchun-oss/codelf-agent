@@ -35,7 +35,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
           toast.info(`新版本 ${s.info?.version ?? ''} 已就绪，可在“关于”中重启安装`)
           set({ dialogOpen: true })
         } else if (s.phase === 'available' && !s.canAutoUpdate && prev?.phase !== 'available') {
-          // macOS：无法自动更新，提示去官网下载。
+          // macOS / Linux：无法自动更新，提示去官网下载。
           set({ dialogOpen: true })
         }
       }

@@ -191,9 +191,36 @@ npm run package
 
 # macOS 安装包（dmg，支持 arm64 / x64）
 npm run dist:mac
+
+# Linux 安装包（AppImage + deb，x64）
+npm run dist:linux
+
+# Linux 免安装目录
+npm run package:linux
+
+# Linux arm64（需在 arm64 机器上执行，交叉编译会打包进错误的原生模块）
+npm run dist:linux:arm64
 ```
 
 构建产物输出到 `release/` 目录。
+
+Linux 下打包需要本机具备原生模块编译链：`python3`、`make`、`g++`（better-sqlite3 会现场重编）。
+
+## 平台支持
+
+| 平台 | 状态 | 说明 |
+| --- | --- | --- |
+| Windows 10/11（x64） | 完整支持 | 含应用内自动更新与桌面控制（Desktop* 系列工具） |
+| macOS（arm64） | 支持 | 未签名，更新需前往官网手动下载；桌面控制可用 |
+| Linux（x64） | 支持 | 提供 AppImage 与 deb；更新需手动下载；桌面控制不可用 |
+| Linux（arm64，麒麟/统信 ARM 版、飞腾、鲲鹏） | 可构建 | 需在 arm64 机器上打包，依赖包（node-pty、sharp、sqlite-vec、onnxruntime）均有 arm64 预编译产物 |
+| 龙芯 LoongArch | 不支持 | Electron 无官方 loong64 构建，原生模块也无预编译产物 |
+
+Linux 相关注意事项：
+
+- 需要 glibc ≥ 2.28（Ubuntu 20.04+ / Debian 10+ 一类的发行版）。基于更老底座的系统（例如部分麒麟 V10 早期版本）请先实测。
+- Ubuntu 24.04 起对非特权 user namespace 有 AppArmor 限制，AppImage 可能无法启动；优先用 deb，或给 AppImage 加 `--no-sandbox` 参数。
+- 托盘图标依赖桌面环境支持（GNOME 需装 AppIndicator 扩展），否则「最小化到托盘」后可能找不到窗口。
 
 ## 联系我
 

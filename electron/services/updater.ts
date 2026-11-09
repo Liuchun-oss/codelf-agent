@@ -8,8 +8,12 @@ import type { UpdateStatus, UpdateInfo, UpdateProgress } from '@shared/updateTyp
 // 官网下载页：未签名的 macOS 无法应用内更新，只能引导用户手动下载。
 const DOWNLOAD_PAGE = APP_WEBSITE
 
-// 仅 Windows 支持应用内静默下载安装。macOS 未做签名+公证，autoUpdater 会拒绝更新。
+// 仅 Windows 支持应用内静默下载安装。macOS 未做签名+公证，autoUpdater 会拒绝更新；
+// Linux 既没有签名产物也没有 latest-linux.yml，一并改为查 GitHub Releases 后引导前往官网。
 const CAN_AUTO_UPDATE = process.platform === 'win32'
+
+// 与 electron-builder.yml 的 publish 配置保持一致。
+const LATEST_RELEASE_API = 'https://api.github.com/repos/Liuchun-oss/codelf-agent/releases/latest'
 
 let status: UpdateStatus = {
   phase: 'idle',
@@ -118,6 +122,12 @@ export async function checkForUpdates(_silent = false): Promise<UpdateStatus> {
   // 下载完成后不再重复检查，直接返回“待安装”状态。
   if (status.phase === 'downloaded') return status
 
+  // 不支持应用内更新的平台走 GitHub Releases 比对，命中新版本后由 UI 引导去官网下载。
+  if (!CAN_AUTO_UPDATE) {
+    await checkLatestRelease()
+    return status
+  }
+
   try {
     await autoUpdater.checkForUpdates()
   } catch (err) {
@@ -126,7 +136,52 @@ export async function checkForUpdates(_silent = false): Promise<UpdateStatus> {
   return status
 }
 
-/** macOS 或用户手动触发时，用系统浏览器打开官网下载页。 */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map((s) => Number.parseInt(s, 10) || 0)
+  const pb = b.split('.').map((s) => Number.parseInt(s, 10) || 0)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+// 非 Windows 平台的更新检查：只读 GitHub Releases 最新标签，不下载任何东西。
+async function checkLatestRelease(): Promise<void> {
+  setStatus({ phase: 'checking', error: null })
+  try {
+    const res = await fetch(LATEST_RELEASE_API, {
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = (await res.json()) as {
+      tag_name?: string
+      name?: string
+      body?: string
+      published_at?: string
+    }
+    const latest = (data.tag_name ?? '').replace(/^v/i, '')
+    if (!latest) throw new Error('响应中缺少版本号')
+    if (compareVersions(latest, app.getVersion()) > 0) {
+      setStatus({
+        phase: 'available',
+        info: {
+          version: latest,
+          releaseNotes: data.body ?? null,
+          releaseName: data.name ?? null,
+          releaseDate: data.published_at ?? null
+        }
+      })
+      return
+    }
+    setStatus({ phase: 'not-available', info: null })
+  } catch (err) {
+    log('error', `检查更新失败: ${err instanceof Error ? err.message : String(err)}`)
+    setStatus({ phase: 'error', error: '检查更新失败，请前往官网查看最新版本。' })
+  }
+}
+
+/** macOS / Linux 或用户手动触发时，用系统浏览器打开官网下载页。 */
 export function openDownloadPage(): void {
   void import('electron').then(({ shell }) => shell.openExternal(DOWNLOAD_PAGE))
 }

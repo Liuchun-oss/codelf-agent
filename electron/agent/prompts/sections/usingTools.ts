@@ -13,6 +13,7 @@ import { SEARCH_EXTRA_TOOLS_NAME, EXECUTE_EXTRA_TOOL_NAME } from '../../tools/de
 import { TASK_CREATE_NAME, TASK_UPDATE_NAME, TASK_LIST_NAME, TASK_GET_NAME } from '../../tools/taskTools'
 import { SKILL_TOOL_NAME } from '../../tools/skillTool'
 import { INSTALL_SKILL_TOOL_NAME } from '../../tools/installSkillTool'
+import { DESKTOP_LIST_WINDOWS_NAME } from '../tools/desktop'
 
 
 export function getUsingToolsSection(ctx: PromptContext): string {
@@ -38,6 +39,8 @@ export function getUsingToolsSection(ctx: PromptContext): string {
   }
   if (has(SEARCH_EXTRA_TOOLS_NAME) && has(EXECUTE_EXTRA_TOOL_NAME)) {
     preferences.push(`Some lower-frequency or large-description tools are deferred to protect context budget. If the task needs a specialized tool that is not directly available, use ${SEARCH_EXTRA_TOOLS_NAME} first, then ${EXECUTE_EXTRA_TOOL_NAME}. Do not use deferred discovery for work a core tool can do.`)
+  }
+  if (has(DESKTOP_LIST_WINDOWS_NAME)) {
     preferences.push(`You can also operate the user's computer directly (open and control GUI apps: click, type, screenshot, automate desktop workflows) via deferred Desktop* tools. When a request can only be done by driving the desktop UI (not by answering, coding, file edits, or web/browser tools), discover them with ${SEARCH_EXTRA_TOOLS_NAME}, then call EnterDesktopTakeover to enter full-screen takeover, run the observe->act->observe loop, and call ExitDesktopTakeover when done or stuck. Decide this autonomously; do not ask the user to flip a switch first.`)
   }
   if (has(ASK_USER_NAME)) {

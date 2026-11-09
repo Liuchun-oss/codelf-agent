@@ -47,10 +47,8 @@ files:
   - node_modules/sqlite-vec-*/**/*
   - node_modules/sqlite-vec/node_modules/sqlite-vec-*/**/*
 
-  # onnxruntime-node 全部纳入；按平台裁剪无关二进制的规则见下方 win / mac 块
+  # onnxruntime-node 全部纳入；按平台裁剪无关二进制的规则见下方 win / mac / linux 块
   - node_modules/onnxruntime-node/**/*
-  # linux 二进制 win 和 mac 都用不到，全局排除
-  - "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
 
 # 只把原生模块（含 .node / 需从磁盘 spawn 的）解压到 asar 外，
 # 其余 JS 全部打进 app.asar（一个大文件），避免释放数万个散文件拖慢安装。
@@ -87,9 +85,10 @@ win:
         - x64
   icon: resources/icon.ico
   artifactName: ${productName}-${version}-setup.${ext}
-  # Windows 只需 win32/x64，砍掉 darwin 与 win32/arm64
+  # Windows 只需 win32/x64，砍掉 darwin、linux 与 win32/arm64
   files:
     - "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**"
+    - "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
     - "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**"
 
 mac:
@@ -103,12 +102,39 @@ mac:
   gatekeeperAssess: false
   darkModeSupport: true
   artifactName: ${productName}-${version}-${arch}.${ext}
-  # macOS 只需 darwin，砍掉全部 win32 二进制
+  # macOS 只需 darwin，砍掉 win32 与 linux 二进制
   files:
     - "!node_modules/onnxruntime-node/bin/napi-v6/win32/**"
+    - "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
   extendInfo:
     NSCameraUsageDescription: 此应用不会使用摄像头。
     NSMicrophoneUsageDescription: 此应用不会使用麦克风。
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  icon: resources/icon-1024.png
+  category: Development
+  synopsis: 轻量级 Agent 辅助编程 IDE
+  description: Codelf（码灵）—— 轻量级 Agent 辅助编程 IDE。
+  maintainer: 巫枫 <codelf@codelf.top>
+  executableName: codelf
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  desktop:
+    entry:
+      Name: Codelf
+      Comment: 轻量级 Agent 辅助编程 IDE
+      Categories: Development;
+      Keywords: ai;agent;ide;editor;
+  # Linux 只需 linux 二进制，砍掉 win32 与 darwin
+  files:
+    - "!node_modules/onnxruntime-node/bin/napi-v6/win32/**"
+    - "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**"
 
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}

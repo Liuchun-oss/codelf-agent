@@ -22,7 +22,10 @@
     "dist": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --win",
     "release": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --win --publish always",
     "dist:mac": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --mac",
-    "package:mac": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --mac --dir"
+    "package:mac": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --mac --dir",
+    "dist:linux": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --linux",
+    "package:linux": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --linux --dir",
+    "dist:linux:arm64": "npm run sync-brand && npm run rebuild:native && electron-vite build && electron-builder --linux --arm64"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
