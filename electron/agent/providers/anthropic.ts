@@ -17,6 +17,7 @@ import {
   type StreamChunk,
   type ToolDef
 } from './base'
+import { clampRequestMaxOutputTokens } from './modelMetadata'
 
 
 const FALLBACK_MAX_TOKENS = 4096
@@ -232,7 +233,7 @@ export class AnthropicAdapter extends BaseProviderAdapter {
       return this.client.messages.create(
         {
           model: req.model,
-          max_tokens: req.maxOutputTokens ?? this.fallbackMaxTokens,
+          max_tokens: clampRequestMaxOutputTokens(req.maxOutputTokens ?? this.fallbackMaxTokens),
           stream: true,
           ...(systemParam ? { system: systemParam } : {}),
           ...(typeof req.temperature === 'number' ? { temperature: req.temperature } : {}),

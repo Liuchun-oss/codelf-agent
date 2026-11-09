@@ -19,7 +19,7 @@ import {
   type StreamChunk,
   type ToolDef
 } from './base'
-import { isKimiReasoningModel } from './modelMetadata'
+import { clampRequestMaxOutputTokens, isKimiReasoningModel } from './modelMetadata'
 import { createMinimaxStreamFilter, stripMinimaxArtifacts, coerceToolArgs } from './minimaxDialect'
 
 type OpenAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam
@@ -356,7 +356,7 @@ export async function* streamChatViaOpenAI(
       stream: true,
       stream_options: { include_usage: true },
     }
-    if (typeof req.maxOutputTokens === 'number') body['max_tokens'] = req.maxOutputTokens
+    if (typeof req.maxOutputTokens === 'number') body['max_tokens'] = clampRequestMaxOutputTokens(req.maxOutputTokens)
     // Kimi K3 的 temperature 固定为 1.0，显式传入其他值会 400；这里直接不传。
     const kimiReasoning = isKimiReasoningModel(req.model)
     if (typeof req.temperature === 'number' && !thinkingEnabled && !kimiReasoning) {
@@ -615,7 +615,7 @@ export async function* streamChatViaResponses(
       tool_choice: 'auto',
       stream: true
     }
-    if (typeof req.maxOutputTokens === 'number') body['max_output_tokens'] = req.maxOutputTokens
+    if (typeof req.maxOutputTokens === 'number') body['max_output_tokens'] = clampRequestMaxOutputTokens(req.maxOutputTokens)
     if (typeof req.temperature === 'number') body['temperature'] = req.temperature
     if (req.promptCacheKey && !omitCacheKey) body['prompt_cache_key'] = req.promptCacheKey
     if (req.reasoningEffort) body['reasoning'] = { effort: req.reasoningEffort }

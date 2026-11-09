@@ -21,6 +21,18 @@ const KIND_DEFAULTS: Record<ProviderKind, ModelMetadata> = {
 }
 
 
+// 请求侧 max_tokens 上限。prompt 与 max_tokens 共用同一个上下文窗口（DeepSeek / vLLM 等
+// 通道按 `prompt_tokens + max_tokens ≤ 窗口` 校验），而元数据里的 maxOutputTokens 是
+// "模型输出能力上限"（如 deepseek 一栏的 393216），原样当 max_tokens 发出会平白预占窗口的
+// 三分之一，导致本地算着"才用 70%"、服务端直接 400 超限。这里给请求侧一个务实上限。
+export const MAX_REQUEST_OUTPUT_TOKENS = 64_000
+
+export function clampRequestMaxOutputTokens(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return MAX_REQUEST_OUTPUT_TOKENS
+  return Math.min(Math.round(value), MAX_REQUEST_OUTPUT_TOKENS)
+}
+
+
 // Kimi K3 支持顶层 reasoning_effort（low/high/max，默认 max），且始终思考。
 // 用于判断是否应把 profile.reasoningEffort 透传给 OpenAI 兼容端点。
 export function isKimiReasoningModel(model: string): boolean {

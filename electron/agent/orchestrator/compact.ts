@@ -1,6 +1,7 @@
 import type { ProviderKind } from '@shared/agentTypes'
 import type { ChatMessage } from '../providers'
 import { countChatMessagesTokens, countTokens } from '../context/tokenCounter'
+import { clampRequestMaxOutputTokens } from '../providers/modelMetadata'
 
 
 
@@ -73,9 +74,20 @@ export function estimateTurnsTokens(
   return countChatMessagesTokens(flat, model, kind)
 }
 
+// max_tokens 与 prompt 共用同一个上下文窗口（DeepSeek / vLLM 等按 `prompt + max_tokens ≤ 窗口`
+// 校验）。所以这里必须按「真正发出去的 max_tokens」预留输出预算，否则会出现本地算着"才用
+// 70%、很安全"、服务端直接 400 超限的情况：窗口 1M + max_tokens 393216 时，prompt 实际只能
+// 到 655360，而按旧逻辑（封顶预留 20k）要等到 930000 才压缩，中间 27 万 token 全在雷区里。
+const MAX_OUTPUT_RESERVE_RATIO = 0.4
+
 export function getEffectiveContextWindow(opts: { contextWindow: number; maxOutputTokens?: number }): number {
-  const reserved = Math.min(opts.maxOutputTokens ?? DEFAULT_RESERVED_OUTPUT_TOKENS, DEFAULT_RESERVED_OUTPUT_TOKENS)
-  return Math.max(1, opts.contextWindow - reserved)
+  const requested =
+    opts.maxOutputTokens === undefined
+      ? DEFAULT_RESERVED_OUTPUT_TOKENS
+      : clampRequestMaxOutputTokens(opts.maxOutputTokens)
+  // 极端小窗口下也要留出可用 prompt 空间，故预留不超过窗口的 40%。
+  const reserve = Math.min(requested, Math.max(1, Math.floor(opts.contextWindow * MAX_OUTPUT_RESERVE_RATIO)))
+  return Math.max(1, opts.contextWindow - reserve)
 }
 
 export function getAutocompactBufferTokens(effectiveWindow: number): number {
