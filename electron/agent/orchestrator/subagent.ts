@@ -7,11 +7,13 @@ import { app } from 'electron'
 import { z } from 'zod'
 import { APP_NAME, DATA_DIR_NAME } from '@shared/appConfig'
 import type { AgentEvent, ContentReplacementRecord, SubagentTaskSummary, TokenUsage } from '@shared/agentTypes'
-import { createAdapter, isRetryableError, isRateLimitError, retryDelayMs, MAX_AUTO_RETRIES, ProviderError, type ChatMessage, type ToolDef, type ToolCallRequest, type StreamChunk } from '../providers'
+import { createAdapter, isRetryableError, isRateLimitError, isContextLengthError, retryDelayMs, MAX_AUTO_RETRIES, ProviderError, type ChatMessage, type ToolDef, type ToolCallRequest, type StreamChunk } from '../providers'
 import { getActiveProfileId, getProfileRaw, getProfileApiKey, resolveProfileByIdOrName } from '../providers/profileStore'
 import { fetchSystemPromptPartsAsync, assembleSystemMessage, fetchDynamicContextBlock } from '../prompts/assembler'
 import type { PromptContext } from '../prompts/types'
 import { countChatMessagesTokens, countTokens } from '../context/tokenCounter'
+import { lookupModelMetadata } from '../providers/modelMetadata'
+import { guardRequestSize } from './compact'
 import { buildDefaultRegistry, ToolRegistry } from '../tools/registry'
 import type { Tool, ToolContext, ToolResult } from '../tools/types'
 import { ToolCallAccumulator, executeToolBatch, parseToolArguments } from '../tools/streamingExecutor'
@@ -627,6 +629,10 @@ export async function runReadOnlySubagent(
     })()
   }))
   const forkContext = input.forkContext ? buildForkContext(options.forkContextMessages) : undefined
+  // 子 Agent 没有历史压缩（消息列表就是本任务全过程），长工具循环照样会把 prompt 推过窗口。
+  // 取同一套窗口元数据，供每轮请求前的哨兵使用。
+  const contextWindow =
+    profile.contextWindow ?? lookupModelMetadata(profile.kind, profile.model).contextWindow ?? 500_000
   const messages: ChatMessage[] = [
     ...(options.initialMessages ?? []),
     { role: 'user', content: makeSubagentPrompt(input, definition, forkContext, options.handoffInputs) }
@@ -658,6 +664,17 @@ export async function runReadOnlySubagent(
         ...(dynamicContextBlock ? [{ role: 'system' as const, content: dynamicContextBlock }] : []),
         ...messages
       ]
+      // 发请求前的上下文哨兵：超出安全上限就就地降载最老的工具输出（保留最近几条），
+      // 不改消息数量、不动 tool_use/tool_result 配对。
+      guardRequestSize({
+        messages: requestMessages,
+        toolDefs,
+        model: profile.model,
+        kind: profile.kind,
+        contextWindow,
+        maxOutputTokens: profile.maxOutputTokens
+      })
+      let contextShrinkAttempted = false
       const handleChunk = (chunk: StreamChunk): void => {
         if (chunk.type === 'text') {
           roundText += chunk.text
@@ -695,6 +712,21 @@ export async function runReadOnlySubagent(
           }
           break
         } catch (e) {
+          // 上下文超限：子 Agent 没有压缩可依赖，先就地降载最老的工具输出再试一次，
+          // 而不是把 400 直接抛给上层。
+          if (!producedOutput && !contextShrinkAttempted && isContextLengthError(e)) {
+            contextShrinkAttempted = true
+            const retryGuard = guardRequestSize({
+              messages: requestMessages,
+              toolDefs,
+              model: profile.model,
+              kind: profile.kind,
+              contextWindow,
+              maxOutputTokens: profile.maxOutputTokens,
+              force: true
+            })
+            if (retryGuard.shrunkToolResults > 0) continue
+          }
           if (producedOutput || attempt >= MAX_SUBAGENT_STREAM_RETRIES || !isRetryableError(e)) throw e
           const retryNo = attempt + 1
           if (options.turnId && options.subagentId) {

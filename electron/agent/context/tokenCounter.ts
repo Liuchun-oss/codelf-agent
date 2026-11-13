@@ -103,6 +103,32 @@ export function countChatMessagesTokens(
   return total
 }
 
+export interface CountableChatMessage {
+  role: string
+  content: string
+  toolCalls?: Array<{ name: string; arguments?: string }>
+}
+
+// 与 countChatMessagesTokens 的区别：assistant 消息里的工具调用（名称 + JSON 参数）
+// 也计入。write_file / edit_file 这类调用的参数本身就有几 KB~几十 KB，之前完全没进
+// 统计，是「本地算着没超、服务端已经超」的来源之一。
+export function countChatMessagesTokensFull(
+  messages: CountableChatMessage[],
+  model: string,
+  kind?: ProviderKind
+): number {
+  let total = 3
+  for (const m of messages) {
+    total += countTokens(m.content, model, kind) + 4
+    if (m.toolCalls?.length) {
+      for (const tc of m.toolCalls) {
+        total += countTokens(tc.name, model, kind) + countTokens(tc.arguments ?? '', model, kind) + 8
+      }
+    }
+  }
+  return total
+}
+
 
 export function freeTokenEncodersForTests(): void {
   for (const enc of ENCODING_CACHE.values()) enc.free()

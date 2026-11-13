@@ -17,6 +17,7 @@ import {
   ProviderError,
   isTransientNetworkError,
   isRateLimitError,
+  isContextLengthError,
   MAX_AUTO_RETRIES,
   type ChatMessage,
   type ToolCallRequest,
@@ -75,7 +76,7 @@ import { noteAgentWrite } from '../../services/localWriteRegistry'
 import { getAgentBehaviorSettings, getMemorySettings } from '../settings/agentSettingsStore'
 import { buildContextBreakdown } from '../context/contextBreakdown'
 import { lookupModelMetadata, isKimiReasoningModel } from '../providers/modelMetadata'
-import { maybeCompactTurns, estimateSystemTokens } from './compact'
+import { maybeCompactTurns, estimateSystemTokens, estimateToolDefsTokens, guardRequestSize } from './compact'
 import { runCheckpointWriter, buildRebuildInjection } from '../memory/writer'
 import { detectTaskCompletion, buildNoteReminder, isMemoryWorthyTurn } from './taskCompletionDetector'
 import { recordAudit } from './audit'
@@ -205,11 +206,6 @@ function permissionDetails(call: ToolCallRequest): { command?: string; path?: st
   if (typeof args.command === 'string') details.command = args.command
   if (typeof args.path === 'string') details.path = args.path
   return details
-}
-
-function isContextLengthError(e: unknown): boolean {
-  const message = e instanceof Error ? e.message.toLowerCase() : String(e).toLowerCase()
-  return /context( window| length)?|prompt too long|maximum context|token limit|too many tokens/.test(message)
 }
 
 // 网关 413（请求体超过 client_max_body_size，常见于 openresty 中转）：与上下文超限同性质，
@@ -1166,7 +1162,6 @@ export class QueryEngine {
     let steps = 0
     
     
-    let sideEffected = false
     let contentReplacementCommitted = false
     let hasAttemptedReactiveCompact = false
     let lengthContinuationCount = 0
@@ -1268,8 +1263,16 @@ export class QueryEngine {
       workspaceRoot: effectiveWorkspaceRoot ?? undefined
     })
 
-    
-    
+    // 请求里除「历史对话 + system 文本」之外还要发送的固定开销：工具定义（核心 + MCP 的
+    // JSON schema，常有数万 token）、动态上下文块、本轮用户消息（含附件/知识库/RAG 注入）。
+    // 这些以前完全没进压缩判断，于是本地算着「才用七成、很安全」、服务端按真实总量已经
+    // 越过 prompt + max_tokens 的窗口线，直接 400。
+    const requestOverheadTokens =
+      estimateToolDefsTokens(currentToolDefs, profile.model, profile.kind) +
+      (dynamicContextBlock ? countTokens(dynamicContextBlock, profile.model, profile.kind) : 0) +
+      countTokens(userMsg.content, profile.model, profile.kind)
+    const systemTokens = estimateSystemTokens(systemText, profile.model, profile.kind)
+
     if (this.compactFailureCount < 3) {
       try {
         const beforeTurns = this.visibleHistoryTurns()
@@ -1279,7 +1282,8 @@ export class QueryEngine {
           kind: profile.kind,
           contextWindow,
           summarize,
-          systemTokens: estimateSystemTokens(systemText, profile.model, profile.kind),
+          systemTokens,
+          requestOverheadTokens,
           maxOutputTokens: profile.maxOutputTokens,
           predictive: true,
           restoreHints
@@ -1394,6 +1398,33 @@ export class QueryEngine {
         // 400: `tool_use` ids were found without `tool_result` blocks，且点重试仍发同一份坏历史、报同样错。
         // reconcile 幂等且只补占位不删除，无孤儿时零改动。
         const messages: ChatMessage[] = reconcileOrphanToolCalls(visionAdjusted)
+
+        // 每轮发请求前的上下文哨兵：自动压缩只在 turn 开始时判断一次，而一轮里的工具
+        // 循环（读大文件、长终端输出、并行批次）会把 prompt 一路推高。这里就地降载最老的
+        // 工具输出（保留最近几条），把请求拉回窗口内，避免下一轮直接吃 400。
+        const requestGuard = guardRequestSize({
+          messages,
+          toolDefs: currentToolDefs,
+          model: profile.model,
+          kind: profile.kind,
+          contextWindow,
+          maxOutputTokens: profile.maxOutputTokens
+        })
+        if (requestGuard.shrunkToolResults > 0) {
+          recordDebugEvent({
+            kind: 'compact',
+            sessionId: payload.sessionId || 'default',
+            turnId,
+            label: profile.model,
+            detail: `tool-result shrink (before=${requestGuard.before}, after=${requestGuard.after}, limit=${requestGuard.limit}, shrunk=${requestGuard.shrunkToolResults})`
+          })
+          yield {
+            type: 'notice',
+            turnId,
+            message: `上下文接近上限，已省略 ${requestGuard.shrunkToolResults} 条较早的工具输出以腾出空间（需要时我会重新读取）。`
+          }
+        }
+
         let acc = new ToolCallAccumulator()
         let roundText = ''
         let roundThinking = ''
@@ -1520,15 +1551,36 @@ export class QueryEngine {
             break
           }
           const shouldCompactAndRetry = isContextLengthError(e) || isRateLimitError(e) || isRequestTooLargeError(e)
-          if (
-            !hasAttemptedReactiveCompact &&
-            !sideEffected &&
-            roundText.length === 0 &&
-            turnMessages.length === 1 &&
-            shouldCompactAndRetry
-          ) {
+          // 以前这里要求 `!sideEffected && turnMessages.length === 1`，即只有「本轮第一条请求
+          // 就超限」才能自愈；工具循环跑到一半撞线（turnMessages 已有多轮、多半已有副作用）
+          // 会直接抛给用户，只能手动重试——这正是「偶发 400」最常见的现场。
+          // 现在一律兜底：先就地降载当前请求里最老的工具输出，再压缩历史，然后重试本轮。
+          // 重试只是重发同一个请求（工具不会重跑），有副作用也安全。
+          if (!hasAttemptedReactiveCompact && roundText.length === 0 && shouldCompactAndRetry) {
             hasAttemptedReactiveCompact = true
+            let recovered = false
             try {
+              // (1) 就地降载：把这条请求里最老的几条工具输出换成占位符，成本最低。
+              const shrunken = guardRequestSize({
+                messages,
+                toolDefs: currentToolDefs,
+                model: profile.model,
+                kind: profile.kind,
+                contextWindow,
+                maxOutputTokens: profile.maxOutputTokens,
+                force: true
+              })
+              if (shrunken.shrunkToolResults > 0) {
+                recovered = true
+                recordDebugEvent({
+                  kind: 'compact',
+                  sessionId: payload.sessionId || 'default',
+                  turnId,
+                  label: profile.model,
+                  detail: `reactive tool-result shrink (before=${shrunken.before}, after=${shrunken.after}, limit=${shrunken.limit}, shrunk=${shrunken.shrunkToolResults})`
+                })
+              }
+              // (2) 历史仍有压缩空间时一并压缩（当前 turn 的工具链路保持完整）。
               const beforeTurns = this.visibleHistoryTurns()
               const { turns, compacted, preCompactTokens } = await maybeCompactTurns({
                 turns: beforeTurns,
@@ -1536,13 +1588,15 @@ export class QueryEngine {
                 kind: profile.kind,
                 contextWindow,
                 summarize,
-                systemTokens: estimateSystemTokens(systemText, profile.model, profile.kind),
+                systemTokens,
+                requestOverheadTokens,
                 maxOutputTokens: profile.maxOutputTokens,
                 restoreHints,
                 force: true,
                 keepRecentTurns: Math.min(4, Math.max(1, this.historyTurns.length - 1))
               })
               if (compacted) {
+                recovered = true
                 // 同上：先落地压缩结果并立即重试本轮，writer 丢后台，不阻塞重试。
                 this.replaceHistoryAfterCompact(turns)
                 this.compactFailureCount = 0
@@ -1559,21 +1613,23 @@ export class QueryEngine {
                   sessionId: payload.sessionId || 'default',
                   turnId,
                   label: profile.model,
-                  detail: `reactive-compact retry (pre=${preCompactTokens ?? 0})`
+                  detail: `reactive-compact retry (pre=${preCompactTokens ?? 0}, shrunk=${shrunken.shrunkToolResults})`
                 })
-                yield {
-                  type: 'notice',
-                  turnId,
-                  message: isRateLimitError(e)
-                    ? 'Provider 返回限流（429），可能是当前请求上下文过大或模型 TPM 较低；已压缩早期对话并自动重试本轮请求。'
-                    : isRequestTooLargeError(e)
-                      ? '网关返回请求体过大（413），通常是历史图片/大文件内容累积所致；已压缩早期对话并自动重试本轮请求。'
-                      : 'Provider 返回上下文超限，已压缩早期对话并自动重试本轮请求。'
-                }
-                continue
               }
             } catch {
               this.compactFailureCount += 1
+            }
+            if (recovered) {
+              yield {
+                type: 'notice',
+                turnId,
+                message: isRateLimitError(e)
+                  ? 'Provider 返回限流（429），可能是当前请求上下文过大或模型 TPM 较低；已压缩早期对话并自动重试本轮请求。'
+                  : isRequestTooLargeError(e)
+                    ? '网关返回请求体过大（413），通常是历史图片/大文件内容累积所致；已压缩早期对话并自动重试本轮请求。'
+                    : 'Provider 返回上下文超限，已省略较早的工具输出并自动重试本轮请求。'
+              }
+              continue
             }
           }
           // 报错时也把本轮已流式输出的半截文字（含续写累积的 carryText）落进历史，
@@ -1795,6 +1851,14 @@ export class QueryEngine {
         }
 
         for (const c of gatedCalls) {
+          // 用户已停止：剩余调用不再执行。否则它们会在已 abort 的状态下依次启动
+          // （命令类工具此时起的新进程收不到停止信号，会各自跑满 timeout），
+          // 表现为「点了停止还在一条条跑」。这里仍补齐占位结果，保证每个 tool_call
+          // 都有对应 tool_result，历史消息序列保持合规。
+          if (signal.aborted) {
+            results.set(c.id, { content: '用户已停止，本次工具调用未执行。', isError: true })
+            continue
+          }
           const tool = this.registry.get(c.name)
           let activeCall = c
           let activeTool = tool
@@ -1973,7 +2037,6 @@ export class QueryEngine {
               await this.fileChangeHistory.captureBeforeWrite(changeId, fc.path, fc.encoding, fc.newContent)
               await writeTextFile(fc.path, fc.newContent, fc.encoding)
               noteAgentWrite(fc.path)
-              sideEffected = true
               fileChangeAppliedThisTurn = true
               yield { type: 'file_change_applied', turnId, changeId, path: fc.path }
               results.set(c.id, { content: `已${fc.isCreate ? '创建' : '修改'}：${fc.path}` })
@@ -2063,7 +2126,6 @@ export class QueryEngine {
             results.set(c.id, res)
             
             if (res.appliedPath && !res.isError) {
-              sideEffected = true
               yield { type: 'file_change_applied', turnId, path: res.appliedPath }
               void recordAudit({
                 action: 'delete',

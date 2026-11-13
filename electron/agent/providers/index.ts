@@ -14,6 +14,7 @@ export {
   isRetryableError,
   isRateLimitError,
   isRateLimitCode,
+  isContextLengthError,
   retryDelayMs
 } from './retryPolicy'
 export type { ChatMessage, ChatRequest, StreamChunk, ToolDef, ToolCallRequest, PromptCacheOptions } from './base'

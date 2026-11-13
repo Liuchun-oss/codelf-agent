@@ -1,6 +1,6 @@
 import type { ProviderKind } from '@shared/agentTypes'
 import type { ChatMessage } from '../providers'
-import { countChatMessagesTokens, countTokens } from '../context/tokenCounter'
+import { countChatMessagesTokensFull, countTokens } from '../context/tokenCounter'
 import { clampRequestMaxOutputTokens } from '../providers/modelMetadata'
 
 
@@ -46,6 +46,10 @@ export interface MaybeCompactOptions {
   systemTokens?: number
   
   maxOutputTokens?: number
+
+  // 请求里除历史对话与 system 文本之外的固定开销（工具定义 JSON schema、动态上下文块、
+  // 本轮用户消息等）。压缩判断必须把它算进去，否则阈值算小了、真实请求早就越界了。
+  requestOverheadTokens?: number
   
   predictive?: boolean
   
@@ -70,8 +74,15 @@ export function estimateTurnsTokens(
   model: string,
   kind: ProviderKind
 ): number {
-  const flat = turns.flatMap((t) => t.messages.map((m) => ({ role: m.role, content: m.content })))
-  return countChatMessagesTokens(flat, model, kind)
+  return countChatMessagesTokensFull(turns.flatMap((t) => t.messages), model, kind)
+}
+
+// 工具定义（JSON schema）也随每次请求发送：核心工具 + MCP 工具常有数万 token。
+// 以前压缩判断只算 system 文本，工具定义完全没计入，于是本地以为「还在阈值内」、
+// 服务端已按真实总量越界。
+export function estimateToolDefsTokens(toolDefs: unknown, model: string, kind: ProviderKind): number {
+  if (!Array.isArray(toolDefs) || toolDefs.length === 0) return 0
+  return countTokens(JSON.stringify(toolDefs), model, kind)
 }
 
 // max_tokens 与 prompt 共用同一个上下文窗口（DeepSeek / vLLM 等按 `prompt + max_tokens ≤ 窗口`
@@ -110,8 +121,13 @@ export function estimateCompactionTotalTokens(opts: {
   model: string
   kind: ProviderKind
   systemTokens?: number
+  requestOverheadTokens?: number
 }): number {
-  return (opts.systemTokens ?? 0) + estimateTurnsTokens(opts.turns, opts.model, opts.kind)
+  return (
+    (opts.systemTokens ?? 0) +
+    (opts.requestOverheadTokens ?? 0) +
+    estimateTurnsTokens(opts.turns, opts.model, opts.kind)
+  )
 }
 
 
@@ -123,6 +139,7 @@ export function needsCompaction(opts: {
   systemTokens?: number
   thresholdRatio?: number
   maxOutputTokens?: number
+  requestOverheadTokens?: number
   predictive?: boolean
 }): boolean {
   const total = estimateCompactionTotalTokens(opts)
@@ -188,7 +205,7 @@ function chunkMessagesByTokenBudget(
   let cur: ChatMessage[] = []
   let curTokens = 0
   for (const m of messages) {
-    const t = countChatMessagesTokens([{ role: m.role, content: m.content }], model, kind)
+    const t = countChatMessagesTokensFull([m], model, kind)
     // 单条就超预算：自成一批（renderTranscript 内有每条 2000 字截断，能兜住）。
     if (t >= perChunkBudget) {
       if (cur.length) {
@@ -229,11 +246,7 @@ async function summarizeInBatches(opts: {
   })
   const perChunkBudget = Math.max(2_000, Math.floor(effective * 0.6) - (opts.systemTokens ?? 0))
 
-  const fullOnce = countChatMessagesTokens(
-    buildCompactionMessages(opts.oldMessages).map((m) => ({ role: m.role, content: m.content })),
-    opts.model,
-    opts.kind
-  )
+  const fullOnce = countChatMessagesTokensFull(buildCompactionMessages(opts.oldMessages), opts.model, opts.kind)
   // 单次摘要请求就能装下 → 走原路径，行为与改动前完全一致。
   if (fullOnce <= perChunkBudget) {
     return (await opts.summarize(buildCompactionMessages(opts.oldMessages))).trim()
@@ -277,7 +290,8 @@ export async function maybeCompactTurns(opts: MaybeCompactOptions): Promise<Mayb
     turns: opts.turns,
     model: opts.model,
     kind: opts.kind,
-    systemTokens: opts.systemTokens
+    systemTokens: opts.systemTokens,
+    requestOverheadTokens: opts.requestOverheadTokens
   })
   const crossesThreshold = needsCompaction({
     turns: opts.turns,
@@ -286,7 +300,8 @@ export async function maybeCompactTurns(opts: MaybeCompactOptions): Promise<Mayb
     contextWindow: opts.contextWindow,
     systemTokens: opts.systemTokens,
     thresholdRatio: opts.thresholdRatio,
-    maxOutputTokens: opts.maxOutputTokens
+    maxOutputTokens: opts.maxOutputTokens,
+    requestOverheadTokens: opts.requestOverheadTokens
   })
   const crossesPredictiveThreshold =
     opts.predictive === true &&
@@ -299,6 +314,7 @@ export async function maybeCompactTurns(opts: MaybeCompactOptions): Promise<Mayb
       systemTokens: opts.systemTokens,
       thresholdRatio: opts.thresholdRatio,
       maxOutputTokens: opts.maxOutputTokens,
+      requestOverheadTokens: opts.requestOverheadTokens,
       predictive: true
     })
   if (!opts.force && !crossesThreshold && !crossesPredictiveThreshold) {
@@ -387,14 +403,125 @@ export function computeKeepRecentTurnsByBudget(opts: {
   let keep = 0
   // 从最近的 turn 向前累加，直到再加一个就超预算。
   for (let i = opts.turns.length - 1; i >= 0; i--) {
-    const turnTokens = countChatMessagesTokens(
-      opts.turns[i].messages.map((m) => ({ role: m.role, content: m.content })),
-      opts.model,
-      opts.kind
-    )
+    const turnTokens = countChatMessagesTokensFull(opts.turns[i].messages, opts.model, opts.kind)
     if (keep > 0 && used + turnTokens > budget) break
     used += turnTokens
     keep++
   }
   return Math.max(MIN_KEEP_RECENT_TURNS, keep)
+}
+
+// ---------------------------------------------------------------------------
+// 单次请求体哨兵
+//
+// 自动压缩只在「turn 开始时」判断一次，而一轮内的工具循环（读大文件、长终端输出、
+// 并行工具批次）会把 prompt 一路推高；此时既没有压缩检查，反应式压缩又不允许在
+// 已有多条消息时生效，于是下一次请求直接被服务端 400 顶回来。这里在每轮发请求前
+// 做一次廉价预估，超出就地把最老的工具输出换成占位符（保留最近几条），换回空间。
+// ---------------------------------------------------------------------------
+
+const REQUEST_GUARD_MARGIN_RATIO = 0.05
+const REQUEST_GUARD_MARGIN_MAX = 20_000
+// 字符级网关估算相对上限留到这个比例以下时，直接放行、不做精确分词——
+// 1M token 的精确分词约 0.4s，每轮都跑会拖慢工具循环。0.75 配合下方按代码调过的
+// 除数（实测代码 ~3.1 字符/token），最坏也只到真实值 78% 的上限，留足余量。
+const GUARD_EXACT_COUNT_RATIO = 0.75
+// 无论多紧张，最近这么多条工具结果保持原样——它们通常是模型此刻正在用的。
+const MIN_KEEP_RECENT_TOOL_RESULTS = 4
+// 比这还短的工具结果没必要换占位符（省不了多少，反而丢信息）。
+const SHRINK_MIN_CHARS = 800
+// 占位符里保留的开头长度：前几百字符常含文件路径/预览，值得留着。
+const SHRINK_HEAD_CHARS = 600
+
+// 单次请求的安全上限：窗口减去实际发送的 max_tokens，再留一点余量吸收
+// tiktoken 与厂商分词器的口径差异。
+export function getRequestGuardLimit(opts: { contextWindow: number; maxOutputTokens?: number }): number {
+  const windowLimit = getEffectiveContextWindow(opts)
+  const margin = Math.min(REQUEST_GUARD_MARGIN_MAX, Math.floor(windowLimit * REQUEST_GUARD_MARGIN_RATIO))
+  return Math.max(1, windowLimit - margin)
+}
+
+// 廉价网关估算：CJK 按 1.2 token/字（实际约 0.7~1，故意偏高），其余按 3.2 字符/token
+// （实测代码 ~3.1、英文单词 ~5，取偏保守的一侧）。只用来判断「肯定没超、不必精确算」。
+function estimatePromptTokensGateway(messages: ChatMessage[]): number {
+  let cjk = 0
+  let others = 0
+  const scan = (text: string): void => {
+    for (const ch of text) {
+      const code = ch.codePointAt(0) ?? 0
+      if (code >= 0x4e00 && code <= 0x9fff) cjk++
+      else others++
+    }
+  }
+  for (const m of messages) {
+    scan(m.content ?? '')
+    for (const tc of m.toolCalls ?? []) scan(tc.name + (tc.arguments ?? ''))
+  }
+  return Math.ceil(cjk * 1.2 + others / 3.2)
+}
+
+export interface RequestGuardResult {
+  limit: number
+  before: number
+  after: number
+  shrunkToolResults: number
+  overLimit: boolean
+}
+
+/**
+ * 把一次请求（messages + tools）压到安全上限以内。
+ * 只动 role==='tool' 的旧消息内容，不改消息数量、不动 tool_use/tool_result 配对，
+ * 对 Anthropic 的严格校验也安全。调用方传入的是「即将发送的消息数组」，因其中的
+ * 消息对象与历史共享引用，降载结果会自然同步进历史。
+ */
+export function guardRequestSize(opts: {
+  messages: ChatMessage[]
+  toolDefs?: unknown
+  model: string
+  kind: ProviderKind
+  contextWindow: number
+  maxOutputTokens?: number
+  keepRecentToolResults?: number
+  // 跳过廉价快路径，强制精确核算（用于「服务端已经报超限」之后的补救重试）。
+  force?: boolean
+}): RequestGuardResult {
+  const limit = getRequestGuardLimit(opts)
+  const toolTokens = estimateToolDefsTokens(opts.toolDefs, opts.model, opts.kind)
+
+  if (!opts.force) {
+    const gateway = estimatePromptTokensGateway(opts.messages) + toolTokens
+    if (gateway < limit * GUARD_EXACT_COUNT_RATIO) {
+      return { limit, before: gateway, after: gateway, shrunkToolResults: 0, overLimit: false }
+    }
+  }
+
+  const before = countChatMessagesTokensFull(opts.messages, opts.model, opts.kind) + toolTokens
+  if (before <= limit) {
+    return { limit, before, after: before, shrunkToolResults: 0, overLimit: false }
+  }
+
+  const candidates: number[] = []
+  for (let i = 0; i < opts.messages.length; i++) {
+    if (opts.messages[i].role === 'tool' && (opts.messages[i].content?.length ?? 0) > SHRINK_MIN_CHARS) {
+      candidates.push(i)
+    }
+  }
+  const keep = opts.keepRecentToolResults ?? MIN_KEEP_RECENT_TOOL_RESULTS
+  const shrinkable = candidates.slice(0, Math.max(0, candidates.length - keep))
+
+  let total = before
+  let shrunk = 0
+  for (const idx of shrinkable) {
+    if (total <= limit) break
+    const m = opts.messages[idx]
+    const original = countChatMessagesTokensFull([m], opts.model, opts.kind)
+    const head = m.content.slice(0, SHRINK_HEAD_CHARS)
+    m.content =
+      `${head}\n\n（该工具输出过长（原始约 ${original} tokens），为留出上下文空间已省略绝大部分内容。` +
+      '需要完整内容时请重新执行对应工具调用或按路径重新读取。）'
+    total -= original - countChatMessagesTokensFull([m], opts.model, opts.kind)
+    shrunk++
+  }
+
+  return { limit, before, after: total, shrunkToolResults: shrunk, overLimit: total > limit }
 }

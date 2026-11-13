@@ -21,6 +21,13 @@ export function isRateLimitError(e: unknown): boolean {
   return e instanceof ProviderError && isRateLimitCode(e.code)
 }
 
+// 是否为「上下文/输出预算超限」类错误：prompt 与 max_tokens 共用窗口，超出即 400，
+// 压缩或就地降载后重试通常能恢复。QueryEngine 与子 Agent 共用同一判定，避免口径分叉。
+export function isContextLengthError(e: unknown): boolean {
+  const message = e instanceof Error ? e.message.toLowerCase() : String(e).toLowerCase()
+  return /context( window| length)?|prompt too long|maximum context|token limit|too many tokens/.test(message)
+}
+
 // 计算第 attempt 次重试前的退避毫秒数（attempt 从 1 开始）。
 // 限流用更长的线性退避（10s/20s/…，封顶 60s）以跨过限流窗口；
 // 其余瞬断用指数退避（2s/4s/…，封顶 30s）快速恢复。
