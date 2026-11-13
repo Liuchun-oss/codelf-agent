@@ -45,7 +45,9 @@ export const terminalTool: Tool<TerminalInput> = {
     const stdout = tailLines(res.stdout, MAX_STDOUT_TAIL_LINES)
     const parts: string[] = []
     parts.push(`$ ${input.command}`)
-    if (res.awaitingInput) {
+    if (res.cancelled === true) {
+      parts.push('(用户已停止，命令被终止，输出可能不完整)')
+    } else if (res.awaitingInput) {
       parts.push(
         '(命令疑似在等待交互式输入而被终止：此终端是非交互式的，无法接受 y/n、密码或回车等按键输入。请改用非交互式参数重试，例如加上 -y/--yes/--non-interactive，设置 CI=1 或 DEBIAN_FRONTEND=noninteractive，或用管道预先提供输入，如 "echo y | <命令>"。)'
       )
@@ -58,7 +60,10 @@ export const terminalTool: Tool<TerminalInput> = {
 
     return {
       content: parts.join('\n'),
-      isError: res.awaitingInput || (res.exitCode !== 0 && res.exitCode !== null) ? true : res.timedOut,
+      isError:
+        res.cancelled === true || res.awaitingInput || (res.exitCode !== 0 && res.exitCode !== null)
+          ? true
+          : res.timedOut,
       truncated: stdout.truncated || res.truncated
     }
   }

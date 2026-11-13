@@ -27,10 +27,18 @@ export interface HeadlessRunResult {
   truncated: boolean
   
   awaitingInput?: boolean
+  
+  // 因用户停止（AbortSignal）而终止，而非超时或正常结束。
+  cancelled?: boolean
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_MAX_OUTPUT = 1024 * 1024
+
+// kill 之后等子进程自然退出的宽限期。Windows 的 taskkill 是异步且无回执的，
+// 若被安全软件拦截或权限不足，子进程的 close 事件不会到来，工具调用就会一直挂着。
+// 超过这个时间强制收尾，保证「停止」一定能结束。
+const KILL_GRACE_MS = 1_500
 
 const INTERACTIVE_IDLE_MS = 10_000
 
@@ -136,13 +144,29 @@ export function killProcessTree(child: ChildProcess): void {
     return
   }
   if (process.platform === 'win32') {
+    // taskkill 异步且无回执：自身报错或非 0 退出（权限不足、被安全软件拦截）时
+    // 退回直接终止子进程，避免「进程没死 → close 不来 → 工具永远挂着」。
+    let fellBack = false
+    const fallbackKill = (): void => {
+      if (fellBack) return
+      fellBack = true
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        // 进程可能已自行退出，忽略。
+      }
+    }
     try {
-      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+      const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+      killer.on('error', fallbackKill)
+      killer.on('exit', (code) => {
+        if (code !== 0) fallbackKill()
+      })
       return
     } catch {
-      
+      // spawn taskkill 本身失败，落到下面的兜底。
     }
-    child.kill('SIGKILL')
+    fallbackKill()
     return
   }
   // POSIX：spawn 时加了 DETACHED_GROUP，子进程即组长，负 pid 精确命中它自己的组。
@@ -196,6 +220,21 @@ export function shellInvocation(command: string): { file: string; args: string[]
 export function runCommand(command: string, opts: HeadlessRunOptions): Promise<HeadlessRunResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const cap = opts.maxOutputChars ?? DEFAULT_MAX_OUTPUT
+
+  // 已取消：直接返回，不启动进程。AbortSignal 只在 abort 那一刻派发一次事件，
+  // 之后注册的监听器永远不会触发——若照常 spawn，这个子进程会完全无视本次停止，
+  // 一路跑满 timeoutMs（PowerShell 默认 120s、最长 10min），表现为「点了停止还在跑」。
+  if (opts.signal?.aborted) {
+    return Promise.resolve({
+      exitCode: null,
+      stdout: '',
+      stderr: '',
+      timedOut: false,
+      truncated: false,
+      cancelled: true
+    })
+  }
+
   const { file, args } = shellInvocation(command)
 
   return new Promise<HeadlessRunResult>((resolve) => {
@@ -204,8 +243,10 @@ export function runCommand(command: string, opts: HeadlessRunOptions): Promise<H
     let truncated = false
     let timedOut = false
     let awaitingInput = false
+    let cancelled = false
     let settled = false
     let idleTimer: ReturnType<typeof setTimeout> | null = null
+    let killGraceTimer: ReturnType<typeof setTimeout> | null = null
 
     const child = spawn(file, args, {
       cwd: opts.cwd,
@@ -265,46 +306,62 @@ export function runCommand(command: string, opts: HeadlessRunOptions): Promise<H
     const timer = setTimeout(() => {
       timedOut = true
       killProcessTree(child)
+      scheduleForceFinish()
     }, timeoutMs)
 
     const onAbort = (): void => {
+      cancelled = true
       killProcessTree(child)
+      scheduleForceFinish()
     }
-    opts.signal?.addEventListener('abort', onAbort, { once: true })
+    // 若 signal 在 spawn 与注册之间被 abort，addEventListener 不会再回调，
+    // 这里主动补一发。
+    if (opts.signal?.aborted) onAbort()
+    else opts.signal?.addEventListener('abort', onAbort, { once: true })
+
+    const buildResult = (extra?: Partial<HeadlessRunResult>): HeadlessRunResult => ({
+      exitCode: null,
+      stdout: decodePowerShellCliXml(stdout),
+      stderr: decodePowerShellCliXml(stderr),
+      timedOut,
+      truncated,
+      awaitingInput,
+      cancelled,
+      ...extra
+    })
 
     const finish = (result: HeadlessRunResult): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       if (idleTimer) clearTimeout(idleTimer)
+      if (killGraceTimer) clearTimeout(killGraceTimer)
       opts.signal?.removeEventListener('abort', onAbort)
       activeChildren.delete(child)
       resolve(result)
     }
 
+    // kill 之后的兜底收尾：killProcessTree 在 Windows 上是异步 taskkill、无回执，
+    // 子进程若没被杀掉，close 事件就不会到来，工具调用会一直挂到 timeoutMs。
+    function scheduleForceFinish(): void {
+      if (killGraceTimer) return
+      killGraceTimer = setTimeout(() => {
+        finish(buildResult({ killedBySignal: 'SIGKILL' }))
+      }, KILL_GRACE_MS)
+    }
+
     child.on('error', (err) => {
-      finish({
-        exitCode: null,
-        stdout: decodePowerShellCliXml(stdout),
-        stderr: decodePowerShellCliXml(
-          stderr + (stderr ? '\n' : '') + (err instanceof Error ? err.message : String(err))
-        ),
-        timedOut,
-        truncated,
-        awaitingInput
-      })
+      finish(
+        buildResult({
+          stderr: decodePowerShellCliXml(
+            stderr + (stderr ? '\n' : '') + (err instanceof Error ? err.message : String(err))
+          )
+        })
+      )
     })
 
     child.on('close', (code, signal) => {
-      finish({
-        exitCode: code,
-        stdout: decodePowerShellCliXml(stdout),
-        stderr: decodePowerShellCliXml(stderr),
-        timedOut,
-        killedBySignal: signal ?? undefined,
-        truncated,
-        awaitingInput
-      })
+      finish(buildResult({ exitCode: code, killedBySignal: signal ?? undefined }))
     })
   })
 }

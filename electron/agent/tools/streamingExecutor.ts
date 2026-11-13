@@ -111,6 +111,11 @@ async function runOne(
 }
 
 
+function cancelledResult(): ToolResult {
+  return { content: '用户已停止，本次工具调用未执行。', isError: true }
+}
+
+
 export async function executeToolBatch(
   calls: ToolCallRequest[],
   registry: ToolRegistry,
@@ -127,12 +132,23 @@ export async function executeToolBatch(
 
   const parallelLimit = resolveParallelLimit()
   for (let i = 0; i < parallel.length; i += parallelLimit) {
+    // 用户已停止：剩余调用不再执行，补齐占位结果（每个 tool_call 仍需对应 tool_result）。
+    if (ctx.signal?.aborted) {
+      for (const c of parallel.slice(i)) results.set(c.id, cancelledResult())
+      break
+    }
     const chunk = parallel.slice(i, i + parallelLimit)
     const settled = await Promise.all(chunk.map((c) => runOne(c, registry, ctx)))
     chunk.forEach((c, idx) => results.set(c.id, settled[idx]))
   }
 
   for (const c of serial) {
+    // 串行批次里每个工具都可能跑很久（如全盘递归搜索）。停止后必须立刻收尾，
+    // 否则它们会在已 abort 的状态下依次启动，各自跑满 timeout，表现为「停不下来」。
+    if (ctx.signal?.aborted) {
+      results.set(c.id, cancelledResult())
+      continue
+    }
     results.set(c.id, await runOne(c, registry, ctx))
   }
 
