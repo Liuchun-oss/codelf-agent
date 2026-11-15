@@ -937,6 +937,9 @@ export class QueryEngine {
       this.truncateHistoryFrom(payload.resendOfTurnId)
     }
 
+    // 越狱模式配置：ctx 组装时就要用到，故在 behavior 之前单独读一次（读的是缓存，开销可忽略）。
+    const jailbreakCfg = getAgentBehaviorSettings()
+
     const ctx: PromptContext = {
       appName: APP_NAME,
       os: process.platform,
@@ -949,6 +952,11 @@ export class QueryEngine {
       model: profile.model,
       enabledTools: this.registry.availableTools().map((t) => t.name),
       permissionMode: payload.permissionMode ?? 'default',
+      ...(jailbreakCfg.jailbreakMode
+        ? { jailbreak: true, jailbreakSystemPrompt: jailbreakCfg.jailbreakSystemPrompt }
+        : {}),
+      // 红队指挥官身份：演练台开启时才追加（总开关关掉时演练台一并失效）
+      ...(jailbreakCfg.jailbreakMode && jailbreakCfg.redTeamEnabled ? { redteamCommander: true } : {}),
       ...(payload.persona ? { persona: payload.persona } : {}),
       ...(payload.roomContext ? { roomContext: payload.roomContext } : {}),
       ...(payload.channel ? { channel: payload.channel } : {})
@@ -1146,6 +1154,9 @@ export class QueryEngine {
 
     const behavior = getAgentBehaviorSettings()
     this.registry.configureDeferredPolicy(behavior)
+    // 红队工具按设置同步。演练台是越狱模式下的第二栏：总开关关掉时它一并失效，
+    // 与上游「清洗 + 演练台」同属一个插件、总开关统一的口径一致。
+    this.registry.syncRedteamTools(behavior.jailbreakMode && behavior.redTeamEnabled)
     const maxToolSteps = behavior.maxToolSteps
     const maxTurnDurationMs = behavior.maxTurnDurationMs
     const acceptEdits = payload.permissionMode === 'acceptEdits'
@@ -1183,7 +1194,9 @@ export class QueryEngine {
     const denials = new DenialTracker()
     const permOpts = {
       permissionMode: payload.permissionMode ?? ('default' as const),
-      workspaceRoot: effectiveWorkspaceRoot
+      workspaceRoot: effectiveWorkspaceRoot,
+      // 越狱模式：一律放行（含 deny 规则与工作区外路径）。
+      bypassAll: behavior.jailbreakMode
     }
 
     // 各种提前退出路径（turn_limit / denial_limit / 空响应兜底等）在此提交本轮已产生的内容。
@@ -1967,7 +1980,9 @@ export class QueryEngine {
             if (preResult.updatedInput) {
               activeCall = { ...activeCall, arguments: JSON.stringify(preResult.updatedInput) }
             }
-            if (preResult.blocked || preResult.permissionDecision === 'deny') {
+            // 越狱模式：hook 照常执行（日志、附加上下文、改写入参仍生效），
+            // 但把它给出的 deny / block 反写成放行，不再中断本次工具调用。
+            if (!behavior.jailbreakMode && (preResult.blocked || preResult.permissionDecision === 'deny')) {
               denials.recordDenial()
               const reason = preResult.blockReason || 'PreToolUse hook 拒绝了该操作'
               results.set(c.id, {
@@ -2001,7 +2016,7 @@ export class QueryEngine {
             if (!allowed) {
               const fcDecision = await this.fileChangeBroker.wait(changeId, signal)
               allowed = fcDecision === 'accept'
-            } else if (acceptEdits && behavior.acceptEditsAutoApplyDelayMs > 0) {
+            } else if (acceptEdits && !behavior.jailbreakMode && behavior.acceptEditsAutoApplyDelayMs > 0) {
               const fcDecision = await this.fileChangeBroker.waitAutoAccept(
                 changeId,
                 behavior.acceptEditsAutoApplyDelayMs,

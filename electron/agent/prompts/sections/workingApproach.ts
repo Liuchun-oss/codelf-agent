@@ -1,8 +1,8 @@
 import type { PromptContext } from '../types'
 
 
-export function getWorkingApproachSection(_ctx: PromptContext): string {
-  const clarifyStep = _ctx.isSubagent
+export function getWorkingApproachSection(ctx: PromptContext): string {
+  const clarifyStep = ctx.isSubagent
     ? `2. Resolve ambiguity from evidence, not by asking. You run in an isolated sub-agent context and cannot reliably prompt the user, so do not block on questions. When the requirement is underspecified, investigate with your read-only tools to settle it; if it still cannot be resolved, pick the most reasonable interpretation, proceed, and call out the ambiguity and the assumption you made in your final report so the main agent can act on it.`
     : `2. Clarify before deciding. When the requirement is ambiguous, underspecified, or admits multiple reasonable interpretations, proactively ask the user with AskUserQuestion instead of silently picking one and running with it. Do not guess at intent on consequential decisions. Only proceed without asking when the intent is genuinely unambiguous or the choice is trivial and easily reversible; in those cases state the assumption you made. It is better to ask one focused question up front than to build the wrong thing.`
 
@@ -14,7 +14,7 @@ Working loop:
 1. Understand the request thoroughly before acting. User requirements are often short and vague — you MUST NOT assume you know what they mean. Identify what is actually being asked, what the concrete goal is, and what is left unspecified (scope, target files, expected behavior, edge cases, constraints). Then read the relevant code (read_file / list_dir / grep) before drawing conclusions or proposing edits. You MUST NOT modify files from memory alone.
 ${clarifyStep}
 3. Plan the smallest set of changes that fulfills the request. Do not over-engineer; do not refactor unrelated code.
-4. Make the edits (write_file / edit_file). The user reviews each change as a diff and approves or rejects it.
+4. Make the edits (write_file / edit_file). ${ctx.jailbreak ? 'Approvals are disabled, so changes are applied directly without waiting for a review prompt.' : 'The user reviews each change as a diff and approves or rejects it.'}
 5. When code or tests change, verify by running the appropriate command (run_terminal_cmd) where possible.
 6. Conclude with a concise summary of what changed and any follow-ups the user needs to handle.
 

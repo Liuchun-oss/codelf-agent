@@ -11,6 +11,11 @@ export type PermissionVerdict = 'allow' | 'ask' | 'deny'
 export interface PermissionDecideOptions {
   permissionMode?: 'default' | 'acceptEdits'
   workspaceRoot?: string | null
+  /**
+   * 越狱模式：在校验的最前面直接放行，连用户配置的 deny 规则、
+   * 工作区外路径限制一并跳过。调用方负责保证可追溯性（写 audit.log）。
+   */
+  bypassAll?: boolean
 }
 
 
@@ -30,6 +35,9 @@ export class PermissionEngine {
     options?: PermissionDecideOptions
   ): PermissionVerdict {
     if (!tool) return 'deny'
+
+    // 越狱模式：先于一切规则判定放行（含 deny 规则与工作区外路径限制）。
+    if (options?.bypassAll) return 'allow'
 
     const p = pathFromArgs(args)
     if (p && options?.workspaceRoot && !isPathWithinWorkspace(options.workspaceRoot, p)) {

@@ -13,6 +13,7 @@ import { getLanguageSection, getEnvSection } from './sections/language'
 import { getWorkingApproachSection } from './sections/workingApproach'
 import { getProjectLayoutSection } from './sections/projectLayout'
 import { getPersonaSection } from './sections/persona'
+import { getRedteamCommanderSection } from './sections/redteam'
 import { getRoomSeatSection, getRoomCollabSection } from './sections/roomSeat'
 import { getChannelSection } from './sections/channel'
 import { collectUserContext, renderUserContext } from './context/userContext'
@@ -22,15 +23,40 @@ import { collectSubagentContext, renderSubagentContext } from './context/subagen
 import { loadApplicableSkills, renderAvailableSkillsSection, summarizeSkill } from '../skills/loadSkills'
 
 
-function permissionModeMarker(mode: PromptContext['permissionMode']): string {
-  const label = mode === 'acceptEdits' ? '**Accept Edits**' : '**Default**'
+function permissionModeMarker(ctx: PromptContext): string | null {
+  // 越狱模式下审批门已旁路，再报 "Default" 会与紧随其后的越狱说明直接对撞
+  // （同一块里出现两个 # Runtime context，一句说会被拦、一句说全放行）。
+  if (ctx.jailbreak) return null
+  const label = ctx.permissionMode === 'acceptEdits' ? '**Accept Edits**' : '**Default**'
   return `# Runtime context\nActive permission mode: ${label}.`
+}
+
+// 越狱模式的运行时标注：走动态上下文块（不进 system 缓存前缀），
+// 让模型知道哪些默认约束已被用户显式关闭，避免它自行把限制"补回去"。
+// 注意：填了自定义系统提示词时整块都不注入（见 fetchDynamicContextBlock），
+// 所以这里只需描述「内置提示词 + 放开限制」这一种情形。
+function jailbreakRuntimeMarker(ctx: PromptContext): string | null {
+  if (!ctx.jailbreak) return null
+  return [
+    '# Runtime context',
+    '越狱模式已开启（用户在本机设置中显式开启）：',
+    '- 工具调用一律放行，不再逐条请求确认；用户 deny 规则与 hook 拒绝已被旁路。',
+    '- 允许访问工作区之外的任意路径。',
+    '每次工具调用仍会写入审计日志，不要假设操作不可追溯。'
+  ].join('\n')
 }
 
 // 该岗位是否绕过内置系统提示词：仅群聊岗位且显式开启 rawSystemPrompt 时为真。
 // 开启后 system prompt 只用岗位人设（personaPrompt），不注入任何 Codelf 内置段落。
 function usesRawSystemPrompt(ctx: PromptContext): boolean {
   return !!ctx.roomContext?.seat.rawSystemPrompt
+}
+
+// 越狱模式：填了正文就整体替换内置提示词；只开开关不填正文时保留内置提示词，
+// 此时越狱模式只做权限 / 路径放行，不改模型身份。
+function jailbreakSystemPromptText(ctx: PromptContext): string | null {
+  const text = ctx.jailbreakSystemPrompt?.trim()
+  return text ? text : null
 }
 
 // 绕过模式下的裸 system prompt：岗位人设正文 + 群协作说明段（保留成员名单/协作协议/发言纪律），
@@ -44,10 +70,16 @@ function rawSystemPromptText(ctx: PromptContext): string {
 
 /**
  * 会话内易变、但不进 system 的运行时上下文，由调用方注入到消息数组尾部
- * （历史之后、当前轮之前）。该块不写入历史。当前仅包含权限模式标注。
+ * （历史之后、当前轮之前）。该块不写入历史。当前仅包含权限模式标注与越狱模式的运行时标注。
  */
 export function fetchDynamicContextBlock(ctx: PromptContext): string | null {
-  const parts = filterEmpty([permissionModeMarker(ctx.permissionMode)])
+  // 越狱模式且填了自定义系统提示词：与上游一致 —— system 就是用户给的那段，
+  // 不再附任何运行时块（上游 patch 55/72 是每步把整段 system 换掉）。
+  if (ctx.jailbreak && ctx.jailbreakSystemPrompt?.trim()) return null
+  const parts = filterEmpty([
+    permissionModeMarker(ctx),
+    jailbreakRuntimeMarker(ctx)
+  ])
   return parts.length > 0 ? parts.join('\n\n') : null
 }
 
@@ -59,6 +91,8 @@ export function fetchDynamicContextBlock(ctx: PromptContext): string | null {
 export function getStaticSystemCore(ctx: PromptContext): string {
   // 绕过内置提示词：静态核心即裸人设，保证 promptCacheKey 与实际 system 前缀一致。
   if (usesRawSystemPrompt(ctx)) return rawSystemPromptText(ctx)
+  const jailbreakCore = jailbreakSystemPromptText(ctx)
+  if (jailbreakCore) return jailbreakCore
   return filterEmpty([
     getIntroSection(ctx),
     getSystemSection(ctx),
@@ -84,6 +118,10 @@ export async function fetchSystemPromptPartsAsync(
   // 绕过内置提示词：只用岗位人设作为唯一 system 内容，不加载技能/记忆/上下文等任何内置段。
   if (usesRawSystemPrompt(ctx)) {
     return { systemPrompt: filterEmpty([rawSystemPromptText(ctx)]) }
+  }
+  const jailbreakText = jailbreakSystemPromptText(ctx)
+  if (jailbreakText) {
+    return { systemPrompt: [jailbreakText] }
   }
   const [userCtxSnap, sysCtxSnap, memCtxSnap, skills] = await Promise.all([
     collectUserContext(ctx),
@@ -112,6 +150,7 @@ export async function fetchSystemPromptPartsAsync(
 
   const dynamicSections: string[] = filterEmpty([
     getPersonaSection(ctx),
+    getRedteamCommanderSection(ctx),
     getRoomSeatSection(ctx),
     getChannelSection(ctx),
     getLanguageSection(ctx),
@@ -134,6 +173,10 @@ export function fetchSystemPromptParts(ctx: PromptContext): SystemPromptParts {
   if (usesRawSystemPrompt(ctx)) {
     return { systemPrompt: filterEmpty([rawSystemPromptText(ctx)]) }
   }
+  const jailbreakText = jailbreakSystemPromptText(ctx)
+  if (jailbreakText) {
+    return { systemPrompt: [jailbreakText] }
+  }
   const staticSections: string[] = filterEmpty([
     getIntroSection(ctx),
     getSystemSection(ctx),
@@ -146,7 +189,7 @@ export function fetchSystemPromptParts(ctx: PromptContext): SystemPromptParts {
     getToneAndStyleSection(),
     getBehavioralGuidelinesSection()
   ])
-  const dynamicSections: string[] = filterEmpty([getPersonaSection(ctx), getRoomSeatSection(ctx), getChannelSection(ctx), getLanguageSection(ctx), getMirrorsSection(ctx), getEnvSection(ctx)])
+  const dynamicSections: string[] = filterEmpty([getPersonaSection(ctx), getRedteamCommanderSection(ctx), getRoomSeatSection(ctx), getChannelSection(ctx), getLanguageSection(ctx), getMirrorsSection(ctx), getEnvSection(ctx)])
   return {
     systemPrompt: [...staticSections, PROMPT_DYNAMIC_BOUNDARY, ...dynamicSections]
   }

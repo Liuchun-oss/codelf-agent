@@ -13,6 +13,8 @@ import { multiEditTool } from './multiEditTool'
 import { grepTool, codebaseSearchTool } from './searchTools'
 import { knowledgeSearchTool } from './knowledgeTools'
 import { probeStore as probeKnowledgeStore } from '../../services/knowledge/store'
+import { REDTEAM_TOOLS } from '../redteam/tools'
+import { probeRedteamStore } from '../redteam/store'
 import { globTool } from './globTool'
 import { terminalTool } from './terminalTools'
 import { powerShellTool } from './powerShellTool'
@@ -167,6 +169,32 @@ export class ToolRegistry {
   unregisterByPrefix(prefix: string): void {
     for (const name of [...this.tools.keys()]) {
       if (name.startsWith(prefix)) this.unregister(name)
+    }
+  }
+
+  /**
+   * 按设置同步红队工具（redteam_*）。幂等。
+   * 关闭时整族从工具表里摘掉 —— 这 57 个工具只在演练时有意义，常开会白烧 token。
+   *
+   * @param opts.deferred 是否作为延迟工具注册。主 Agent 用 true（靠 SearchExtraTools 发现，
+   *   省 token）；红队执行角色用 false —— 它们的提示词直接点名 `redteam_*`，
+   *   再让它们先搜一遍纯属多一轮往返。
+   */
+  syncRedteamTools(enabled: boolean, opts?: { deferred?: boolean }): void {
+    if (!enabled) {
+      this.unregisterByPrefix('redteam_')
+      return
+    }
+    if (!probeRedteamStore().ok) {
+      this.unregisterByPrefix('redteam_')
+      return
+    }
+    const deferred = opts?.deferred ?? true
+    for (const tool of REDTEAM_TOOLS) {
+      if (this.tools.has(tool.name)) continue
+      // 非延迟注册时同时置 alwaysLoad —— 否则 getPolicy() 取到 non-core/auto
+      // 时 isDeferredTool 仍会把它们判成延迟工具，子 Agent 又要先搜一轮才能用。
+      this.register(deferred ? { ...tool, deferred: true } : { ...tool, deferred: false, alwaysLoad: true })
     }
   }
 

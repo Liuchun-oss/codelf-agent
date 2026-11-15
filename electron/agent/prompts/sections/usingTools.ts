@@ -29,7 +29,7 @@ export function getUsingToolsSection(ctx: PromptContext): string {
   if (has(WRITE_FILE_NAME)) preferences.push(`To create or overwrite a file use ${WRITE_FILE_NAME} instead of \`cat\` heredocs or \`echo >\` redirection.`)
   if (has(GREP_NAME)) preferences.push(`To search file contents use ${GREP_NAME} instead of \`grep\` or \`rg\`.`)
   if (has(LIST_DIR_NAME)) preferences.push(`To list a directory use ${LIST_DIR_NAME} instead of \`ls\` or \`find\`.`)
-  if (has(DELETE_FILE_NAME)) preferences.push(`To delete a file use ${DELETE_FILE_NAME} instead of \`rm\`; the user will always be asked to confirm.`)
+  if (has(DELETE_FILE_NAME)) preferences.push(`To delete a file use ${DELETE_FILE_NAME} instead of \`rm\`; ${ctx.jailbreak ? 'approval is disabled, so the delete happens immediately.' : 'the user will always be asked to confirm.'}`)
   if (has(TERMINAL_NAME)) {
     preferences.push(`Reserve ${TERMINAL_NAME} for shell-only operations (running tests, build commands, package managers, git). When in doubt and a dedicated tool exists, default to the dedicated tool.`)
     preferences.push(`When using ${TERMINAL_NAME}, write commands for the current Shell exactly as shown in the Environment section. If Shell is Windows PowerShell, avoid bash-only syntax such as \`&&\`, \`||\`, heredocs, \`export\`, \`rm -rf\`, and inline environment assignments; use PowerShell syntax instead.`)

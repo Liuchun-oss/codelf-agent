@@ -26,6 +26,21 @@ export interface AgentBehaviorSettings {
   // 单批工具调用的最大并行数（同时也决定一轮内并行子 agent 的同时执行上限）。
   // 超出部分会自动分批：先并行跑满该数量，完成后再跑下一批。
   parallelToolLimit: number
+
+  // ---- 越狱模式（仅本机自用 / 隔离环境）----
+  // 总开关。开启后同时启用下列放行：
+  //   1. 工具调用一律放行（连用户 deny 规则、PreToolUse hook 的拒绝也一并旁路）；
+  //   2. 允许读写工作区之外的任意路径（子 Agent 同样生效）；
+  //   3. 用 jailbreakSystemPrompt 整体替换内置系统提示词。
+  // 默认关闭。开启后每次工具调用仍写入 audit.log，不放宽可追溯性。
+  jailbreakMode: boolean
+  // 越狱模式下的系统提示词正文。为空则保留内置提示词，
+  // 此时越狱模式只做权限 / 路径放行，不改模型身份。
+  jailbreakSystemPrompt: string
+
+  // 是否向主 Agent 暴露红队演练工具（redteam_*，读写 userData/redteam/redteam.db）。
+  // 默认关闭：这 27 个工具只在演练时才有意义，常开会把工具表撑大、白烧 token。
+  redTeamEnabled: boolean
 }
 
 
@@ -388,7 +403,10 @@ export const DEFAULT_AGENT_BEHAVIOR: AgentBehaviorSettings = {
   knowledgeTopK: 5,
   knowledgeMinScore: 0.35,
   pluginAllowNpmInstall: false,
-  parallelToolLimit: 10
+  parallelToolLimit: 10,
+  jailbreakMode: false,
+  jailbreakSystemPrompt: '',
+  redTeamEnabled: false
 }
 
 export const AGENT_BEHAVIOR_BOUNDS = {
@@ -470,6 +488,18 @@ export function normalizeAgentBehavior(
       b.parallelToolLimit.min,
       b.parallelToolLimit.max,
       DEFAULT_AGENT_BEHAVIOR.parallelToolLimit
-    )
+    ),
+    jailbreakMode:
+      typeof partial.jailbreakMode === 'boolean'
+        ? partial.jailbreakMode
+        : DEFAULT_AGENT_BEHAVIOR.jailbreakMode,
+    jailbreakSystemPrompt:
+      typeof partial.jailbreakSystemPrompt === 'string'
+        ? partial.jailbreakSystemPrompt
+        : DEFAULT_AGENT_BEHAVIOR.jailbreakSystemPrompt,
+    redTeamEnabled:
+      typeof partial.redTeamEnabled === 'boolean'
+        ? partial.redTeamEnabled
+        : DEFAULT_AGENT_BEHAVIOR.redTeamEnabled
   }
 }

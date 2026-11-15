@@ -31,6 +31,7 @@ import {
 } from '../tools/resultStorage'
 import { currentShellName } from '../../services/headlessTerminal'
 import { getAgentDefinition, listAgentDefinitions, summarizeAgentDefinition, type AgentDefinition } from './agentDefinitions'
+import { getAgentBehaviorSettings } from '../settings/agentSettingsStore'
 
 export const RUN_SUBAGENT_NAME = 'run_subagent'
 
@@ -379,6 +380,12 @@ function subagentRegistry(definition: AgentDefinition): ToolRegistry {
     if (denied.has(toolName)) continue
     registry.register(tool)
   }
+  // 红队执行角色必须能落库，而 redteam_* 工具不在内置注册表里（主 Agent 是运行时挂的）。
+  // 只给 redteam-* 角色挂，且注册为非延迟：它们的提示词直接点名工具，不该再多搜一轮。
+  if (definition.id.startsWith('redteam-')) {
+    const b = getAgentBehaviorSettings()
+    if (b.jailbreakMode && b.redTeamEnabled) registry.syncRedteamTools(true, { deferred: false })
+  }
   return registry
 }
 
@@ -448,6 +455,7 @@ async function executeSubagentToolBatch(
   ctx: ToolContext,
   permissionEngine: PermissionEngine,
   permissionMode: 'default' | 'acceptEdits',
+  bypassAll: boolean,
   fileChanges: Map<string, AppliedFileChange>
 ): Promise<Map<string, ToolResult>> {
   const gated: ToolCallRequest[] = []
@@ -457,7 +465,8 @@ async function executeSubagentToolBatch(
     if (tool && !tool.readOnly) {
       const verdict = permissionEngine.decide(tool, parseToolArguments(call.arguments), {
         permissionMode,
-        workspaceRoot: ctx.workspaceRoot
+        workspaceRoot: ctx.workspaceRoot,
+        bypassAll
       })
       if (verdict !== 'allow') {
         denied.set(call.id, {
@@ -583,6 +592,9 @@ export async function runReadOnlySubagent(
   const permissionEngine = new PermissionEngine()
   permissionEngine.loadRules(options.workspaceRoot)
   const permissionMode = options.permissionMode ?? 'default'
+  // 子 Agent 继承主会话的越狱模式：权限放行同样生效，"写工作区外被拒绝"不再拦住它。
+  const subagentBehavior = getAgentBehaviorSettings()
+  const bypassAll = subagentBehavior.jailbreakMode
   const ctx: PromptContext = {
     appName: APP_NAME,
     os: process.platform,
@@ -593,6 +605,9 @@ export async function runReadOnlySubagent(
     model: profile.model,
     enabledTools: registry.all().map((t) => t.name),
     permissionMode: 'default',
+    ...(subagentBehavior.jailbreakMode
+      ? { jailbreak: true, jailbreakSystemPrompt: subagentBehavior.jailbreakSystemPrompt }
+      : {}),
     isSubagent: true
   }
 
@@ -779,6 +794,7 @@ export async function runReadOnlySubagent(
         toolCtx,
         permissionEngine,
         permissionMode,
+        bypassAll,
         fileChanges
       )
       const budgetedResults = externalizeToolResultsWithState(calls, results, contentReplacementState)

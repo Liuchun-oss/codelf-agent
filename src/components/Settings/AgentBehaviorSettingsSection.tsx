@@ -59,6 +59,83 @@ export default function AgentBehaviorSettingsSection(): JSX.Element {
 
   return (
     <div className="settings-section-page">
+      <SettingsGroup label="越狱模式（总开关）">
+        <SettingsRow
+          title="开启越狱模式"
+          description="总开关。关闭时下面「清洗」「演练台」两栏全部不生效，行为与应用原版一致。开启即生效，无需任何额外配置：工具调用一律放行（连你配置的 deny 规则、PreToolUse hook 的拒绝一起旁路），允许读写工作区之外的任意路径，子 Agent 同样生效。每次调用仍写入审计日志。"
+          control={
+            <SettingsSwitch
+              checked={settings.jailbreakMode}
+              disabled={saving}
+              onChange={(v) => {
+                setSettings((s) => (s ? { ...s, jailbreakMode: v } : s))
+                void save({ jailbreakMode: v })
+              }}
+            />
+          }
+        />
+        {settings.jailbreakMode && (
+          <div className="settings-inline-alert">
+            越狱模式已开启：审批确认、deny 规则、hook 拦截与工作区路径限制全部失效，Agent
+            会以你的账号权限直接操作本机。只在隔离环境或你完全信任的任务中使用。
+          </div>
+        )}
+      </SettingsGroup>
+
+      {settings.jailbreakMode && (
+        <SettingsGroup label="├ 清洗（宿主层放行）">
+          <SettingsRow
+            title="当前状态：已清洗"
+            description="审批门、工作区路径围栏、PreToolUse hook 的 deny、以及提示词里的审批/拒绝话术都已放开。这一栏不需要额外配置，也不需要你写任何提示词。"
+            control={<span className="settings-actions-msg">生效中</span>}
+          />
+          <SettingsRow
+            title="自定义系统提示词（可选，通常不用填）"
+            description="留空即可：清洗开箱就是完整的。只有当你想把模型的身份/说话方式彻底换成自己写的一份时，才填这里；一旦填写，内置系统提示词会被你这段整体替换，动态运行时块也不再注入。"
+            stacked
+            control={
+              <textarea
+                rows={12}
+                spellCheck={false}
+                disabled={saving}
+                placeholder="留空 = 使用内置的越狱版提示词（推荐，无需填写）。&#10;只有想彻底替换内置提示词时才在这里写。"
+                value={settings.jailbreakSystemPrompt}
+                onChange={(e) => {
+                  const value = e.target.value
+                  setSettings((s) => (s ? { ...s, jailbreakSystemPrompt: value } : s))
+                }}
+                onBlur={() => void save({ jailbreakSystemPrompt: settings.jailbreakSystemPrompt })}
+              />
+            }
+          />
+        </SettingsGroup>
+      )}
+
+      {settings.jailbreakMode && (
+        <SettingsGroup label="└ 演练台（红队资产库）">
+          <SettingsRow
+            title="启用红队演练工具箱"
+            description="开启后主 Agent 会挂上 57 个 redteam_* 工具（资产测绘/漏洞/凭据/WebShell/隧道/证据截图/攻击链/计分/POC 知识库/报告），额外暴露 5 个执行角色子 Agent，并追加指挥官提示词。数据按靶标分库存在本机 userData/redteam/，不碰工作区文件。"
+            control={
+              <SettingsSwitch
+                checked={settings.redTeamEnabled}
+                disabled={saving}
+                onChange={(v) => {
+                  setSettings((s) => (s ? { ...s, redTeamEnabled: v } : s))
+                  void save({ redTeamEnabled: v })
+                }}
+              />
+            }
+          />
+          {settings.redTeamEnabled && (
+            <div className="settings-inline-alert">
+              演练台只在授权范围内使用：你自有并管理的资产、有书面授权的评估，或离线靶场。对第三方系统的
+              未授权扫描/入侵在多数地区属违法，范围由你负责。
+            </div>
+          )}
+        </SettingsGroup>
+      )}
+
       <SettingsGroup label="执行边界">
         <SettingsRow
           title="单轮最大工具步数"

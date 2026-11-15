@@ -2,6 +2,9 @@ import { existsSync, readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 import type { AgentDefinitionSummary } from '@shared/agentTypes'
 import { DATA_DIR_NAME } from '@shared/appConfig'
+import { getAgentBehaviorSettings } from '../settings/agentSettingsStore'
+import { REDTEAM_ROLE_LABELS } from '../redteam/prompts.data'
+import { readRolePrompt } from '../redteam/store'
 
 export type AgentDefinitionSource = 'built-in' | 'project'
 
@@ -199,11 +202,42 @@ export function loadProjectAgentDefinitions(workspaceRoot: string | null | undef
   return agents
 }
 
+/**
+ * 红队五个执行角色。角色正文见 redteam/prompts.data.ts，
+ * 这里仅把它们接成可派活的子 Agent。
+ *
+ * 只在「红队演练」开关打开时才会出现在 listAgentDefinitions 里 —— 平时不占提示词空间。
+ * 五个角色都是叶子节点（不能再往下派活），所以 deniedTools 里挡掉 run_subagent。
+ */
+const REDTEAM_AGENT_IDS = ['recon', 'assess', 'vuln-scan', 'exploit', 'internal'] as const
+
+function redteamAgentDefinitions(): Record<string, AgentDefinition> {
+  const out: Record<string, AgentDefinition> = {}
+  for (const code of REDTEAM_AGENT_IDS) {
+    out[`redteam-${code}`] = {
+      id: `redteam-${code}`,
+      title: `Red team · ${REDTEAM_ROLE_LABELS[code]}`,
+      description: `红队演练执行角色（${REDTEAM_ROLE_LABELS[code]}）。只在授权演练中使用：目标是你自有资产、有书面授权的评估，或离线靶场。`,
+      source: 'built-in',
+      readOnly: false,
+      // 每靶标可覆盖：优先读 <靶标>/agents/<code>.md，没有就用内置默认。
+      prompt: readRolePrompt(code).text,
+      deniedTools: NO_RECURSIVE_SUBAGENT
+    }
+  }
+  return out
+}
+
 export function listAgentDefinitions(workspaceRoot?: string | null): AgentDefinition[] {
   const builtIns = Object.values(BUILT_IN_AGENT_DEFINITIONS)
+  // 红队角色按开关动态挂载，关闭时不污染子 Agent 清单。
+  const redteam = getAgentBehaviorSettings().jailbreakMode && getAgentBehaviorSettings().redTeamEnabled
+    ? Object.values(redteamAgentDefinitions())
+    : []
   const projects = loadProjectAgentDefinitions(workspaceRoot)
   const byId = new Map<string, AgentDefinition>()
   for (const agent of builtIns) byId.set(agent.id, agent)
+  for (const agent of redteam) byId.set(agent.id, agent)
   for (const agent of projects) byId.set(agent.id, agent)
   return [...byId.values()]
 }

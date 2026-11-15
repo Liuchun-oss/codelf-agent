@@ -20,6 +20,25 @@ export interface PromptContext {
   enabledTools: string[]
   
   permissionMode?: 'default' | 'acceptEdits'
+
+  /**
+   * 越狱模式是否开启。开启后工具调用一律放行（含 deny 规则）、
+   * 允许访问工作区外路径、PreToolUse hook 的 deny 被反写为放行。
+   */
+  jailbreak?: boolean
+
+  /**
+   * 红队指挥官模式。开启后向主 Agent 追加指挥官提示词（详见 sections/redteam.ts）。
+   * 子 Agent 不设此项 —— 它们用自己的角色提示词。
+   */
+  redteamCommander?: boolean
+
+  /**
+   * 越狱模式下的自定义系统提示词正文。非空时整体替换内置系统提示词，
+   * 只保留该正文（与群聊岗位的 rawSystemPrompt 同机制，但作用于全部入口）。
+   * 仅当设置里开启越狱模式、且填了正文时才会被填入。
+   */
+  jailbreakSystemPrompt?: string
   
   /** 是否运行在子 Agent 上下文中。主 Agent 不设或为 false。 */
   isSubagent?: boolean
