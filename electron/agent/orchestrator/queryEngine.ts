@@ -76,7 +76,7 @@ import { noteAgentWrite } from '../../services/localWriteRegistry'
 import { getAgentBehaviorSettings, getMemorySettings } from '../settings/agentSettingsStore'
 import { buildContextBreakdown } from '../context/contextBreakdown'
 import { lookupModelMetadata, isKimiReasoningModel } from '../providers/modelMetadata'
-import { maybeCompactTurns, estimateSystemTokens, estimateToolDefsTokens, guardRequestSize } from './compact'
+import { maybeCompactTurns, estimateSystemTokens, estimateToolDefsTokens, guardRequestSize, updateEstimateMultiplier, DEFAULT_ESTIMATE_MULTIPLIER } from './compact'
 import { runCheckpointWriter, buildRebuildInjection } from '../memory/writer'
 import { detectTaskCompletion, buildNoteReminder, isMemoryWorthyTurn } from './taskCompletionDetector'
 import { recordAudit } from './audit'
@@ -363,6 +363,9 @@ export class QueryEngine {
   private fileChangeHistory = new FileChangeHistory()
   private hookRunner = new HookRunner()
   private compactFailureCount = 0
+  // 本地分词器相对服务端 tokenizer 的口径校正系数（见 updateEstimateMultiplier）。
+  // 跨轮保留：一轮里学到偏差，整会话都受益。
+  private promptTokenRatio = DEFAULT_ESTIMATE_MULTIPLIER
   private snippedTurnIds = new Set<string>()
   private contentReplacementState: ContentReplacementState = createContentReplacementState()
   private workspaceRootOverride: string | null = null
@@ -1174,6 +1177,8 @@ export class QueryEngine {
     
     
     let contentReplacementCommitted = false
+    // 本轮最近一次请求的精确本地估算（用于和服务端真实 prompt_tokens 校准分词口径）。
+    let lastEstimatedPromptTokens = 0
     let hasAttemptedReactiveCompact = false
     let lengthContinuationCount = 0
     const MAX_LENGTH_CONTINUATIONS = 8
@@ -1421,20 +1426,25 @@ export class QueryEngine {
           model: profile.model,
           kind: profile.kind,
           contextWindow,
-          maxOutputTokens: profile.maxOutputTokens
+          maxOutputTokens: profile.maxOutputTokens,
+          estimateMultiplier: this.promptTokenRatio
         })
+        // 供校准用：记下这次请求的精确本地估算，等本轮流式回来拿到真实 prompt_tokens 后比对。
+        lastEstimatedPromptTokens = requestGuard.exact ? requestGuard.before : 0
         if (requestGuard.shrunkToolResults > 0) {
           recordDebugEvent({
             kind: 'compact',
             sessionId: payload.sessionId || 'default',
             turnId,
             label: profile.model,
-            detail: `tool-result shrink (before=${requestGuard.before}, after=${requestGuard.after}, limit=${requestGuard.limit}, shrunk=${requestGuard.shrunkToolResults})`
+            detail: `tool-result shrink (before=${requestGuard.before}, after=${requestGuard.after}, limit=${requestGuard.limit}, shrunk=${requestGuard.shrunkToolResults}, ratio=${requestGuard.multiplier}${requestGuard.overLimit ? ', STILL_OVER' : ''})`
           })
           yield {
             type: 'notice',
             turnId,
-            message: `上下文接近上限，已省略 ${requestGuard.shrunkToolResults} 条较早的工具输出以腾出空间（需要时我会重新读取）。`
+            message: requestGuard.overLimit
+              ? `上下文已超出可用窗口，已省略 ${requestGuard.shrunkToolResults} 条较早的工具输出；如果本轮仍然失败，请用 /compact 手动压缩后再试。`
+              : `上下文接近上限，已省略 ${requestGuard.shrunkToolResults} 条较早的工具输出以腾出空间（需要时我会重新读取）。`
           }
         }
 
@@ -1521,6 +1531,27 @@ export class QueryEngine {
                 }
               }
               usage = mergeRoundUsageIntoTurn(usage, roundUsage)
+              // 用服务端回报的真实 prompt_tokens 校准本地分词口径（仅当本轮走的是精确计数）。
+              // 这一步是「偶发 400」的根治点：本地 tiktoken 会比服务端少算约 2%，
+              // 固定 margin 只能猜；拿真实值校准后，放行线自动贴合该通道的真实口径。
+              if (roundUsage.inputTokens > 0 && lastEstimatedPromptTokens > 0) {
+                const next = updateEstimateMultiplier({
+                  current: this.promptTokenRatio,
+                  observedPromptTokens: roundUsage.inputTokens,
+                  estimatedPromptTokens: lastEstimatedPromptTokens
+                })
+                if (next !== this.promptTokenRatio) {
+                  recordDebugEvent({
+                    kind: 'compact',
+                    sessionId: payload.sessionId || 'default',
+                    turnId,
+                    label: profile.model,
+                    detail: `token-ratio calibrated ${this.promptTokenRatio} → ${next} (observed=${roundUsage.inputTokens}, estimated=${lastEstimatedPromptTokens})`
+                  })
+                  this.promptTokenRatio = next
+                }
+              }
+              lastEstimatedPromptTokens = 0
               roundText = carryText + roundText
               streamDone = true
             } catch (retryErr) {
@@ -1581,6 +1612,7 @@ export class QueryEngine {
                 kind: profile.kind,
                 contextWindow,
                 maxOutputTokens: profile.maxOutputTokens,
+                estimateMultiplier: this.promptTokenRatio,
                 force: true
               })
               if (shrunken.shrunkToolResults > 0) {

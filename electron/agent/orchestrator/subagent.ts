@@ -13,7 +13,7 @@ import { fetchSystemPromptPartsAsync, assembleSystemMessage, fetchDynamicContext
 import type { PromptContext } from '../prompts/types'
 import { countChatMessagesTokens, countTokens } from '../context/tokenCounter'
 import { lookupModelMetadata } from '../providers/modelMetadata'
-import { guardRequestSize } from './compact'
+import { guardRequestSize, DEFAULT_ESTIMATE_MULTIPLIER } from './compact'
 import { buildDefaultRegistry, ToolRegistry } from '../tools/registry'
 import type { Tool, ToolContext, ToolResult } from '../tools/types'
 import { ToolCallAccumulator, executeToolBatch, parseToolArguments } from '../tools/streamingExecutor'
@@ -648,6 +648,9 @@ export async function runReadOnlySubagent(
   // 取同一套窗口元数据，供每轮请求前的哨兵使用。
   const contextWindow =
     profile.contextWindow ?? lookupModelMetadata(profile.kind, profile.model).contextWindow ?? 500_000
+  // 与主会话同口径：本地分词器 vs 服务端 tokenizer 的校正系数。子 Agent 生命周期短、
+  // 拿不到稳定的单次 usage 样本，直接用保守初值（不在此处在标定，避免噪声）。 
+  const promptTokenRatio = DEFAULT_ESTIMATE_MULTIPLIER
   const messages: ChatMessage[] = [
     ...(options.initialMessages ?? []),
     { role: 'user', content: makeSubagentPrompt(input, definition, forkContext, options.handoffInputs) }
@@ -687,7 +690,8 @@ export async function runReadOnlySubagent(
         model: profile.model,
         kind: profile.kind,
         contextWindow,
-        maxOutputTokens: profile.maxOutputTokens
+        maxOutputTokens: profile.maxOutputTokens,
+        estimateMultiplier: promptTokenRatio
       })
       let contextShrinkAttempted = false
       const handleChunk = (chunk: StreamChunk): void => {
@@ -738,6 +742,7 @@ export async function runReadOnlySubagent(
               kind: profile.kind,
               contextWindow,
               maxOutputTokens: profile.maxOutputTokens,
+              estimateMultiplier: promptTokenRatio,
               force: true
             })
             if (retryGuard.shrunkToolResults > 0) continue

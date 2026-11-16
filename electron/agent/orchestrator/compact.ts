@@ -420,8 +420,17 @@ export function computeKeepRecentTurnsByBudget(opts: {
 // 做一次廉价预估，超出就地把最老的工具输出换成占位符（保留最近几条），换回空间。
 // ---------------------------------------------------------------------------
 
+// margin 必须按比例算，且不能封顶。历史观测：本地 tiktoken 相比服务端 tokenizer
+// 会少算约 2.1%，而这个偏差随上下文线性增长（1M 窗口下约 2 万 token）——
+// 之前用「20k 封顶」的 margin 恰好被偏差吃干，于是本地算着刚好放行、服务端已经越界。
+// 现在取「窗口 5% 与 20k 中更大者」：1M 窗口下约 49k，足够覆盖实测偏差。
 const REQUEST_GUARD_MARGIN_RATIO = 0.05
-const REQUEST_GUARD_MARGIN_MAX = 20_000
+const MIN_GUARD_MARGIN_TOKENS = 8_000
+// margin 不得占过有效窗口的 10%，否则小窗口（如 32k 配 16k 输出）会被挤到没地方放 prompt。
+const MAX_GUARD_MARGIN_RATIO = 0.1
+// 本地估算 → 服务端真实值的校正系数。初始值取保守略大，之后用真实 usage 校准。
+export const DEFAULT_ESTIMATE_MULTIPLIER = 1.05
+export const MAX_ESTIMATE_MULTIPLIER = 1.6
 // 字符级网关估算相对上限留到这个比例以下时，直接放行、不做精确分词——
 // 1M token 的精确分词约 0.4s，每轮都跑会拖慢工具循环。0.75 配合下方按代码调过的
 // 除数（实测代码 ~3.1 字符/token），最坏也只到真实值 78% 的上限，留足余量。
@@ -433,12 +442,40 @@ const SHRINK_MIN_CHARS = 800
 // 占位符里保留的开头长度：前几百字符常含文件路径/预览，值得留着。
 const SHRINK_HEAD_CHARS = 600
 
-// 单次请求的安全上限：窗口减去实际发送的 max_tokens，再留一点余量吸收
-// tiktoken 与厂商分词器的口径差异。
-export function getRequestGuardLimit(opts: { contextWindow: number; maxOutputTokens?: number }): number {
+// 单次请求的安全上限（本地计数口径）：窗口减去实际发送的 max_tokens，再留 margin
+// 吸收分词器口径差异，最后按实测校正系数折算回本地估算口径。
+export function getRequestGuardLimit(opts: {
+  contextWindow: number
+  maxOutputTokens?: number
+  estimateMultiplier?: number
+}): number {
   const windowLimit = getEffectiveContextWindow(opts)
-  const margin = Math.min(REQUEST_GUARD_MARGIN_MAX, Math.floor(windowLimit * REQUEST_GUARD_MARGIN_RATIO))
-  return Math.max(1, windowLimit - margin)
+  const margin = Math.min(
+    Math.max(MIN_GUARD_MARGIN_TOKENS, Math.floor(windowLimit * REQUEST_GUARD_MARGIN_RATIO)),
+    Math.floor(windowLimit * MAX_GUARD_MARGIN_RATIO)
+  )
+  const safety = Math.max(1, windowLimit - margin)
+  // 真实值 ≈ 本地估算 × multiplier，故本地放行线要除以 multiplier。
+  const multiplier = Math.max(1, opts.estimateMultiplier ?? 1)
+  return Math.max(1, Math.floor(safety / multiplier))
+}
+
+// 用服务端回报的真实 prompt_tokens 反向校准本地估算。
+// 只在「服务端比本地算得更多」时上调（保守）；单调不降，避免偶发偏低把安全线放得过宽。
+// 指数平滑吃掉多轮累加、缓存命中口径等噪声。
+export function updateEstimateMultiplier(opts: {
+  current: number
+  observedPromptTokens?: number
+  estimatedPromptTokens?: number
+}): number {
+  const { current } = opts
+  const observed = opts.observedPromptTokens ?? 0
+  const estimated = opts.estimatedPromptTokens ?? 0
+  if (observed <= 0 || estimated <= 0) return current
+  const measured = observed / estimated
+  if (!Number.isFinite(measured) || measured <= 1) return current
+  const target = Math.min(MAX_ESTIMATE_MULTIPLIER, Math.max(current, measured))
+  return Math.round((current * 0.5 + target * 0.5) * 1000) / 1000
 }
 
 // 廉价网关估算：CJK 按 1.2 token/字（实际约 0.7~1，故意偏高），其余按 3.2 字符/token
@@ -466,6 +503,9 @@ export interface RequestGuardResult {
   after: number
   shrunkToolResults: number
   overLimit: boolean
+  // before 是否为精确分词结果（快路径返回的是字符级估算，不可用于校准系数）。
+  exact: boolean
+  multiplier: number
 }
 
 /**
@@ -482,46 +522,54 @@ export function guardRequestSize(opts: {
   contextWindow: number
   maxOutputTokens?: number
   keepRecentToolResults?: number
+  estimateMultiplier?: number
   // 跳过廉价快路径，强制精确核算（用于「服务端已经报超限」之后的补救重试）。
   force?: boolean
 }): RequestGuardResult {
-  const limit = getRequestGuardLimit(opts)
+  const multiplier = Math.max(1, opts.estimateMultiplier ?? 1)
+  const limit = getRequestGuardLimit({ ...opts, estimateMultiplier: multiplier })
   const toolTokens = estimateToolDefsTokens(opts.toolDefs, opts.model, opts.kind)
 
   if (!opts.force) {
     const gateway = estimatePromptTokensGateway(opts.messages) + toolTokens
     if (gateway < limit * GUARD_EXACT_COUNT_RATIO) {
-      return { limit, before: gateway, after: gateway, shrunkToolResults: 0, overLimit: false }
+      return { limit, before: gateway, after: gateway, shrunkToolResults: 0, overLimit: false, exact: false, multiplier }
     }
   }
 
   const before = countChatMessagesTokensFull(opts.messages, opts.model, opts.kind) + toolTokens
   if (before <= limit) {
-    return { limit, before, after: before, shrunkToolResults: 0, overLimit: false }
+    return { limit, before, after: before, shrunkToolResults: 0, overLimit: false, exact: true, multiplier }
   }
 
-  const candidates: number[] = []
-  for (let i = 0; i < opts.messages.length; i++) {
-    if (opts.messages[i].role === 'tool' && (opts.messages[i].content?.length ?? 0) > SHRINK_MIN_CHARS) {
-      candidates.push(i)
-    }
-  }
   const keep = opts.keepRecentToolResults ?? MIN_KEEP_RECENT_TOOL_RESULTS
-  const shrinkable = candidates.slice(0, Math.max(0, candidates.length - keep))
+  // 逐级加压：先保留最近 keep 条，仍然超就把保留数降到 1、最后降到 0。
+  // 降载后的占位符变短（低于 SHRINK_MIN_CHARS），天然不会被重复选中，循环必然收敛。
+  const keepSequence = [...new Set([keep, 1, 0])].filter((n) => n <= keep)
 
   let total = before
   let shrunk = 0
-  for (const idx of shrinkable) {
+  for (const keepNow of keepSequence) {
     if (total <= limit) break
-    const m = opts.messages[idx]
-    const original = countChatMessagesTokensFull([m], opts.model, opts.kind)
-    const head = m.content.slice(0, SHRINK_HEAD_CHARS)
-    m.content =
-      `${head}\n\n（该工具输出过长（原始约 ${original} tokens），为留出上下文空间已省略绝大部分内容。` +
-      '需要完整内容时请重新执行对应工具调用或按路径重新读取。）'
-    total -= original - countChatMessagesTokensFull([m], opts.model, opts.kind)
-    shrunk++
+    const candidates: number[] = []
+    for (let i = 0; i < opts.messages.length; i++) {
+      const m = opts.messages[i]
+      if (m.role === 'tool' && (m.content?.length ?? 0) > SHRINK_MIN_CHARS) candidates.push(i)
+    }
+    const shrinkable = candidates.slice(0, Math.max(0, candidates.length - keepNow))
+    if (shrinkable.length === 0) continue
+    for (const idx of shrinkable) {
+      if (total <= limit) break
+      const m = opts.messages[idx]
+      const original = countChatMessagesTokensFull([m], opts.model, opts.kind)
+      const head = m.content.slice(0, SHRINK_HEAD_CHARS)
+      m.content =
+        `${head}\n\n（该工具输出过长（原始约 ${original} tokens），为留出上下文空间已省略绝大部分内容。` +
+        '需要完整内容时请重新执行对应工具调用或按路径重新读取。）'
+      total -= original - countChatMessagesTokensFull([m], opts.model, opts.kind)
+      shrunk++
+    }
   }
 
-  return { limit, before, after: total, shrunkToolResults: shrunk, overLimit: total > limit }
+  return { limit, before, after: total, shrunkToolResults: shrunk, overLimit: total > limit, exact: true, multiplier }
 }
