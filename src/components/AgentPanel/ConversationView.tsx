@@ -61,6 +61,10 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
   const sendMessage = useAgentStore((s) => s.sendMessage)
   const stop = useAgentStore((s) => s.stop)
   const compactContext = useAgentStore((s) => s.compactContext)
+  const queue = useAgentStore((s) => s.sessionQueues[s.currentSessionId])
+  const removeQueuedMessage = useAgentStore((s) => s.removeQueuedMessage)
+  const clearQueue = useAgentStore((s) => s.clearQueue)
+  const resumeQueue = useAgentStore((s) => s.resumeQueue)
 
   const syncCursor = useCallback((): void => {
     const el = textareaRef.current
@@ -69,12 +73,13 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
 
   const atMention = useMemo(() => detectAtMention(input, cursor), [input, cursor])
 
-  const showPicker = !!atMention && !!workspaceRoot && !streaming && pickingPath === null
+  // 执行中也可用 @ / 引用：消息会被排队，等当前任务结束后带着附件一起发出。
+  const showPicker = !!atMention && !!workspaceRoot && pickingPath === null
 
   const slashCommand = useMemo(() => detectSlashCommand(input, cursor), [input, cursor])
 
   // @ 提及优先：两者都命中时不展示斜线面板，避免冲突。
-  const showSlashPicker = !!slashCommand && !atMention && !streaming && pickingPath === null
+  const showSlashPicker = !!slashCommand && !atMention && pickingPath === null
 
   useEffect(() => {
     setSlashActive(0)
@@ -180,11 +185,6 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
     const trimmed = input.trim()
     const hasImages = images.length > 0
     if (!trimmed && !hasImages && slashRefs.length === 0) return
-    if (streaming) {
-      // 不静默吞掉发送：告知用户当前状态与出路
-      toast.warn('正在生成回复，请等待完成或点击「停止」')
-      return
-    }
     if (atMention) {
       toast.warn('请先完成 @ 文件选择或删除 @ 提及')
       return
@@ -194,6 +194,7 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
     if (!message && !hasImages) return
     const toSend = attachments.length > 0 ? [...attachments] : undefined
     const imgs = hasImages ? [...images] : undefined
+    // 执行中的发送由 store 自动转入队列，这里无需区分状态。
     void sendMessage(message, toSend, imgs)
     setInput('')
     setCursor(0)
@@ -382,6 +383,7 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
           slashPickSignal={slashPickSignal}
           hasProfile={hasProfile}
           streaming={streaming}
+          queue={queue}
           textareaRef={textareaRef}
           onInputChange={setInput}
           onSyncCursor={syncCursor}
@@ -390,6 +392,9 @@ export default function ConversationView({ cwd, autoFocus }: ConversationViewPro
           onDropFiles={onDropFiles}
           onSend={onSend}
           onStop={stop}
+          onRemoveQueued={removeQueuedMessage}
+          onClearQueue={clearQueue}
+          onResumeQueue={resumeQueue}
           onPick={(item) => void applyPick(item)}
           onPickerActiveChange={setPickerActive}
           onPickerRowCount={setPickerRowCount}

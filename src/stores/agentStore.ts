@@ -288,6 +288,21 @@ export interface ChatMessageView {
   subagentCallId?: string
 }
 
+// Agent 执行期间用户后续输入的消息：按会话缓冲，当前回合结束后自动逐条发出。
+export interface QueuedMessage {
+  id: string
+  text: string
+  attachments?: ContextAttachment[]
+  images?: ImageAttachment[]
+  createdAt: number
+}
+
+export interface SessionQueue {
+  items: QueuedMessage[]
+  // 用户主动「停止」或回合异常结束时冻结队列，避免喊停后仍继续下一轮。
+  paused: boolean
+}
+
 interface AgentState {
   messages: ChatMessageView[]
   
@@ -324,6 +339,8 @@ interface AgentState {
   
   sessionTokenUsage: Record<string, TokenUsage | null>
   
+  sessionQueues: Record<string, SessionQueue>
+  
   lastUserText: string | null
   initialized: boolean
 
@@ -354,6 +371,11 @@ interface AgentState {
   retry: () => void
   clear: () => void
   compactContext: () => Promise<void>
+  // 执行中输入的消息进入当前会话队列；空闲时会立即发出。
+  enqueueMessage: (text: string, attachments?: ContextAttachment[], images?: ImageAttachment[]) => void
+  removeQueuedMessage: (id: string) => void
+  clearQueue: () => void
+  resumeQueue: () => void
   respondPermission: (requestId: string, decision: PermissionDecision) => void
   respondUserQuestion: (requestId: string, response: UserQuestionResponse) => void
   respondFileChange: (changeId: string, decision: FileChangeDecision) => void
@@ -1274,6 +1296,8 @@ export const useAgentStore = create<AgentState>((set, get) => {
         ...(options?.images && options.images.length > 0 ? { images: options.images } : {})
       })
       if (!ack.ok) {
+        // 起回合失败（非回合内错误）：冻结队列，避免剩余排队消息反复尝试发不出去。
+        pauseQueue(sessionId)
         set((s) => ({
           streaming: false,
           currentTurnId: null,
@@ -1284,6 +1308,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
         }))
       }
     } catch (e) {
+      pauseQueue(sessionId)
       set((s) => ({
         streaming: false,
         currentTurnId: null,
@@ -1298,6 +1323,47 @@ export const useAgentStore = create<AgentState>((set, get) => {
         ]
       }))
     }
+  }
+
+  // —— 排队消息 ——
+  // 只有当前会话能起新回合（dispatchTurn 以 currentSessionId 为准），因此后台会话的队列
+  // 不会被自动清空，而是等用户切回该会话时再补发，避免消息串到别的会话上。
+  const writeQueue = (sessionId: string, next: SessionQueue): void => {
+    set((s) => {
+      const sessionQueues = { ...s.sessionQueues }
+      if (next.items.length === 0 && !next.paused) delete sessionQueues[sessionId]
+      else sessionQueues[sessionId] = next
+      return { sessionQueues }
+    })
+  }
+
+  const dropQueue = (sessionId: string): void => {
+    set((s) => {
+      if (!s.sessionQueues[sessionId]) return {}
+      const sessionQueues = { ...s.sessionQueues }
+      delete sessionQueues[sessionId]
+      return { sessionQueues }
+    })
+  }
+
+  const pauseQueue = (sessionId: string): void => {
+    const q = get().sessionQueues[sessionId]
+    if (!q || q.items.length === 0 || q.paused) return
+    writeQueue(sessionId, { ...q, paused: true })
+  }
+
+  const flushNextQueued = (sessionId: string): void => {
+    const s = get()
+    if (!sessionId || sessionId !== s.currentSessionId || s.streaming) return
+    const q = s.sessionQueues[sessionId]
+    if (!q || q.paused || q.items.length === 0) return
+    const [next, ...rest] = q.items
+    writeQueue(sessionId, { items: rest, paused: false })
+    void dispatchTurn(next.text, {
+      attachments: next.attachments,
+      images: next.images,
+      addUserBubble: true
+    })
   }
 
   // —— 流式事件批处理 ——
@@ -1325,6 +1391,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     event: AgentEvent,
     side: {
       persistFinal: Set<string>
+      failed: Set<string>
       persistProgress: Map<string, PersistedSessionInProgress>
       inlineDiff: Array<() => void>
     }
@@ -1438,6 +1505,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
         turnSessionMap.delete(eventTurnId)
         turnStartedAt.delete(eventTurnId)
       }
+      if (event.type === 'error') side.failed.add(targetSession)
       side.persistFinal.add(targetSession)
     } else if (eventTurnId) {
       const reason = inProgressReasonFromEvent(event)
@@ -1460,6 +1528,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     const events = eventQueue.splice(0, eventQueue.length)
     const side = {
       persistFinal: new Set<string>(),
+      failed: new Set<string>(),
       persistProgress: new Map<string, PersistedSessionInProgress>(),
       inlineDiff: [] as Array<() => void>
     }
@@ -1478,6 +1547,12 @@ export const useAgentStore = create<AgentState>((set, get) => {
       if (!side.persistFinal.has(id)) schedulePersistSession(id, progress)
     }
     for (const id of side.persistFinal) flushPersistSession(id, null)
+    // 回合结束后补发队列：出错则冻结（避免在失败状态下连环发出后续消息），
+    // 正常结束则发出下一条排队消息。
+    for (const id of side.persistFinal) {
+      if (side.failed.has(id)) pauseQueue(id)
+      else flushNextQueued(id)
+    }
   }
 
   const initialSessionId = 'default'
@@ -1510,6 +1585,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     activeProfile: null,
     lastTokenUsage: null,
     sessionTokenUsage: {},
+    sessionQueues: {},
     lastUserText: null,
     initialized: false,
 
@@ -1727,6 +1803,8 @@ export const useAgentStore = create<AgentState>((set, get) => {
         lastTokenUsage: stashed.sessionTokenUsage[id] ?? null,
         lastUserText: null
       })
+      // 切回一个已结束（或从未开始）的会话时，补发它自己积压的排队消息。
+      flushNextQueued(id)
     },
 
     deleteSession: (id) => {
@@ -1734,6 +1812,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
       const isTargetStreaming = id === s.currentSessionId ? s.streaming : !!s.sessionStreaming[id]?.streaming
       if (isTargetStreaming) return
       if (!s.sessions.some((m) => m.id === id)) return
+      dropQueue(id)
 
       const stashed = stashCurrentSessionState(s)
       const remainingSessions = s.sessions.filter((m) => m.id !== id)
@@ -1944,9 +2023,58 @@ export const useAgentStore = create<AgentState>((set, get) => {
 
     sendMessage: async (text, attachments, images) => {
       const trimmed = text.trim()
-      if ((!trimmed && !(images && images.length > 0)) || get().streaming) return
-      if (!get().currentSessionId) return
+      if (!trimmed && !(images && images.length > 0)) return
+      const sessionId = get().currentSessionId
+      if (!sessionId) return
+      // 执行中（或队列已被冻结）时改为入队，由回合结束后自动补发，输入不再被吞掉。
+      const queued = get().sessionQueues[sessionId]
+      if (get().streaming || (queued && queued.items.length > 0)) {
+        get().enqueueMessage(trimmed, attachments, images)
+        return
+      }
       await dispatchTurn(trimmed, { attachments, images, addUserBubble: true })
+    },
+
+    enqueueMessage: (text, attachments, images) => {
+      const trimmed = text.trim()
+      if (!trimmed && !(images && images.length > 0)) return
+      const sessionId = get().currentSessionId
+      if (!sessionId) return
+      const q = get().sessionQueues[sessionId] ?? { items: [], paused: false }
+      const items = [
+        ...q.items,
+        {
+          id: uuid(),
+          text: trimmed,
+          attachments: attachments && attachments.length > 0 ? [...attachments] : undefined,
+          images: images && images.length > 0 ? [...images] : undefined,
+          createdAt: Date.now()
+        }
+      ]
+      // 用户显式发新消息即视为恢复投递，队列里的旧消息按先来先发顺序继续。
+      writeQueue(sessionId, { items, paused: false })
+      flushNextQueued(sessionId)
+    },
+
+    removeQueuedMessage: (id) => {
+      const sessionId = get().currentSessionId
+      const q = get().sessionQueues[sessionId]
+      if (!q) return
+      writeQueue(sessionId, { ...q, items: q.items.filter((item) => item.id !== id) })
+    },
+
+    clearQueue: () => {
+      const sessionId = get().currentSessionId
+      if (!get().sessionQueues[sessionId]) return
+      writeQueue(sessionId, { items: [], paused: false })
+    },
+
+    resumeQueue: () => {
+      const sessionId = get().currentSessionId
+      const q = get().sessionQueues[sessionId]
+      if (!q) return
+      writeQueue(sessionId, { ...q, paused: false })
+      flushNextQueued(sessionId)
     },
 
     regenerate: async (assistantMessageId) => {
@@ -1992,6 +2120,8 @@ export const useAgentStore = create<AgentState>((set, get) => {
 
     stop: () => {
       if (!get().streaming) return
+      // 主动喊停时冻结队列：否则本轮结束后队列会立刻接着跑，看起来像「没停下来」。
+      pauseQueue(get().currentSessionId)
       set((s) => ({
         messages: s.messages
           .filter((m) => !(m.role === 'filechange' && m.fileStatus === 'streaming'))
@@ -2024,6 +2154,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     },
 
     clear: () => {
+      dropQueue(get().currentSessionId)
       set((s) => ({
         messages: [],
         tasks: [],

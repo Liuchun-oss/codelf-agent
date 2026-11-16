@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ContextAttachment, ImageAttachment, ProviderProfileSummary } from '@shared/agentTypes'
 import { useAgentStore } from '@/stores/agentStore'
+import type { SessionQueue } from '@/stores/agentStore'
 import { toWorkspaceRelative } from '@/utils/path'
 import ContextPicker from './ContextPicker'
+import MessageQueueBar from './MessageQueueBar'
 import SlashPicker from './SlashPicker'
 import type { SlashReference } from './slashCommand'
 import ContextUsageRing from '@/components/StatusBar/ContextUsageRing'
@@ -28,6 +30,11 @@ export interface AgentComposerProps {
   slashPickSignal: number
   hasProfile: boolean
   streaming: boolean
+  /** 当前会话的待发送队列（执行期间用户后续发送的消息） */
+  queue?: SessionQueue
+  onRemoveQueued: (id: string) => void
+  onClearQueue: () => void
+  onResumeQueue: () => void
   onInputChange: (value: string) => void
   onSyncCursor: () => void
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
@@ -68,6 +75,10 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
     slashPickSignal,
     hasProfile,
     streaming,
+    queue,
+    onRemoveQueued,
+    onClearQueue,
+    onResumeQueue,
     onInputChange,
     onSyncCursor,
     onKeyDown,
@@ -158,8 +169,17 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
   const canOpenMenu = profiles.length > 1
   const modelSwitcherDisabled = streaming || profiles.length === 0 || !canOpenMenu
 
+  const hasContent = input.trim().length > 0 || images.length > 0
+  const canSubmit = hasProfile && hasContent && !pickingPath
+
   return (
     <div className="agent-composer">
+      <MessageQueueBar
+        queue={queue}
+        onRemove={onRemoveQueued}
+        onClear={onClearQueue}
+        onResume={onResumeQueue}
+      />
       <div className="agent-composer-box">
         {slashRefs.length > 0 && (
           <div className="agent-attachments" aria-label="强制使用的技能/插件">
@@ -175,7 +195,6 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
                   type="button"
                   className="agent-attachment-remove"
                   aria-label="移除引用"
-                  disabled={streaming}
                   onClick={() => onRemoveSlashRef(`${ref.kind}:${ref.name}`)}
                 >
                   ×
@@ -201,7 +220,6 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
                   type="button"
                   className="agent-attachment-remove"
                   aria-label="移除附件"
-                  disabled={streaming}
                   onClick={() => att.path && onRemoveAttachment(att.path)}
                 >
                   ×
@@ -220,7 +238,6 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
                   type="button"
                   className="agent-image-remove"
                   aria-label="移除图片"
-                  disabled={streaming}
                   onClick={() => onRemoveImage(img.dataUrl)}
                 >
                   ×
@@ -259,11 +276,13 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
           className="agent-composer-input"
           value={input}
           placeholder={
-            hasProfile
-              ? supportsVision
-                ? '规划、构建；@ 附加上下文，/ 引用技能或插件，可粘贴图片，Enter 发送，Shift+Enter 换行'
-                : '规划、构建；@ 附加上下文，/ 引用技能或插件，Enter 发送，Shift+Enter 换行'
-              : '请先在设置中配置 Provider'
+            !hasProfile
+              ? '请先在设置中配置 Provider'
+              : streaming
+                ? '正在执行中；输入内容回车加入队列，当前任务结束后自动发送'
+                : supportsVision
+                  ? '规划、构建；@ 附加上下文，/ 引用技能或插件，可粘贴图片，Enter 发送，Shift+Enter 换行'
+                  : '规划、构建；@ 附加上下文，/ 引用技能或插件，Enter 发送，Shift+Enter 换行'
           }
           disabled={!hasProfile || !!pickingPath}
           rows={3}
@@ -354,16 +373,23 @@ export default function AgentComposer(props: AgentComposerProps): JSX.Element {
               />
             </div>
             {streaming ? (
-              <button type="button" className="agent-composer-send secondary" onClick={onStop}>
-                停止
-              </button>
+              <>
+                {canSubmit && (
+                  <button
+                    type="button"
+                    className="agent-composer-send"
+                    title="加入队列，当前任务结束后自动发送"
+                    onClick={onSend}
+                  >
+                    排队
+                  </button>
+                )}
+                <button type="button" className="agent-composer-send secondary" onClick={onStop}>
+                  停止
+                </button>
+              </>
             ) : (
-              <button
-                type="button"
-                className="agent-composer-send"
-                disabled={!hasProfile || (!input.trim() && images.length === 0) || !!pickingPath}
-                onClick={onSend}
-              >
+              <button type="button" className="agent-composer-send" disabled={!canSubmit} onClick={onSend}>
                 发送
               </button>
             )}
