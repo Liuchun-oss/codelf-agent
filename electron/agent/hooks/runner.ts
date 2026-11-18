@@ -11,6 +11,9 @@ import type {
 
 const DEFAULT_HOOK_TIMEOUT_MS = 30_000
 const MAX_HOOK_OUTPUT = 256 * 1024
+// kill 之后等子进程自然退出的宽限期。Windows 的 taskkill 异步且无回执，被安全软件拦截或
+// 权限不足时 close 事件不会到来，hook 的 Promise 就会一直挂着、连带卡死工具调用。
+const KILL_GRACE_MS = 1_500
 
 interface SingleHookOutcome {
   exitCode: number | null
@@ -35,22 +38,36 @@ function runOneHook(cmd: HookCommand, input: HookInput, cwd: string, signal?: Ab
       windowsHide: true,
       detached: DETACHED_GROUP
     })
+
+    let graceTimer: ReturnType<typeof setTimeout> | null = null
+
     const finish = (exitCode: number | null) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (graceTimer) clearTimeout(graceTimer)
+      // 不移除的话，hook 正常结束后会话再 abort 会对已退出的 child 再杀一次；
+      // Windows 分支不看存活状态，pid 被复用时会误杀无关进程。
+      signal?.removeEventListener('abort', onAbort)
       resolve({ exitCode, stdout, stderr, timedOut })
+    }
+
+    const scheduleForceFinish = (): void => {
+      if (graceTimer) return
+      graceTimer = setTimeout(() => finish(null), KILL_GRACE_MS)
+    }
+
+    const onAbort = () => {
+      timedOut = true
+      killProcessTree(child)
+      scheduleForceFinish()
     }
 
     const timer = setTimeout(() => {
       timedOut = true
       killProcessTree(child)
+      scheduleForceFinish()
     }, timeoutMs)
-
-    const onAbort = () => {
-      timedOut = true
-      killProcessTree(child)
-    }
     if (signal) {
       if (signal.aborted) onAbort()
       else signal.addEventListener('abort', onAbort, { once: true })

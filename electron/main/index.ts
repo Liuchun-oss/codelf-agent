@@ -390,4 +390,11 @@ process.on('exit', () => {
     
   }
 })
+
+// POSIX：SIGTERM/SIGINT 默认会让进程直接结束，before-quit 与它后面的异步清理链都不会执行。
+// 子进程自成进程组（DETACHED_GROUP），也不会跟着这个信号连带退出，所以先走 process.exit()
+// 让上面的 exit 钩子同步回收一遍再退。SIGKILL 依然拦不住 —— 那种只能靠进程组隔离兜底。
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => process.exit(sig === 'SIGINT' ? 130 : 143))
+}
 }
