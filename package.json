@@ -13,6 +13,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "verify:kill-tree": "node --import tsx scripts/verify-kill-tree.mts",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\"",
