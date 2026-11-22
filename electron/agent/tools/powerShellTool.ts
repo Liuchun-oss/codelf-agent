@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { runCommand } from '../../services/headlessTerminal'
 import { resolveAnyPath } from './paths'
 import { createTerminalStreamer } from './terminalStream'
+import { tailOutput } from './outputTail'
 import type { Tool, ToolResult } from './types'
 import { POWERSHELL_DESCRIPTION, POWERSHELL_NAME } from '../prompts/tools/powerShell'
 
@@ -16,12 +17,6 @@ const powerShellSchema = z.object({
 })
 
 type PowerShellInput = z.infer<typeof powerShellSchema>
-
-function tailLines(text: string, n: number): { text: string; truncated: boolean } {
-  const lines = text.split('\n')
-  if (lines.length <= n) return { text, truncated: false }
-  return { text: lines.slice(-n).join('\n'), truncated: true }
-}
 
 export const powerShellTool: Tool<PowerShellInput> = {
   name: POWERSHELL_NAME,
@@ -52,7 +47,7 @@ export const powerShellTool: Tool<PowerShellInput> = {
       streamer.flush()
     }
 
-    const stdout = tailLines(res.stdout, MAX_STDOUT_TAIL_LINES)
+    const stdout = tailOutput(res.stdout, { maxLines: MAX_STDOUT_TAIL_LINES })
     const prompt = process.platform === 'win32' ? 'PS' : '$'
     const parts: string[] = []
     parts.push(`${prompt} ${cwd}> ${input.command}`)

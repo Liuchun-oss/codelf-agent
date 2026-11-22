@@ -117,12 +117,15 @@ export function externalizeToolResultsWithState(
       visibleBytes += Buffer.byteLength(cachedReplacement, 'utf8')
       continue
     }
-    if (result.fileChange || result.truncated || state.seenIds.has(call.id)) {
+    const bytes = Buffer.byteLength(result.content, 'utf8')
+    // 工具自报 truncated 只说明它自己裁过，不代表体积可控：只按行数裁剪的工具
+    // 遇到单行超长输出时仍可能留下 MB 级内容，这种情况必须照样走外置。
+    const truncatedButSmall = result.truncated && bytes <= TOOL_RESULT_INLINE_MAX_BYTES
+    if (result.fileChange || truncatedButSmall || state.seenIds.has(call.id)) {
       state.seenIds.add(call.id)
-      visibleBytes += Buffer.byteLength(result.content, 'utf8')
+      visibleBytes += bytes
       continue
     }
-    const bytes = Buffer.byteLength(result.content, 'utf8')
     visibleBytes += bytes
     fresh.push({ id: call.id, result, bytes })
   }

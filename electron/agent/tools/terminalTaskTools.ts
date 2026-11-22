@@ -7,6 +7,7 @@ import {
   type BackgroundTerminalTask
 } from '../../services/backgroundTerminalTasks'
 import { resolveAnyPath } from './paths'
+import { tailOutput } from './outputTail'
 import type { Tool, ToolResult } from './types'
 import {
   READ_TERMINAL_TASK_DESCRIPTION,
@@ -19,7 +20,6 @@ import {
   WRITE_TERMINAL_TASK_NAME
 } from '../prompts/tools/terminalTasks'
 
-const MAX_OUTPUT_CHARS = 40_000
 const MAX_TAIL_LINES = 300
 
 const startTerminalTaskSchema = z.object({
@@ -46,20 +46,9 @@ const writeTerminalTaskSchema = z.object({
 
 type WriteTerminalTaskInput = z.infer<typeof writeTerminalTaskSchema>
 
-function tailLines(text: string): { text: string; truncated: boolean } {
-  if (text.length <= MAX_OUTPUT_CHARS) {
-    const lines = text.split('\n')
-    if (lines.length <= MAX_TAIL_LINES) return { text, truncated: false }
-    return { text: lines.slice(-MAX_TAIL_LINES).join('\n'), truncated: true }
-  }
-  const sliced = text.slice(-MAX_OUTPUT_CHARS)
-  const lines = sliced.split('\n')
-  return { text: lines.slice(-MAX_TAIL_LINES).join('\n'), truncated: true }
-}
-
 function formatTask(task: BackgroundTerminalTask): ToolResult {
-  const stdout = tailLines(task.stdout)
-  const stderr = tailLines(task.stderr)
+  const stdout = tailOutput(task.stdout, { maxLines: MAX_TAIL_LINES })
+  const stderr = tailOutput(task.stderr, { maxLines: MAX_TAIL_LINES })
   const parts: string[] = []
   parts.push(`task id: ${task.id}`)
   parts.push(`status: ${task.status}`)

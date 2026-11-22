@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { runCommand } from '../../services/headlessTerminal'
 import { createTerminalStreamer } from './terminalStream'
+import { tailOutput } from './outputTail'
 import type { Tool, ToolResult } from './types'
 import { TERMINAL_NAME, TERMINAL_DESCRIPTION } from '../prompts/tools/terminal'
 
@@ -12,12 +13,6 @@ const terminalSchema = z.object({
   command: z.string().min(1).describe('要执行的 shell 命令（在工作区根目录运行）')
 })
 type TerminalInput = z.infer<typeof terminalSchema>
-
-function tailLines(text: string, n: number): { text: string; truncated: boolean } {
-  const lines = text.split('\n')
-  if (lines.length <= n) return { text, truncated: false }
-  return { text: lines.slice(-n).join('\n'), truncated: true }
-}
 
 export const terminalTool: Tool<TerminalInput> = {
   name: TERMINAL_NAME,
@@ -42,7 +37,7 @@ export const terminalTool: Tool<TerminalInput> = {
       streamer.flush()
     }
 
-    const stdout = tailLines(res.stdout, MAX_STDOUT_TAIL_LINES)
+    const stdout = tailOutput(res.stdout, { maxLines: MAX_STDOUT_TAIL_LINES })
     const parts: string[] = []
     parts.push(`$ ${input.command}`)
     if (res.cancelled === true) {
