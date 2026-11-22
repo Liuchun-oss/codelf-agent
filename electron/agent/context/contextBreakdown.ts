@@ -95,6 +95,10 @@ export interface BuildContextBreakdownInput {
   model: string
   kind: ProviderKind
   contextWindow: number
+  // 每轮注入但不在上面各段里的 system 文本（动态上下文、延迟工具清单、焦点边界提示）。
+  runtimeContextText?: string
+  // 请求放行线（窗口减去输出预留与安全边距）。缺省时退化为 contextWindow。
+  effectiveLimit?: number
   signal?: AbortSignal
 }
 
@@ -103,7 +107,6 @@ export async function buildContextBreakdown(
 ): Promise<ContextUsageBreakdown> {
   const { ctx, toolDefs, history, fullUserContent, rawUserMessage, model, kind, contextWindow, signal } =
     input
-
   const [userSnap, sysSnap] = await Promise.all([
     collectUserContext(ctx),
     collectSystemContext(ctx, signal)
@@ -151,13 +154,17 @@ export async function buildContextBreakdown(
     segment('git', gitText, model, kind),
     segment('environment', envText, model, kind),
     segment('attachments', attachText, model, kind),
+    segment('runtimeContext', input.runtimeContextText ?? '', model, kind),
     segment('conversation', historyText(history, toolCallNames), model, kind),
     segment('userMessage', rawUserMessage.trim(), model, kind)
   ].filter((s): s is ContextUsageSegment => s != null)
 
   const totalTokens = segments.reduce((sum, s) => sum + s.tokens, 0)
   const window = contextWindow > 0 ? contextWindow : 500_000
-  const percentFull = Math.min(100, Math.round((totalTokens / window) * 100))
+  // 分母用请求放行线而非裸窗口：输出预留与安全边距占掉的那部分本来就用不上，
+  // 拿裸窗口当 100% 会让用户看到「圆圈才一半却一直提示接近上限」。
+  const limit = input.effectiveLimit && input.effectiveLimit > 0 ? input.effectiveLimit : window
+  const percentFull = Math.min(100, Math.round((totalTokens / limit) * 100))
 
-  return { segments, totalTokens, contextWindow: window, percentFull }
+  return { segments, totalTokens, contextWindow: window, effectiveLimit: limit, percentFull }
 }

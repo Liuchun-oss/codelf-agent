@@ -136,7 +136,8 @@ function renderUsageBody(
   usage?: TokenUsage | null
 ): JSX.Element {
   const total = breakdown.totalTokens
-  const window = breakdown.contextWindow
+  const window = breakdown.effectiveLimit ?? breakdown.contextWindow
+  const modelWindow = breakdown.contextWindow
   const listSegments = breakdown.segments.filter((s) => s.tokens > 0)
   const barSegments = barVisibleSegments(listSegments, total)
   const usedPct = Math.max(0, Math.min(100, breakdown.percentFull))
@@ -148,7 +149,14 @@ function renderUsageBody(
       <div className="context-usage-summary">
         <span className="context-usage-percent">已用 {breakdown.percentFull}%</span>
         <span className="context-usage-total">
-          约 {formatTokenCount(total)} / {formatTokenCount(window)} token
+          约 {formatTokenCount(total)} / {formatTokenCount(window)} 可用 token
+        </span>
+      </div>
+
+      <div className="context-usage-window" aria-label="模型窗口与可用空间">
+        <span className="context-usage-window-line">
+          模型窗口 {formatTokenCount(modelWindow)}，扣除输出预留与安全边距后可用{' '}
+          {formatTokenCount(window)}（百分比以此为准）
         </span>
       </div>
 

@@ -441,6 +441,9 @@ const MIN_KEEP_RECENT_TOOL_RESULTS = 4
 const SHRINK_MIN_CHARS = 800
 // 占位符里保留的开头长度：前几百字符常含文件路径/预览，值得留着。
 const SHRINK_HEAD_CHARS = 600
+// 触发降载后一次性压到放行线的这个比例以下。只压到「刚好过线」的话，下一轮新增
+// 一两条工具结果就会立刻再越过，表现为一轮里连续刷「已省略 N 条」——每轮只捅一刀。
+const GUARD_TARGET_RATIO = 0.85
 
 // 单次请求的安全上限（本地计数口径）：窗口减去实际发送的 max_tokens，再留 margin
 // 吸收分词器口径差异，最后按实测校正系数折算回本地估算口径。
@@ -549,8 +552,13 @@ export function guardRequestSize(opts: {
 
   let total = before
   let shrunk = 0
+  // 压到 target 而不是 limit：留出空间吸收后续轮次的工具输出，避免逐轮反复触发。
+  const target = Math.floor(limit * GUARD_TARGET_RATIO)
   for (const keepNow of keepSequence) {
-    if (total <= limit) break
+    // 迟滞只在「最近 keep 条原样保留」这个档位生效。一旦要继续降级去动最近几条，
+    // 说明腾挪空间已经很紧，此时只求压到放行线，不再额外牺牲近期结果。
+    const goal = keepNow >= keep ? target : limit
+    if (total <= goal) break
     const candidates: number[] = []
     for (let i = 0; i < opts.messages.length; i++) {
       const m = opts.messages[i]
@@ -559,7 +567,7 @@ export function guardRequestSize(opts: {
     const shrinkable = candidates.slice(0, Math.max(0, candidates.length - keepNow))
     if (shrinkable.length === 0) continue
     for (const idx of shrinkable) {
-      if (total <= limit) break
+      if (total <= goal) break
       const m = opts.messages[idx]
       const original = countChatMessagesTokensFull([m], opts.model, opts.kind)
       const head = m.content.slice(0, SHRINK_HEAD_CHARS)

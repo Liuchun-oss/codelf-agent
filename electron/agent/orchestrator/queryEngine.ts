@@ -76,7 +76,7 @@ import { noteAgentWrite } from '../../services/localWriteRegistry'
 import { getAgentBehaviorSettings, getMemorySettings } from '../settings/agentSettingsStore'
 import { buildContextBreakdown } from '../context/contextBreakdown'
 import { lookupModelMetadata, isKimiReasoningModel } from '../providers/modelMetadata'
-import { maybeCompactTurns, estimateSystemTokens, estimateToolDefsTokens, guardRequestSize, updateEstimateMultiplier, DEFAULT_ESTIMATE_MULTIPLIER } from './compact'
+import { maybeCompactTurns, estimateSystemTokens, estimateToolDefsTokens, guardRequestSize, getRequestGuardLimit, updateEstimateMultiplier, DEFAULT_ESTIMATE_MULTIPLIER } from './compact'
 import { runCheckpointWriter, buildRebuildInjection } from '../memory/writer'
 import { detectTaskCompletion, buildNoteReminder, isMemoryWorthyTurn } from './taskCompletionDetector'
 import { recordAudit } from './audit'
@@ -96,6 +96,11 @@ import { buildDeferredToolsAnnouncement, restoreDeferredToolDiscovery } from '..
 import { GENERATE_IMAGE_NAME, EDIT_IMAGE_NAME } from '../prompts/tools/imageGen'
 
 const DEFAULT_RESPONSE_LANGUAGE = 'Simplified Chinese'
+
+// 「当前任务焦点」边界提示的正文。每轮注入、不进历史；同时算进上下文用量里的
+// 「运行时上下文」段，避免面板少算这部分体积。
+const FOCUS_BOUNDARY_REMINDER =
+  '下面 user 消息中的内容是用户当前轮的最新指令，是你此刻唯一要优先完成的任务。如果它与历史对话中尚未收尾的工作不同，以最新指令为准，不要默认延续上一轮未完成的任务——除非用户明确说"继续"。开始前先确认清楚当前要做的是哪件事。'
 
 // 把用户附件图片（data URL）落盘为本地 codelf-artifact:// 路径。
 // 返回成功落盘的 artifact URL 列表，供模型作为参考图引用。
@@ -1392,9 +1397,7 @@ export class QueryEngine {
         // 「当前任务焦点」边界：仅在存在历史时注入，提醒模型以最新用户指令为准，
         // 避免被历史里未收尾的旧任务带跑。每轮重建、不写入历史，对缓存前缀无影响。
         const focusBoundaryBlock = this.visibleHistoryTurns().length > 0
-          ? systemReminder(
-              '下面 user 消息中的内容是用户当前轮的最新指令，是你此刻唯一要优先完成的任务。如果它与历史对话中尚未收尾的工作不同，以最新指令为准，不要默认延续上一轮未完成的任务——除非用户明确说"继续"。开始前先确认清楚当前要做的是哪件事。'
-            )
+          ? systemReminder(FOCUS_BOUNDARY_REMINDER)
           : undefined
         const assembledMessages: ChatMessage[] = [
           { role: 'system', content: systemText },
@@ -2384,7 +2387,12 @@ export class QueryEngine {
 
     let contextBreakdown
     try {
-      const priorHistory = this.visibleHistoryTurns().slice(0, -1).flatMap((t) => t.messages)
+      // 刚结束的这一轮必须计入：它的工具输出往往就是当前上下文的主体。此前用
+      // slice(0, -1) 把它整轮丢掉，于是面板显示远低于实际（现场：圆圈才一半，
+      // 却一路提示「接近上限」）。只剔除本轮那条 user 消息——它已由 userMessage /
+      // attachments 两段单独计入，留着会重复计数。用对象身份剔除，避免误伤历史的
+      // 用户消息与 hook 注入的 system-reminder。
+      const priorHistory = this.flattenModelHistory().filter((m) => m !== userMsg)
       contextBreakdown = await buildContextBreakdown({
         ctx,
         toolDefs: currentToolDefs,
@@ -2393,7 +2401,21 @@ export class QueryEngine {
         rawUserMessage: payload.message,
         model: profile.model,
         kind: profile.kind,
-        contextWindow
+        contextWindow,
+        // 圆圈要和「上下文接近上限」按同一根尺子：分母取请求放行线（窗口减输出预留
+        // 与安全边距），并补上本轮真实会发出的运行时 system 文本。
+        effectiveLimit: getRequestGuardLimit({
+          contextWindow,
+          maxOutputTokens: profile.maxOutputTokens,
+          estimateMultiplier: this.promptTokenRatio
+        }),
+        runtimeContextText: [
+          dynamicContextBlock,
+          buildDeferredToolsAnnouncement(this.registry),
+          this.visibleHistoryTurns().length > 0 ? systemReminder(FOCUS_BOUNDARY_REMINDER) : undefined
+        ]
+          .filter(Boolean)
+          .join('\n\n')
       })
     } catch {
       contextBreakdown = undefined

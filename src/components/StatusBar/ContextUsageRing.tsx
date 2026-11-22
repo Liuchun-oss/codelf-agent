@@ -22,7 +22,9 @@ export default function ContextUsageRing({
   const offset = circumference * (1 - pct / 100)
 
   const title = breakdown
-    ? `上下文 ${pct}% · 约 ${formatTokenCount(breakdown.totalTokens)} / ${formatTokenCount(breakdown.contextWindow)}`
+    ? `上下文 ${pct}% · 约 ${formatTokenCount(breakdown.totalTokens)} / ${formatTokenCount(
+        breakdown.effectiveLimit ?? breakdown.contextWindow
+      )} 可用 token（模型窗口 ${formatTokenCount(breakdown.contextWindow)}）`
     : '上下文用量 · 暂无数据'
 
   return (

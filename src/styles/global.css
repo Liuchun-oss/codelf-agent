@@ -5251,6 +5251,15 @@ kbd {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
+.context-usage-window {
+  margin: -2px 0 10px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.context-usage-window-line {
+  font-variant-numeric: tabular-nums;
+}
 .context-usage-cache {
   display: flex;
   flex-direction: column;
